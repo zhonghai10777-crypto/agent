@@ -1,0 +1,27 @@
+{
+  "name": "pi-gui",
+  "private": true,
+  "version": "0.1.0-beta.33",
+  "license": "MIT",
+  "packageManager": "pnpm@10.25.0",
+  "scripts": {
+    "dev": "pnpm --filter @pi-gui/desktop dev",
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm --filter @pi-gui/session-driver build && pnpm --filter @pi-gui/catalogs build && pnpm --filter @pi-gui/pi-sdk-driver build && pnpm -r --if-present typecheck",
+    "package:win": "pnpm --filter @pi-gui/desktop run package:win",
+    "package:win:dir": "pnpm --filter @pi-gui/desktop run package:win:dir",
+    "lint": "pnpm -r --if-present lint",
+    "test": "pnpm -r --if-present test",
+    "e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "@types/node": "^24.0.0",
+    "pnpm": "10.25.0",
+    "typescript": "^5.9.3"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
+}
