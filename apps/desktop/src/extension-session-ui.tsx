@@ -3,10 +3,11 @@ import type { HostUiResponse } from "@pi-gui/session-driver";
 import { trapDialogFocus } from "./dialog-focus";
 import { ChevronDownIcon, ChevronRightIcon } from "./icons";
 import type { SessionExtensionDialogRecord, SessionExtensionUiStateRecord } from "./desktop-state";
+import { useI18n } from "./i18n/I18nProvider";
+import type { Translator } from "./i18n";
 
 const ANSI_ESCAPE_PATTERN = /\u001B\[[0-?]*[ -/]*[@-~]/g;
 const DOCK_SEGMENT_SEPARATOR = "--------------------";
-const GENERIC_ACTIVE_LABEL = "Extension UI active";
 
 interface ExtensionDockBlock {
   readonly key: string;
@@ -26,7 +27,10 @@ export function hasExtensionDockContent(uiState?: SessionExtensionUiStateRecord)
   return uiState.statuses.length > 0 || uiState.widgets.length > 0;
 }
 
-export function buildExtensionDockModel(uiState?: SessionExtensionUiStateRecord): ExtensionDockModel | undefined {
+export function buildExtensionDockModel(
+  uiState: SessionExtensionUiStateRecord | undefined,
+  t: Translator,
+): ExtensionDockModel | undefined {
   if (!hasExtensionDockContent(uiState)) {
     return undefined;
   }
@@ -39,7 +43,7 @@ export function buildExtensionDockModel(uiState?: SessionExtensionUiStateRecord)
     .filter((status) => status.text.trim().length > 0);
   const primaryBlocks = buildWidgetBlocks(uiState?.widgets ?? [], "aboveComposer");
   const secondaryBlocks = buildWidgetBlocks(uiState?.widgets ?? [], "belowComposer");
-  const summaryText = resolveDockSummaryText(statuses, primaryBlocks, secondaryBlocks);
+  const summaryText = resolveDockSummaryText(statuses, primaryBlocks, secondaryBlocks, t);
 
   return {
     summaryText,
@@ -96,6 +100,7 @@ export function ExtensionDialog({
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const cancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const firstOptionButtonRef = useRef<HTMLButtonElement | null>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (dialog.kind === "input") {
@@ -188,7 +193,7 @@ export function ExtensionDialog({
           <input
             autoFocus
             className="skills-search"
-            placeholder={dialog.placeholder ?? "Enter a value"}
+            placeholder={dialog.placeholder ?? t("extUi.enterValue")}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
           />
@@ -211,7 +216,7 @@ export function ExtensionDialog({
             type="button"
             onClick={respondWithCancel}
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           {dialog.kind === "confirm" ? (
             <button
@@ -220,7 +225,7 @@ export function ExtensionDialog({
               type="button"
               onClick={respondWithSubmit}
             >
-              Confirm
+              {t("extUi.confirm")}
             </button>
           ) : null}
           {dialog.kind === "input" || dialog.kind === "editor" ? (
@@ -230,7 +235,7 @@ export function ExtensionDialog({
               type="button"
               onClick={respondWithSubmit}
             >
-              Submit
+              {t("extUi.submit")}
             </button>
           ) : null}
         </div>
@@ -256,6 +261,7 @@ function resolveDockSummaryText(
   statuses: readonly { readonly key: string; readonly text: string }[],
   primaryBlocks: readonly ExtensionDockBlock[],
   secondaryBlocks: readonly ExtensionDockBlock[],
+  t: Translator,
 ): string {
   for (const status of statuses) {
     if (status.text.trim().length > 0) {
@@ -270,7 +276,7 @@ function resolveDockSummaryText(
     }
   }
 
-  return GENERIC_ACTIVE_LABEL;
+  return t("extUi.active");
 }
 
 function buildDockBodyText(

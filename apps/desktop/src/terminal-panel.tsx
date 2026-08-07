@@ -8,6 +8,7 @@ import type { WorkspaceRecord } from "./desktop-state";
 import { CloseIcon, MaximizeIcon, MinimizeIcon, PlusIcon, RefreshIcon } from "./icons";
 import type { TerminalPanelSnapshot, TerminalSessionSnapshot, TerminalSize } from "./ipc";
 import { appendTerminalReplay } from "./terminal-model";
+import { useI18n } from "./i18n/I18nProvider";
 
 const MIN_TERMINAL_HEIGHT = 220;
 const DEFAULT_TERMINAL_HEIGHT = 340;
@@ -31,6 +32,7 @@ export function TerminalPanel({
   onToggleTakeover,
   onHide,
 }: TerminalPanelProps) {
+  const { t } = useI18n();
   const api = window.piApp;
   const panelRef = useRef<HTMLElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -295,7 +297,7 @@ export function TerminalPanel({
     >
       <div className="terminal-panel__resize-handle" onMouseDown={startResize} />
       <div className="terminal-panel__toolbar">
-        <div className="terminal-panel__tabs" role="tablist" aria-label="Terminal sessions">
+        <div className="terminal-panel__tabs" role="tablist" aria-label={t("terminal.sessions")}>
           {(panel?.sessions ?? []).map((session) => (
             <div
               key={session.id}
@@ -315,7 +317,7 @@ export function TerminalPanel({
               <button
                 type="button"
                 className="terminal-panel__tab-close"
-                aria-label={`Close ${session.title}`}
+                aria-label={t("terminal.close", { title: session.title })}
                 onClick={(event) => {
                   event.stopPropagation();
                   void closeTerminal(session.id);
@@ -327,22 +329,22 @@ export function TerminalPanel({
           ))}
         </div>
         <div className="terminal-panel__actions">
-          <button type="button" className="icon-button terminal-panel__action" title="New terminal" aria-label="New terminal" onClick={() => void createTerminal()}>
+          <button type="button" className="icon-button terminal-panel__action" title={t("terminal.newTerminal")} aria-label={t("terminal.newTerminal")} onClick={() => void createTerminal()}>
             <PlusIcon />
           </button>
-          <button type="button" className="icon-button terminal-panel__action" title="Restart terminal" aria-label="Restart terminal" onClick={() => void restartTerminal()}>
+          <button type="button" className="icon-button terminal-panel__action" title={t("terminal.restartTerminal")} aria-label={t("terminal.restartTerminal")} onClick={() => void restartTerminal()}>
             <RefreshIcon />
           </button>
           <button
             type="button"
             className="icon-button terminal-panel__action"
-            title={isTakeover ? "Restore terminal" : "Maximize terminal"}
-            aria-label={isTakeover ? "Restore terminal" : "Maximize terminal"}
+            title={isTakeover ? t("terminal.restoreTerminal") : t("terminal.maximizeTerminal")}
+            aria-label={isTakeover ? t("terminal.restoreTerminal") : t("terminal.maximizeTerminal")}
             onClick={onToggleTakeover}
           >
             {isTakeover ? <MinimizeIcon /> : <MaximizeIcon />}
           </button>
-          <button type="button" className="icon-button terminal-panel__action" title="Hide terminal" aria-label="Hide terminal" onClick={onHide}>
+          <button type="button" className="icon-button terminal-panel__action" title={t("terminal.hideTerminal")} aria-label={t("terminal.hideTerminal")} onClick={onHide}>
             <CloseIcon />
           </button>
         </div>

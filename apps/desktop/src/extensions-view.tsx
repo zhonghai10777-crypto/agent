@@ -3,6 +3,7 @@ import type { RuntimeExtensionRecord, RuntimeSnapshot } from "@pi-gui/session-dr
 import type { ExtensionCommandCompatibilityRecord, WorkspaceRecord } from "./desktop-state";
 import { extensionScopeLabel, extensionSourceSummary } from "./extension-display";
 import { RefreshIcon } from "./icons";
+import { useI18n } from "./i18n/I18nProvider";
 
 interface ExtensionsViewProps {
   readonly workspace?: WorkspaceRecord;
@@ -21,6 +22,7 @@ export function ExtensionsView({
   onOpenExtensionFolder,
   onToggleExtension,
 }: ExtensionsViewProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [selectedExtensionPath, setSelectedExtensionPath] = useState<string | undefined>();
   const extensions = runtime?.extensions ?? [];
@@ -63,9 +65,9 @@ export function ExtensionsView({
     return (
       <section className="canvas canvas--empty">
         <div className="empty-panel">
-          <div className="session-header__eyebrow">Extensions</div>
-          <h1>Select a workspace</h1>
-          <p>Extensions are discovered from the selected workspace plus your user-level extension directories.</p>
+          <div className="session-header__eyebrow">{t("extensions.title")}</div>
+          <h1>{t("extensions.selectWorkspace")}</h1>
+          <p>{t("extensions.noWorkspaceBody")}</p>
         </div>
       </section>
     );
@@ -76,24 +78,22 @@ export function ExtensionsView({
       <div className="conversation skills-view">
         <header className="view-header">
           <div>
-            <h1 className="view-header__title">Extensions</h1>
-            <p className="view-header__body">
-              Inspect and manage first-class runtime extensions for this workspace.
-            </p>
+            <h1 className="view-header__title">{t("extensions.title")}</h1>
+            <p className="view-header__body">{t("extensions.description")}</p>
           </div>
           <div className="view-header__actions">
             <button className="button button--secondary" type="button" onClick={onRefresh}>
               <RefreshIcon />
-              <span>Refresh</span>
+              <span>{t("common.refresh")}</span>
             </button>
           </div>
         </header>
 
         <div className="skills-toolbar">
           <input
-            aria-label="Search extensions"
+            aria-label={t("extensions.searchPlaceholder")}
             className="skills-search"
-            placeholder="Search extensions"
+            placeholder={t("extensions.searchPlaceholder")}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -104,7 +104,7 @@ export function ExtensionsView({
         <div className="skills-layout">
           <div className="skills-grid" data-testid="extensions-list">
             {filteredExtensions.length === 0 ? (
-              <ExtensionsEmptyState message="Refresh runtime discovery to load workspace and user-level extensions." />
+              <ExtensionsEmptyState message={t("extensions.noExtensionsBody")} />
             ) : (
               filteredExtensions.map((extension) => (
                 <button
@@ -118,7 +118,7 @@ export function ExtensionsView({
                   <span className="skill-card__title-row">
                     <span className="skill-card__title">{extension.displayName}</span>
                     <span className={`skill-card__badge ${extension.enabled ? "skill-card__badge--enabled" : ""}`}>
-                      {extension.enabled ? "Enabled" : "Disabled"}
+                      {extension.enabled ? t("extensions.enabled") : t("extensions.disabled")}
                     </span>
                   </span>
                   <span className="skill-card__description">
@@ -126,9 +126,9 @@ export function ExtensionsView({
                   </span>
                   <span className="skill-card__meta">
                     <span>{extension.sourceInfo.source}</span>
-                    {extension.commands.length > 0 ? <span>{extension.commands.length} commands</span> : null}
-                    {extension.tools.length > 0 ? <span>{extension.tools.length} tools</span> : null}
-                    {extension.diagnostics.length > 0 ? <span>{extension.diagnostics.length} issues</span> : null}
+                    {extension.commands.length > 0 ? <span>{t("extensions.countCommands", { count: extension.commands.length })}</span> : null}
+                    {extension.tools.length > 0 ? <span>{t("extensions.countTools", { count: extension.tools.length })}</span> : null}
+                    {extension.diagnostics.length > 0 ? <span>{t("extensions.countIssues", { count: extension.diagnostics.length })}</span> : null}
                   </span>
                 </button>
               ))
@@ -144,44 +144,44 @@ export function ExtensionsView({
                     <div className="skill-detail__slash">{selectedExtension.sourceInfo.source}</div>
                   </div>
                   <span className={`skill-detail__status ${selectedExtension.enabled ? "skill-detail__status--enabled" : ""}`}>
-                    {selectedExtension.enabled ? "Enabled" : "Disabled"}
+                    {selectedExtension.enabled ? t("extensions.enabled") : t("extensions.disabled")}
                   </span>
                 </div>
                 <div className="skill-detail__meta-list">
-                  <DetailItem label="Scope" value={extensionScopeLabel(selectedExtension)} />
-                  <DetailItem label="Origin" value={selectedExtension.sourceInfo.origin} />
-                  <DetailItem label="Path" value={selectedExtension.path} mono />
+                  <DetailItem label={t("extensions.scope")} value={extensionScopeLabel(selectedExtension)} />
+                  <DetailItem label={t("extensions.origin")} value={selectedExtension.sourceInfo.origin} />
+                  <DetailItem label={t("extensions.path")} value={selectedExtension.path} mono />
                   {selectedExtension.sourceInfo.baseDir ? (
-                    <DetailItem label="Base dir" value={selectedExtension.sourceInfo.baseDir} mono />
+                    <DetailItem label={t("extensions.baseDir")} value={selectedExtension.sourceInfo.baseDir} mono />
                   ) : null}
                 </div>
                 {selectedExtensionCanBeManaged ? (
                   <div className="skill-detail__actions">
                     <button className="button button--secondary" type="button" onClick={() => onOpenExtensionFolder(selectedExtension.path)}>
-                      Open folder
+                      {t("extensions.openFolder")}
                     </button>
                     <button
                       className="button button--secondary"
                       type="button"
                       onClick={() => onToggleExtension(selectedExtension.path, !selectedExtension.enabled)}
                     >
-                      {selectedExtension.enabled ? "Disable" : "Enable"}
+                      {selectedExtension.enabled ? t("common.disable") : t("common.enable")}
                     </button>
                   </div>
                 ) : null}
 
-                <ExtensionContributionSection title="Commands" items={selectedExtension.commands} emptyLabel="No commands contributed." />
+                <ExtensionContributionSection title={t("extensions.commands")} items={selectedExtension.commands} emptyLabel={t("extensions.noCommands")} />
                 <ExtensionCompatibilitySection
                   commands={selectedExtension.commands}
                   compatibilityRecords={selectedCompatibilityRecords}
                 />
-                <ExtensionContributionSection title="Tools" items={selectedExtension.tools} emptyLabel="No tools contributed." />
-                <ExtensionContributionSection title="Flags" items={selectedExtension.flags} emptyLabel="No flags contributed." />
-                <ExtensionContributionSection title="Shortcuts" items={selectedExtension.shortcuts} emptyLabel="No shortcuts contributed." />
+                <ExtensionContributionSection title={t("extensions.tools")} items={selectedExtension.tools} emptyLabel={t("extensions.noTools")} />
+                <ExtensionContributionSection title={t("extensions.flags")} items={selectedExtension.flags} emptyLabel={t("extensions.noFlags")} />
+                <ExtensionContributionSection title={t("extensions.shortcuts")} items={selectedExtension.shortcuts} emptyLabel={t("extensions.noShortcuts")} />
                 <ExtensionDiagnostics diagnostics={selectedExtension.diagnostics} />
               </>
             ) : (
-              <ExtensionsEmptyState message="Refresh runtime discovery to inspect extension metadata and diagnostics." />
+              <ExtensionsEmptyState message={t("extensions.noExtensionsInspectBody")} />
             )}
           </div>
         </div>
@@ -245,10 +245,11 @@ function ExtensionDiagnostics({
 }: {
   readonly diagnostics: RuntimeExtensionRecord["diagnostics"];
 }) {
+  const { t } = useI18n();
   return (
     <div className="skill-detail__meta-list">
       <div>
-        <div className="skill-detail__meta-label">Diagnostics</div>
+        <div className="skill-detail__meta-label">{t("extensions.diagnostics")}</div>
         {diagnostics.length > 0 ? (
           <div className="extension-detail__diagnostics">
             {diagnostics.map((diagnostic, index) => (
@@ -259,7 +260,7 @@ function ExtensionDiagnostics({
             ))}
           </div>
         ) : (
-          <div className="skill-detail__description">No diagnostics reported.</div>
+          <div className="skill-detail__description">{t("extensions.noDiagnostics")}</div>
         )}
       </div>
     </div>
@@ -273,6 +274,7 @@ function ExtensionCompatibilitySection({
   readonly commands: readonly string[];
   readonly compatibilityRecords: readonly ExtensionCommandCompatibilityRecord[];
 }) {
+  const { t } = useI18n();
   const supported = compatibilityRecords.filter((record) => record.status === "supported");
   const terminalOnly = compatibilityRecords.filter((record) => record.status === "terminal-only");
   const unknown = commands.filter((commandName) =>
@@ -284,24 +286,22 @@ function ExtensionCompatibilitySection({
   return (
     <div className="skill-detail__meta-list">
       <div>
-        <div className="skill-detail__meta-label">Command compatibility</div>
-        <div className="skill-detail__description">
-          Learned from real GUI execution. Unlisted commands remain unknown until exercised.
-        </div>
+        <div className="skill-detail__meta-label">{t("extensions.commandCompatibility")}</div>
+        <div className="skill-detail__description">{t("extensions.compatibilityDesc")}</div>
         <div className="extension-detail__tokens">
           {supported.map((record) => (
             <span className="slash-menu__skill-badge" key={`supported:${record.commandName}`}>
-              {record.commandName} · GUI-compatible
+              {t("extensions.commandGuiCompatible", { command: record.commandName })}
             </span>
           ))}
           {terminalOnly.map((record) => (
             <span className="slash-menu__skill-badge slash-menu__skill-badge--warning" key={`terminal:${record.commandName}`}>
-              {record.commandName} · Terminal-only
+              {t("extensions.commandTerminalOnly", { command: record.commandName })}
             </span>
           ))}
           {unknown.map((commandName) => (
             <span className="slash-menu__skill-badge" key={`unknown:${commandName}`}>
-              {commandName} · Unknown
+              {t("extensions.commandUnknown", { command: commandName })}
             </span>
           ))}
         </div>
@@ -311,9 +311,10 @@ function ExtensionCompatibilitySection({
 }
 
 function ExtensionsEmptyState({ message }: { readonly message: string }) {
+  const { t } = useI18n();
   return (
     <div className="empty-state">
-      <h2>No extensions found</h2>
+      <h2>{t("extensions.noExtensionsFound")}</h2>
       <p>{message}</p>
     </div>
   );

@@ -39,7 +39,7 @@ import {
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-checker";
 import { ThemeManager } from "./theme-manager";
 import { TerminalService } from "./terminal-service";
-import type { AppView, DesktopAppState, ThemeMode, ThemePresetId } from "../src/desktop-state";
+import type { AppView, DesktopAppState, Locale, ThemeMode, ThemePresetId } from "../src/desktop-state";
 import {
   desktopIpc,
   getDesktopCommandFromShortcut,
@@ -377,7 +377,8 @@ function createWindow(): BrowserWindow {
 
   if (isDev) {
     void window.loadURL(process.env.ELECTRON_RENDERER_URL as string);
-    if (process.env.PI_APP_OPEN_DEVTOOLS !== "0") {
+    // DevTools are opt-in in dev: set PI_APP_OPEN_DEVTOOLS=1 to open them.
+    if (process.env.PI_APP_OPEN_DEVTOOLS === "1") {
       window.webContents.openDevTools({ mode: "detach" });
     }
   } else {
@@ -1151,6 +1152,9 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle(desktopIpc.setThemePresetId, (event, presetId: ThemePresetId) =>
     runWindowScopedForEvent(event, () => store.setThemePresetId(presetId)),
+  );
+  ipcMain.handle(desktopIpc.setLocale, (event, locale: Locale) =>
+    runWindowScopedForEvent(event, () => store.setLocale(locale)),
   );
   ipcMain.handle(desktopIpc.openExternal, (_event, url: string) => {
     const parsed = parseExternalWebUrl(url);

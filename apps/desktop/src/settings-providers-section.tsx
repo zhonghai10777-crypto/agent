@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { CustomProviderConfig } from "./ipc";
+import { useI18n } from "./i18n/I18nProvider";
 import { SettingsCustomEndpointsSection } from "./settings-custom-endpoints-section";
-import { filterProviders, ProviderRow, SettingsGroup } from "./settings-utils";
+import { ProviderRow, SettingsGroup } from "./settings-utils";
 
 interface SettingsProvidersSectionProps {
   readonly runtime?: RuntimeSnapshot;
@@ -23,7 +24,7 @@ export function SettingsProvidersSection({
   onSaveCustomProvider,
   onDeleteCustomProvider,
 }: SettingsProvidersSectionProps) {
-  const [providerQuery, setProviderQuery] = useState("");
+  const { t } = useI18n();
   const [apiKeyProviderId, setApiKeyProviderId] = useState<string | undefined>();
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [apiKeyError, setApiKeyError] = useState<string | undefined>();
@@ -31,8 +32,6 @@ export function SettingsProvidersSection({
 
   const providers = runtime?.providers ?? [];
   const connectedProviders = providers.filter((p) => p.hasAuth);
-  const oauthProviders = providers.filter((p) => p.oauthSupported);
-  const filteredProviders = filterProviders(providers, providerQuery);
   const apiKeyProvider = apiKeyProviderId ? providers.find((provider) => provider.id === apiKeyProviderId) : undefined;
   const existingProviderIds = useMemo(() => providers.map((provider) => provider.id), [providers]);
 
@@ -81,11 +80,12 @@ export function SettingsProvidersSection({
 
   return (
     <>
-      <SettingsGroup title="Connected" description="Connected providers are used first for picking models.">
+      <SettingsGroup title={t("settings.providers.connected")} description={t("settings.providers.connectedDesc")}>
         {connectedProviders.length > 0 ? (
           connectedProviders.map((provider) => (
             <ProviderRow
               key={provider.id}
+              t={t}
               provider={provider}
               onLoginProvider={onLoginProvider}
               onLogoutProvider={onLogoutProvider}
@@ -94,21 +94,9 @@ export function SettingsProvidersSection({
           ))
         ) : (
           <div className="settings-row">
-            <span className="settings-row__description">No providers connected yet.</span>
+            <span className="settings-row__description">{t("settings.providers.noConnected")}</span>
           </div>
         )}
-      </SettingsGroup>
-
-      <SettingsGroup title="Sign in" description="OAuth-capable providers can sign in directly from the desktop app.">
-        {oauthProviders.map((provider) => (
-          <ProviderRow
-            key={provider.id}
-            provider={provider}
-            onLoginProvider={onLoginProvider}
-            onLogoutProvider={onLogoutProvider}
-            onConfigureApiKey={(entry) => setApiKeyProviderId(entry.id)}
-          />
-        ))}
       </SettingsGroup>
 
       <SettingsCustomEndpointsSection
@@ -116,35 +104,6 @@ export function SettingsProvidersSection({
         onSaveCustomProvider={onSaveCustomProvider}
         onDeleteCustomProvider={onDeleteCustomProvider}
       />
-
-      <SettingsGroup title="All providers" description="Browse the full provider inventory.">
-        <details className="settings-disclosure">
-          <summary className="settings-disclosure__summary">
-            <span>Browse all providers</span>
-            <span>{filteredProviders.length}</span>
-          </summary>
-          <div className="settings-disclosure__body">
-            <input
-              aria-label="Search providers"
-              className="settings-search"
-              placeholder="Search providers"
-              value={providerQuery}
-              onChange={(event) => setProviderQuery(event.target.value)}
-            />
-            <div className="settings-list">
-              {filteredProviders.map((provider) => (
-                <ProviderRow
-                  key={provider.id}
-                  provider={provider}
-                  onLoginProvider={onLoginProvider}
-                  onLogoutProvider={onLogoutProvider}
-                  onConfigureApiKey={(entry) => setApiKeyProviderId(entry.id)}
-                />
-              ))}
-            </div>
-          </div>
-        </details>
-      </SettingsGroup>
 
       {apiKeyProvider ? (
         <ProviderApiKeyDialog
@@ -181,11 +140,12 @@ function ProviderApiKeyDialog({
   readonly onRemove?: () => Promise<void>;
   readonly onSave: () => Promise<void>;
 }) {
-  const title = provider.authSource === "auth_file" ? "Manage API key" : "Set API key";
+  const { t } = useI18n();
+  const title = provider.authSource === "auth_file" ? t("settings.providers.manageApiKey") : t("settings.providers.setApiKey");
   const body =
     provider.authSource === "auth_file"
-      ? `Replace or remove the saved API key for ${provider.name}.`
-      : `Save an API key locally for ${provider.name}.`;
+      ? t("settings.providers.replaceKeyBody", { provider: provider.name })
+      : t("settings.providers.saveKeyBody", { provider: provider.name });
 
   return (
     <div className="extension-dialog-backdrop">
@@ -193,11 +153,11 @@ function ProviderApiKeyDialog({
         <div className="extension-dialog__title">{title}</div>
         <p className="extension-dialog__body">{body}</p>
         <input
-          aria-label={`${provider.name} API key`}
+          aria-label={t("settings.providers.apiKeyAria", { provider: provider.name })}
           autoFocus
           className="settings-search"
           disabled={pending}
-          placeholder="Enter API key"
+          placeholder={t("settings.providers.enterApiKey")}
           type="password"
           value={draft}
           onChange={(event) => onChangeDraft(event.target.value)}
@@ -216,11 +176,11 @@ function ProviderApiKeyDialog({
         {error ? <p className="extension-dialog__body settings-warning">{error}</p> : null}
         <div className="extension-dialog__actions">
           <button className="button button--secondary" disabled={pending} type="button" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </button>
           {onRemove ? (
             <button className="button button--secondary" disabled={pending} type="button" onClick={() => void onRemove()}>
-              Remove saved key
+              {t("settings.providers.removeSavedKey")}
             </button>
           ) : null}
           <button
@@ -229,7 +189,7 @@ function ProviderApiKeyDialog({
             type="button"
             onClick={() => void onSave()}
           >
-            {provider.authSource === "auth_file" ? "Save key" : "Set API key"}
+            {provider.authSource === "auth_file" ? t("settings.providers.saveKey") : t("settings.providers.setApiKey")}
           </button>
         </div>
       </div>

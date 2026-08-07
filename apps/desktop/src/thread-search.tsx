@@ -1,4 +1,5 @@
 import type { RefObject } from "react";
+import { useI18n } from "./i18n/I18nProvider";
 
 interface ThreadSearchBarProps {
   readonly query: string;
@@ -21,13 +22,14 @@ export function ThreadSearchBar({
   onPrev,
   onClose,
 }: ThreadSearchBarProps) {
+  const { t } = useI18n();
   return (
     <div className="thread-search-bar" data-testid="thread-search-bar">
       <input
         ref={inputRef}
         className="thread-search-bar__input"
         type="text"
-        placeholder="Search thread..."
+        placeholder={t("search.placeholder")}
         value={query}
         onChange={(e) => onSearch(e.target.value)}
         onKeyDown={(e) => {
@@ -45,11 +47,11 @@ export function ThreadSearchBar({
         }}
       />
       <span className="thread-search-bar__count">
-        {query ? (matchCount > 0 ? `${activeIndex + 1} / ${matchCount}` : "0 results") : ""}
+        {query ? (matchCount > 0 ? `${activeIndex + 1} / ${matchCount}` : t("search.results", { count: 0 })) : ""}
       </span>
       <div className="thread-search-bar__actions">
         <button
-          aria-label="Previous match"
+          aria-label={t("search.previous")}
           className="icon-button"
           type="button"
           disabled={matchCount === 0}
@@ -58,7 +60,7 @@ export function ThreadSearchBar({
           &#x25B2;
         </button>
         <button
-          aria-label="Next match"
+          aria-label={t("search.next")}
           className="icon-button"
           type="button"
           disabled={matchCount === 0}
@@ -67,7 +69,7 @@ export function ThreadSearchBar({
           &#x25BC;
         </button>
         <button
-          aria-label="Close search"
+          aria-label={t("search.close")}
           className="icon-button"
           type="button"
           onClick={onClose}

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
+import { useI18n } from "./i18n/I18nProvider";
 import {
   filterModels,
   labelForThinking,
@@ -22,7 +23,7 @@ export function SettingsModelsSection({
   onSetThinkingLevel,
   onSetScopedModelPatterns,
 }: SettingsModelsSectionProps) {
-  const [modelQuery, setModelQuery] = useState("");
+  const { t } = useI18n();
   const [scopedQuery, setScopedQuery] = useState("");
 
   const models = runtime?.models ?? [];
@@ -49,7 +50,6 @@ export function SettingsModelsSection({
       ? enabledAvailableModels.some((m) => m.providerId === defaultProvider && m.modelId === defaultModelId)
       : false;
 
-  const filteredModels = filterModels(models, modelQuery);
   const filteredScopedModels = filterModels(availableModels, scopedQuery);
 
   const togglePattern = (pattern: string, checked: boolean) => {
@@ -63,7 +63,7 @@ export function SettingsModelsSection({
   return (
     <>
       <SettingsGroup>
-        <SettingsRow title="Default model" description="Choose the default model for new sessions.">
+        <SettingsRow title={t("settings.models.defaultModel")} description={t("settings.models.defaultModelDesc")}>
           <select
             className="settings-select"
             value={
@@ -79,7 +79,7 @@ export function SettingsModelsSection({
               }
             }}
           >
-            <option value="">Choose a model</option>
+            <option value="">{t("model.chooseModel")}</option>
             {enabledAvailableModels.map((model) => (
               <option key={`${model.providerId}:${model.modelId}`} value={`${model.providerId}:${model.modelId}`}>
                 {model.providerName} · {model.label}
@@ -87,7 +87,7 @@ export function SettingsModelsSection({
             ))}
           </select>
         </SettingsRow>
-        <SettingsRow title="Reasoning" description="Set the default reasoning level for new sessions.">
+        <SettingsRow title={t("settings.models.reasoning")} description={t("settings.models.reasoningDesc")}>
           <div className="settings-pill-row">
             {THINKING_LEVELS.map((level) => (
               <button
@@ -96,14 +96,14 @@ export function SettingsModelsSection({
                 type="button"
                 onClick={() => onSetThinkingLevel(level)}
               >
-                {labelForThinking(level)}
+                {labelForThinking(level, t)}
               </button>
             ))}
           </div>
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title="Enabled models" description="Choose which models appear in pickers throughout the app.">
+      <SettingsGroup title={t("settings.models.enabledModels")} description={t("settings.models.enabledModelsDesc")}>
         <div className="settings-row">
           {enabledAvailablePatterns.length > 0 ? (
             <div className="settings-pill-row">
@@ -116,33 +116,33 @@ export function SettingsModelsSection({
           ) : (
             <span className="settings-hint">
               {availableModels.length === 0
-                ? "No connected models available yet."
-                : "No available models are currently enabled."}
+                ? t("settings.models.noConnected")
+                : t("settings.models.noneEnabled")}
             </span>
           )}
         </div>
         {allImplicitlyEnabled && availableModels.length > 0 ? (
           <div className="settings-row">
-            <span className="settings-hint">All available models enabled by default.</span>
+            <span className="settings-hint">{t("settings.models.allEnabledByDefault")}</span>
           </div>
         ) : null}
         {!defaultIsEnabled && defaultProvider && defaultModelId ? (
           <div className="settings-row">
             <span className="settings-warning">
-              Your default model ({defaultProvider}:{defaultModelId}) is not enabled. Choose a new default above.
+              {t("settings.models.defaultNotEnabled", { provider: defaultProvider, model: defaultModelId })}
             </span>
           </div>
         ) : null}
         <details className="settings-disclosure">
           <summary className="settings-disclosure__summary">
-            <span>Edit enabled models</span>
+            <span>{t("settings.models.editEnabled")}</span>
             <span>{filteredScopedModels.length}</span>
           </summary>
           <div className="settings-disclosure__body">
             <input
-              aria-label="Search enabled models"
+              aria-label={t("settings.models.searchEnabled")}
               className="settings-search"
-              placeholder="Search enabled models"
+              placeholder={t("settings.models.searchEnabled")}
               value={scopedQuery}
               onChange={(event) => setScopedQuery(event.target.value)}
             />
@@ -156,7 +156,7 @@ export function SettingsModelsSection({
                     <input
                       checked={enabled}
                       disabled={isLast}
-                      title={isLast ? "At least one model must be enabled" : undefined}
+                      title={isLast ? t("settings.models.atLeastOneEnabled") : undefined}
                       type="checkbox"
                       onChange={(event) => togglePattern(pattern, event.target.checked)}
                     />
@@ -165,57 +165,6 @@ export function SettingsModelsSection({
                       <span className="settings-list__meta"> · {pattern}</span>
                     </span>
                   </label>
-                );
-              })}
-            </div>
-          </div>
-        </details>
-      </SettingsGroup>
-
-      <SettingsGroup title="All models" description="Browse the full model catalog. Enable models above to use them.">
-        <details className="settings-disclosure">
-          <summary className="settings-disclosure__summary">
-            <span>Browse full model inventory</span>
-            <span>{filteredModels.length}</span>
-          </summary>
-          <div className="settings-disclosure__body">
-            <input
-              aria-label="Search models"
-              className="settings-search"
-              placeholder="Search models"
-              value={modelQuery}
-              onChange={(event) => setModelQuery(event.target.value)}
-            />
-            <div className="settings-list">
-              {filteredModels.map((model) => {
-                const pattern = `${model.providerId}/${model.modelId}`;
-                const enabled = activeScopedSet.has(pattern);
-                const isLast = enabled && activeScopedPatterns.length <= 1;
-                return (
-                  <div
-                    className="settings-option"
-                    key={`${model.providerId}:${model.modelId}`}
-                  >
-                    <span className="settings-option__title">{model.providerName} · {model.label}</span>
-                    <span className="settings-option__meta">
-                      {model.providerId}:{model.modelId}
-                      {model.reasoning ? " · reasoning" : ""}
-                      {model.supportsImages ? " · images" : ""}
-                      {!model.available ? " · not logged in" : ""}
-                    </span>
-                    {model.available ? (
-                      <label className="settings-toggle settings-toggle--inline">
-                        <input
-                          checked={enabled}
-                          disabled={isLast}
-                          title={isLast ? "At least one model must be enabled" : undefined}
-                          type="checkbox"
-                          onChange={(event) => togglePattern(pattern, event.target.checked)}
-                        />
-                        <span className="sr-only">Enable</span>
-                      </label>
-                    ) : null}
-                  </div>
                 );
               })}
             </div>

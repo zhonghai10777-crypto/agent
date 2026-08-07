@@ -83,10 +83,7 @@ function validateInput(input: CustomProviderInput): void {
   if (!isValidHttpBaseUrl(input.baseUrl)) {
     throw new Error(`Base URL must start with http:// or https://: ${JSON.stringify(input.baseUrl)}`);
   }
-  if (input.models.length === 0) {
-    throw new Error("At least one model is required.");
-  }
-  for (const model of input.models) {
+  for (const model of input.models ?? []) {
     if (!model.id || typeof model.id !== "string") {
       throw new Error("Model id is required.");
     }
@@ -105,7 +102,7 @@ function toProviderConfig(input: CustomProviderInput): Record<string, unknown> {
     // placeholder so custom-endpoint keys never land on disk in plaintext.
     apiKey: CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
     [PI_GUI_CUSTOM_PROVIDER_MARKER]: true,
-    models: input.models.map((model) => {
+    models: (input.models ?? []).map((model) => {
       const entry: Record<string, unknown> = { id: model.id };
       if (model.contextWindow !== undefined) {
         entry.contextWindow = model.contextWindow;

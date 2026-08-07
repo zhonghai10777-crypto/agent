@@ -12,6 +12,7 @@ import type {
   CreateWorktreeInput,
   DesktopAppState,
   ForkThreadInput,
+  Locale,
   ModelSettingsScopeMode,
   NotificationPreferences,
   RemoveWorktreeInput,
@@ -40,7 +41,7 @@ export interface CustomProviderConfig {
   readonly providerId: string;
   readonly baseUrl: string;
   readonly apiKey?: string;
-  readonly models: readonly CustomProviderModelConfig[];
+  readonly models?: readonly CustomProviderModelConfig[];
 }
 
 export interface CustomProviderProbeInput {
@@ -146,6 +147,7 @@ export const desktopIpc = {
   getResolvedTheme: "pi-gui:get-resolved-theme",
   setThemeMode: "pi-gui:set-theme-mode",
   setThemePresetId: "pi-gui:set-theme-preset-id",
+  setLocale: "pi-gui:set-locale",
   themeChanged: "pi-gui:theme-changed",
   ping: "app:ping",
   openExternal: "app:open-external",
@@ -417,5 +419,6 @@ export interface PiDesktopApi {
   getThemeMode(): Promise<"system" | "light" | "dark">;
   getResolvedTheme(): Promise<"light" | "dark">;
   setThemeMode(mode: "system" | "light" | "dark"): Promise<DesktopAppState>;
+  setLocale(locale: Locale): Promise<DesktopAppState>;
   onThemeChanged(callback: (theme: "light" | "dark") => void): () => void;
 }

@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { ModelSettingsScopeMode } from "./desktop-state";
-import { SettingsGroup, SettingsInfoRow, SettingsRow } from "./settings-utils";
+import type { Locale, ModelSettingsScopeMode } from "./desktop-state";
+import { useI18n } from "./i18n/I18nProvider";
+import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly integratedTerminalShell: string;
+  readonly locale: Locale;
+  readonly onSetLocale: (locale: Locale) => void;
   readonly onSetModelSettingsScopeMode: (mode: ModelSettingsScopeMode) => void;
   readonly onSetIntegratedTerminalShell: (shellPath: string) => void;
   readonly onToggleSkillCommands: (enabled: boolean) => void;
@@ -16,10 +19,13 @@ export function SettingsGeneralSection({
   runtime,
   modelSettingsScopeMode,
   integratedTerminalShell,
+  locale,
+  onSetLocale,
   onSetModelSettingsScopeMode,
   onSetIntegratedTerminalShell,
   onToggleSkillCommands,
 }: SettingsGeneralSectionProps) {
+  const { t } = useI18n();
   const connectedCount = runtime?.providers.filter((p) => p.hasAuth).length ?? 0;
   const [terminalShellDraft, setTerminalShellDraft] = useState(integratedTerminalShell);
 
@@ -35,45 +41,74 @@ export function SettingsGeneralSection({
 
   return (
     <>
-      <SettingsGroup title="General">
-        <SettingsInfoRow
-          label="Connected providers"
-          value={connectedCount > 0 ? String(connectedCount) : "None"}
-        />
-        <SettingsInfoRow label="Discovered skills" value={String(runtime?.skills.length ?? 0)} />
-        <SettingsRow title="Model settings scope" description="Choose whether model defaults apply everywhere or per repo.">
+      <SettingsGroup title={t("settings.section.general")}>
+        <SettingsRow title={t("settings.general.language")} description={t("settings.general.languageDesc")}>
           <div className="settings-pill-row">
             <button
-              className={`settings-pill${modelSettingsScopeMode === "app-global" ? " settings-pill--active" : ""}`}
+              className={settingsPill(locale === "zh-CN")}
+              type="button"
+              aria-pressed={locale === "zh-CN"}
+              onClick={() => onSetLocale("zh-CN")}
+            >
+              简体中文
+            </button>
+            <button
+              className={settingsPill(locale === "en")}
+              type="button"
+              aria-pressed={locale === "en"}
+              onClick={() => onSetLocale("en")}
+            >
+              English
+            </button>
+          </div>
+        </SettingsRow>
+        <SettingsInfoRow
+          label={t("settings.general.connectedProviders")}
+          value={connectedCount > 0 ? String(connectedCount) : t("settings.general.none")}
+        />
+        <SettingsInfoRow label={t("settings.general.discoveredSkills")} value={String(runtime?.skills.length ?? 0)} />
+        <SettingsRow
+          title={t("settings.general.modelSettingsScope")}
+          description={t("settings.general.modelSettingsScopeDesc")}
+        >
+          <div className="settings-pill-row">
+            <button
+              className={settingsPill(modelSettingsScopeMode === "app-global")}
               type="button"
               aria-pressed={modelSettingsScopeMode === "app-global"}
               onClick={() => onSetModelSettingsScopeMode("app-global")}
             >
-              App global
+              {t("settings.general.appGlobal")}
             </button>
             <button
-              className={`settings-pill${modelSettingsScopeMode === "per-repo" ? " settings-pill--active" : ""}`}
+              className={settingsPill(modelSettingsScopeMode === "per-repo")}
               type="button"
               aria-pressed={modelSettingsScopeMode === "per-repo"}
               onClick={() => onSetModelSettingsScopeMode("per-repo")}
             >
-              Per repo
+              {t("settings.general.perRepo")}
             </button>
           </div>
         </SettingsRow>
-        <SettingsRow title="Enable skill slash commands" description="Keep skill slash commands available in the composer.">
+        <SettingsRow
+          title={t("settings.general.enableSkillCommands")}
+          description={t("settings.general.enableSkillCommandsDesc")}
+        >
           <input
-            aria-label="Enable skill slash commands"
+            aria-label={t("settings.general.enableSkillCommands")}
             checked={runtime?.settings.enableSkillCommands ?? true}
             type="checkbox"
             onChange={(event) => onToggleSkillCommands(event.target.checked)}
           />
         </SettingsRow>
-        <SettingsRow title="Shell of integrated terminal" description="Leave blank to use your default login shell.">
+        <SettingsRow
+          title={t("settings.general.integratedShell")}
+          description={t("settings.general.integratedShellDesc")}
+        >
           <input
-            aria-label="Shell of integrated terminal"
+            aria-label={t("settings.general.integratedShell")}
             className="settings-text-input"
-            placeholder="/bin/zsh"
+            placeholder={t("settings.general.integratedShellPlaceholder")}
             spellCheck={false}
             type="text"
             value={terminalShellDraft}
@@ -88,13 +123,13 @@ export function SettingsGeneralSection({
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title="Shortcuts">
-        <SettingsInfoRow label="New thread" value="Cmd+Shift+O" />
-        <SettingsInfoRow label="Open settings" value="Cmd+," />
-        <SettingsInfoRow label="Toggle terminal" value="Cmd+J" />
-        <SettingsInfoRow label="New terminal tab" value="Cmd+T" />
-        <SettingsInfoRow label="Send message" value="Enter" />
-        <SettingsInfoRow label="New line" value="Shift+Enter" />
+      <SettingsGroup title={t("settings.general.shortcuts")}>
+        <SettingsInfoRow label={t("settings.general.shortcutNewThread")} value="Cmd+Shift+O" />
+        <SettingsInfoRow label={t("settings.general.shortcutOpenSettings")} value="Cmd+," />
+        <SettingsInfoRow label={t("settings.general.shortcutToggleTerminal")} value="Cmd+J" />
+        <SettingsInfoRow label={t("settings.general.shortcutNewTerminalTab")} value="Cmd+T" />
+        <SettingsInfoRow label={t("settings.general.shortcutSendMessage")} value="Enter" />
+        <SettingsInfoRow label={t("settings.general.shortcutNewLine")} value="Shift+Enter" />
       </SettingsGroup>
     </>
   );

@@ -7,6 +7,8 @@ import type {
 } from "@pi-gui/session-driver/types";
 import { trapDialogFocus } from "./dialog-focus";
 import { ChevronDownIcon, ChevronRightIcon } from "./icons";
+import { useI18n } from "./i18n/I18nProvider";
+import type { Translator } from "./i18n";
 
 interface TreeModalProps {
   readonly tree?: SessionTreeSnapshot;
@@ -52,6 +54,7 @@ export function TreeModal({
   onClose,
   onNavigate,
 }: TreeModalProps) {
+  const { t } = useI18n();
   const [step, setStep] = useState<"select" | "summary">("select");
   const [search, setSearch] = useState("");
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
@@ -122,8 +125,8 @@ export function TreeModal({
   }, [loading, step, summaryMode, tree]);
 
   const displayRows = useMemo(
-    () => (tree ? buildVisibleRows(tree.roots, expandedIds, search, tree.leafId) : []),
-    [expandedIds, search, tree],
+    () => (tree ? buildVisibleRows(tree.roots, expandedIds, search, tree.leafId, t) : []),
+    [expandedIds, search, tree, t],
   );
   const selectedRow = displayRows.find((row) => row.node.id === selectedId);
   const currentLeafId = tree?.leafId ?? null;
@@ -293,11 +296,11 @@ export function TreeModal({
       >
         <div className="tree-modal__header">
           <div>
-            <div className="tree-modal__eyebrow">Session tree</div>
-            <h2 className="tree-modal__title">{step === "summary" ? "Switch branch" : "Browse branches"}</h2>
+            <div className="tree-modal__eyebrow">{t("tree.title")}</div>
+            <h2 className="tree-modal__title">{step === "summary" ? t("tree.switchBranch") : t("tree.browseBranches")}</h2>
           </div>
           <button
-            aria-label="Close tree modal"
+            aria-label={t("tree.close")}
             className="tree-modal__close"
             disabled={submitting}
             type="button"
@@ -321,7 +324,7 @@ export function TreeModal({
 
         {loading ? (
           <div className="tree-modal__loading" data-testid="tree-modal-loading">
-            Loading session tree…
+            {t("tree.loading")}
           </div>
         ) : null}
 
@@ -330,10 +333,10 @@ export function TreeModal({
             <div className="tree-modal__search-row">
               <input
                 autoFocus
-                aria-label="Search session tree"
+                aria-label={t("tree.searchAria")}
                 className="tree-modal__search"
                 data-testid="tree-modal-search"
-                placeholder="Search visible tree entries"
+                placeholder={t("tree.searchPlaceholder")}
                 ref={searchRef}
                 value={search}
                 onChange={(event) => {
@@ -343,27 +346,28 @@ export function TreeModal({
               />
               <div className="tree-modal__meta">
                 {searching
-                  ? "Search expands matching branches."
+                  ? t("tree.searchExpands")
                   : currentLeafId
-                    ? "Tree opens at the most recent entries."
-                    : "Select a node to branch from it."}
+                    ? t("tree.opensAtRecent")
+                    : t("tree.selectNodeToBranch")}
               </div>
             </div>
 
             <div className="tree-modal__list" data-testid="tree-modal-list" ref={setListElement}>
               {displayRows.length === 0 ? (
-                <div className="tree-modal__empty">No matching nodes.</div>
+                <div className="tree-modal__empty">{t("tree.noMatchingNodes")}</div>
               ) : (
                 displayRows.map((row) => {
                   const isSelected = row.node.id === selectedId;
                   const isCurrentLeaf = row.node.id === currentLeafId;
+                  const line = buildTreeRowLine(row, currentLeafId, t);
                   return (
                     <div
                       className={`tree-row ${isSelected ? "tree-row--selected" : ""} ${isCurrentLeaf ? "tree-row--active" : ""}`}
                       key={row.node.id}
                     >
                       <button
-                        aria-label={row.expanded ? "Collapse branch" : "Expand branch"}
+                        aria-label={row.expanded ? t("tree.collapseBranch") : t("tree.expandBranch")}
                         className={`tree-row__toggle ${row.hasChildren ? "" : "tree-row__toggle--hidden"}`}
                         disabled={searching || !row.hasChildren}
                         tabIndex={-1}
@@ -376,7 +380,7 @@ export function TreeModal({
                         className="tree-row__content"
                         data-tree-selected={isSelected ? "true" : undefined}
                         data-testid={`tree-row-${row.node.id}`}
-                        title={buildTreeRowLine(row, currentLeafId)}
+                        title={line}
                         type="button"
                         onClick={() => {
                           cancelAutoScroll();
@@ -390,7 +394,7 @@ export function TreeModal({
                           }
                         }}
                       >
-                        <span className="tree-row__line">{buildTreeRowLine(row, currentLeafId)}</span>
+                        <span className="tree-row__line">{line}</span>
                       </button>
                     </div>
                   );
@@ -399,12 +403,10 @@ export function TreeModal({
             </div>
 
             <div className="tree-modal__footer">
-              <div className="tree-modal__hint">
-                Selecting a user prompt reopens it in the composer. Selecting any other node jumps directly there.
-              </div>
+              <div className="tree-modal__hint">{t("tree.reopenHint")}</div>
               <div className="tree-modal__actions">
                 <button className="button button--secondary" type="button" onClick={onClose}>
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button
                   className="button button--primary"
@@ -412,7 +414,7 @@ export function TreeModal({
                   type="button"
                   onClick={() => setStep("summary")}
                 >
-                  {currentLeafSelected ? "Already here" : "Continue"}
+                  {currentLeafSelected ? t("tree.alreadyHere") : t("tree.continue")}
                 </button>
               </div>
             </div>
@@ -421,42 +423,40 @@ export function TreeModal({
 
         {!loading && tree && step === "summary" ? (
           <div className="tree-modal__summary-step" data-testid="tree-summary-step">
-            <div className="tree-modal__summary-copy">
-              You&apos;re leaving the current branch. Choose whether pi should summarize the abandoned path before switching.
-            </div>
+            <div className="tree-modal__summary-copy">{t("tree.leaveBranchSummary")}</div>
             <div className="tree-summary-options">
               <button
                 className={`tree-summary-option ${summaryMode === "none" ? "tree-summary-option--selected" : ""}`}
                 type="button"
                 onClick={() => setSummaryMode("none")}
               >
-                <span className="tree-summary-option__title">No summary</span>
-                <span className="tree-summary-option__description">Jump immediately with no branch summary.</span>
+                <span className="tree-summary-option__title">{t("tree.noSummary")}</span>
+                <span className="tree-summary-option__description">{t("tree.noSummaryDesc")}</span>
               </button>
               <button
                 className={`tree-summary-option ${summaryMode === "summary" ? "tree-summary-option--selected" : ""}`}
                 type="button"
                 onClick={() => setSummaryMode("summary")}
               >
-                <span className="tree-summary-option__title">Summarize</span>
-                <span className="tree-summary-option__description">Generate a branch summary before switching.</span>
+                <span className="tree-summary-option__title">{t("tree.summarize")}</span>
+                <span className="tree-summary-option__description">{t("tree.summarizeDesc")}</span>
               </button>
               <button
                 className={`tree-summary-option ${summaryMode === "custom" ? "tree-summary-option--selected" : ""}`}
                 type="button"
                 onClick={() => setSummaryMode("custom")}
               >
-                <span className="tree-summary-option__title">Summarize with custom prompt</span>
-                <span className="tree-summary-option__description">Provide extra instructions for the summary.</span>
+                <span className="tree-summary-option__title">{t("tree.summarizeCustom")}</span>
+                <span className="tree-summary-option__description">{t("tree.summarizeCustomDesc")}</span>
               </button>
             </div>
 
             {summaryMode === "custom" ? (
               <textarea
                 autoFocus
-                aria-label="Custom summary instructions"
+                aria-label={t("tree.customInstructionsAria")}
                 className="tree-modal__custom-instructions"
-                placeholder="Focus the summary on decisions, changed files, and unresolved risks."
+                placeholder={t("tree.summaryPlaceholder")}
                 ref={customInstructionsRef}
                 value={customInstructions}
                 onChange={(event) => setCustomInstructions(event.target.value)}
@@ -466,10 +466,10 @@ export function TreeModal({
             <div className="tree-modal__footer">
               <div className="tree-modal__hint">
                 {submitting
-                  ? "Switching branches…"
+                  ? t("tree.switchingBranches")
                   : summaryMode === "none"
-                    ? "The current branch will be left as-is."
-                    : "The summary will be attached to the branch you switch to."}
+                    ? t("tree.currentBranchLeftAsIs")
+                    : t("tree.summaryAttached")}
               </div>
               <div className="tree-modal__actions">
                 <button
@@ -478,7 +478,7 @@ export function TreeModal({
                   type="button"
                   onClick={() => setStep("select")}
                 >
-                  Back
+                  {t("tree.back")}
                 </button>
                 <button
                   className="button button--primary"
@@ -487,7 +487,7 @@ export function TreeModal({
                   type="button"
                   onClick={handleSubmit}
                 >
-                  {submitting ? "Switching…" : "Switch branch"}
+                  {submitting ? t("tree.switching") : t("tree.switchBranch")}
                 </button>
               </div>
             </div>
@@ -531,9 +531,10 @@ function buildVisibleRows(
   expandedIds: Readonly<Record<string, boolean>>,
   search: string,
   currentLeafId: string | null,
+  t: Translator,
 ): readonly TreeRow[] {
   const tokens = search.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const filteredTree = buildFilteredTree(nodes, currentLeafId, tokens);
+  const filteredTree = buildFilteredTree(nodes, currentLeafId, tokens, t);
   const activePathIds = collectActivePathIds(filteredTree, currentLeafId);
   return flattenTreeRows(filteredTree, currentLeafId, activePathIds, expandedIds, tokens.length > 0);
 }
@@ -542,12 +543,13 @@ function buildFilteredTree(
   nodes: readonly SessionTreeNodeSnapshot[],
   currentLeafId: string | null,
   searchTokens: readonly string[],
+  t: Translator,
 ): readonly SessionTreeNodeSnapshot[] {
   const filtered: SessionTreeNodeSnapshot[] = [];
   for (const node of nodes) {
-    const nextChildren = buildFilteredTree(node.children, currentLeafId, searchTokens);
+    const nextChildren = buildFilteredTree(node.children, currentLeafId, searchTokens, t);
     const visible = shouldShowNodeInView(node, currentLeafId);
-    const searchMatches = searchTokens.length === 0 || matchesTreeSearch(node, searchTokens);
+    const searchMatches = searchTokens.length === 0 || matchesTreeSearch(node, searchTokens, t);
     if (visible && (searchMatches || nextChildren.length > 0)) {
       filtered.push({
         ...node,
@@ -579,8 +581,8 @@ function hasVisiblePreview(preview: string | undefined): boolean {
   return typeof preview === "string" && preview.trim().length > 0;
 }
 
-function matchesTreeSearch(node: SessionTreeNodeSnapshot, tokens: readonly string[]): boolean {
-  const text = nodeSearchText(node);
+function matchesTreeSearch(node: SessionTreeNodeSnapshot, tokens: readonly string[], t: Translator): boolean {
+  const text = nodeSearchText(node, t);
   return tokens.every((token) => text.includes(token));
 }
 
@@ -726,12 +728,12 @@ function flattenTreeRows(
   return rows;
 }
 
-function buildTreeRowLine(row: TreeRow, currentLeafId: string | null): string {
+function buildTreeRowLine(row: TreeRow, currentLeafId: string | null, t: Translator): string {
   const prefix = buildTreePrefix(row);
   const pathMarker = row.node.id === currentLeafId ? "• " : row.isOnActivePath ? "· " : "  ";
   const label = row.node.label ? `[${row.node.label}] ` : "";
-  const current = row.node.id === currentLeafId ? "  ← current" : "";
-  return `${prefix}${pathMarker}${label}${formatTreeNodeDisplayText(row.node)}${current}`;
+  const current = row.node.id === currentLeafId ? t("tree.rowCurrent") : "";
+  return `${prefix}${pathMarker}${label}${formatTreeNodeDisplayText(row.node, t)}${current}`;
 }
 
 function buildTreePrefix(row: TreeRow): string {
@@ -764,38 +766,38 @@ function buildTreePrefix(row: TreeRow): string {
   return chars.join("");
 }
 
-function formatTreeNodeDisplayText(node: SessionTreeNodeSnapshot): string {
+function formatTreeNodeDisplayText(node: SessionTreeNodeSnapshot, t: Translator): string {
   switch (node.kind) {
     case "message":
       switch (node.role) {
         case "user":
-          return `user: ${node.preview ?? "(empty)"}`;
+          return t("tree.rowUser", { preview: node.preview ?? t("tree.rowEmpty") });
         case "assistant":
-          return `assistant: ${node.preview ?? "(no content)"}`;
+          return t("tree.rowAssistant", { preview: node.preview ?? t("tree.rowNoContent") });
         case "toolResult":
-          return node.preview ?? "[tool]";
+          return node.preview ?? t("tree.rowTool");
         case "bashExecution":
-          return `[bash]: ${node.preview ?? "(no command)"}`;
+          return t("tree.rowBash", { preview: node.preview ?? t("tree.rowNoCommand") });
         case "branchSummary":
-          return `[branch summary]: ${node.preview ?? "(empty)"}`;
+          return t("tree.rowBranchSummary", { preview: node.preview ?? t("tree.rowEmpty") });
         case "compactionSummary":
-          return `[compaction]: ${node.preview ?? "(empty)"}`;
+          return t("tree.rowCompaction", { preview: node.preview ?? t("tree.rowEmpty") });
         default:
           return `[${node.role ?? "message"}]${node.preview ? ` ${node.preview}` : ""}`;
       }
     case "custom_message":
-      return `[${node.customType ?? "custom"}]: ${node.preview ?? "(empty)"}`;
+      return t("tree.rowCustom", { type: node.customType ?? "custom", preview: node.preview ?? t("tree.rowEmpty") });
     case "compaction":
-      return `[compaction: ${node.preview ?? "summary"}]`;
+      return t("tree.rowCompactionBare", { preview: node.preview ?? t("tree.rowSummaryFallback") });
     case "branch_summary":
-      return `[branch summary]: ${node.preview ?? "(empty)"}`;
+      return t("tree.rowBranchSummary", { preview: node.preview ?? t("tree.rowEmpty") });
     default:
       return node.preview ? `${node.title}: ${node.preview}` : node.title;
   }
 }
 
-function nodeSearchText(node: SessionTreeNodeSnapshot): string {
-  return [node.title, node.preview, node.label, node.role, node.customType, formatTreeNodeDisplayText(node)]
+function nodeSearchText(node: SessionTreeNodeSnapshot, t: Translator): string {
+  return [node.title, node.preview, node.label, node.role, node.customType, formatTreeNodeDisplayText(node, t)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();

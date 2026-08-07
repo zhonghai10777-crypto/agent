@@ -11,6 +11,8 @@ export type WorkspaceKind = "primary" | "worktree";
 export type WorktreeStatus = "ready" | "missing" | "error";
 export type NewThreadEnvironment = "local" | "worktree";
 export type ThemeMode = "system" | "light" | "dark";
+export type Locale = "en" | "zh-CN";
+export const DEFAULT_LOCALE: Locale = "zh-CN";
 export const themePresetIds = [
   "default",
   "catppuccin",
@@ -26,6 +28,10 @@ export type ModelSettingsScopeMode = "app-global" | "per-repo";
 
 export function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
+}
+
+export function isLocale(value: unknown): value is Locale {
+  return value === "en" || value === "zh-CN";
 }
 
 export function isThemePresetId(value: unknown): value is ThemePresetId {
@@ -321,6 +327,7 @@ export interface DesktopAppState {
   readonly globalModelSettings: ModelSettingsSnapshot;
   readonly themeMode: ThemeMode;
   readonly themePresetId: ThemePresetId;
+  readonly locale: Locale;
   readonly sidebarCollapsed: boolean;
   readonly enableTransparency: boolean;
   readonly startupDiagnostics: readonly StartupDiagnostic[];
@@ -371,6 +378,7 @@ export function createEmptyDesktopAppState(): DesktopAppState {
     },
     themeMode: "system",
     themePresetId: "default",
+    locale: DEFAULT_LOCALE,
     sidebarCollapsed: false,
     enableTransparency: false,
     startupDiagnostics: [],

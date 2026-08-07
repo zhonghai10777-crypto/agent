@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
+import type { Translator } from "./i18n";
 
 export type SettingsSection = "appearance" | "general" | "providers" | "models" | "notifications";
 
@@ -15,54 +16,52 @@ export function settingsPill(active: boolean): string {
   return `settings-pill${active ? " settings-pill--active" : ""}`;
 }
 
-export function labelForThinking(level: NonNullable<RuntimeSettingsSnapshot["defaultThinkingLevel"]>): string {
-  if (level === "xhigh") {
-    return "Extra High";
+export function labelForThinking(
+  level: NonNullable<RuntimeSettingsSnapshot["defaultThinkingLevel"]>,
+  t: Translator,
+): string {
+  switch (level) {
+    case "low":
+      return t("thinking.low");
+    case "medium":
+      return t("thinking.medium");
+    case "high":
+      return t("thinking.high");
+    case "xhigh":
+      return t("thinking.xhigh");
+    default:
+      return t("thinking.max");
   }
-  return level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-export function sectionTitle(section: SettingsSection): string {
+export function sectionTitle(section: SettingsSection, t: Translator): string {
   switch (section) {
     case "appearance":
-      return "Appearance";
+      return t("settings.section.appearance");
     case "providers":
-      return "Providers";
+      return t("settings.section.providers");
     case "models":
-      return "Models";
+      return t("settings.section.models");
     case "notifications":
-      return "Notifications";
+      return t("settings.section.notifications");
     default:
-      return "General";
+      return t("settings.section.general");
   }
 }
 
-export function sectionDescription(section: SettingsSection, workspaceName: string): string {
+export function sectionDescription(section: SettingsSection, workspaceName: string, t: Translator): string {
   switch (section) {
     case "appearance":
-      return "Choose a preset palette and light, dark, or automatic system mode.";
+      return t("settings.section.appearanceDesc");
     case "providers":
-      return `Connect providers and manage auth for ${workspaceName}.`;
+      return t("settings.section.providersDesc", { workspaceName });
     case "models":
-      return "Choose the default model and which models appear in pickers.";
+      return t("settings.section.modelsDesc");
     case "notifications":
-      return "Manage both macOS notification access and which background events should alert you.";
+      return t("settings.section.notificationsDesc");
     default:
-      return "Keep the high-value app and runtime controls close to hand.";
+      return t("settings.section.generalDesc");
   }
-}
-
-export function filterProviders(
-  providers: readonly RuntimeSnapshot["providers"][number][],
-  query: string,
-): readonly RuntimeSnapshot["providers"][number][] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) {
-    return providers;
-  }
-  return providers.filter((provider) =>
-    [provider.id, provider.name, provider.authType].some((value) => value.toLowerCase().includes(normalized)),
-  );
 }
 
 export function filterModels(
@@ -138,18 +137,20 @@ export function ProviderRow({
   onLoginProvider,
   onLogoutProvider,
   onConfigureApiKey,
+  t,
 }: {
   readonly provider: RuntimeSnapshot["providers"][number];
   readonly onLoginProvider: (providerId: string) => void;
   readonly onLogoutProvider: (providerId: string) => void;
   readonly onConfigureApiKey: (provider: RuntimeSnapshot["providers"][number]) => void;
+  readonly t: Translator;
 }) {
-  const action = resolveProviderAction(provider, onLoginProvider, onLogoutProvider, onConfigureApiKey);
+  const action = resolveProviderAction(provider, t, onLoginProvider, onLogoutProvider, onConfigureApiKey);
   return (
     <div className="settings-row">
       <div className="settings-row__label">
         <div className="settings-row__title">{provider.name}</div>
-        <div className="settings-row__description">{describeProviderStatus(provider)}</div>
+        <div className="settings-row__description">{describeProviderStatus(provider, t)}</div>
       </div>
       {action ? (
         <div className="settings-row__control">
@@ -167,29 +168,30 @@ export function ProviderRow({
   );
 }
 
-function describeProviderStatus(provider: RuntimeSnapshot["providers"][number]): string {
+function describeProviderStatus(provider: RuntimeSnapshot["providers"][number], t: Translator): string {
   switch (provider.authSource) {
     case "oauth":
-      return "OAuth · connected";
+      return t("provider.oauthConnected");
     case "auth_file":
-      return "API key · connected";
+      return t("provider.apiKeyConnected");
     case "env":
-      return "Environment variable · connected";
+      return t("provider.envConnected");
     case "external":
-      return provider.hasAuth ? "Configured externally · connected" : "Configure externally";
+      return provider.hasAuth ? t("provider.externalConnected") : t("provider.configureExternally");
     default:
       if (provider.oauthSupported) {
-        return "OAuth";
+        return t("provider.oauth");
       }
       if (provider.apiKeySetupSupported) {
-        return "API key";
+        return t("provider.apiKey");
       }
-      return provider.authType === "api_key" ? "API key" : "Built in";
+      return provider.authType === "api_key" ? t("provider.apiKey") : t("provider.builtIn");
   }
 }
 
 function resolveProviderAction(
   provider: RuntimeSnapshot["providers"][number],
+  t: Translator,
   onLoginProvider: (providerId: string) => void,
   onLogoutProvider: (providerId: string) => void,
   onConfigureApiKey: (provider: RuntimeSnapshot["providers"][number]) => void,
@@ -203,7 +205,7 @@ function resolveProviderAction(
   if (provider.authSource === "oauth") {
     return {
       disabled: false,
-      label: "Logout",
+      label: t("provider.logout"),
       onClick: () => onLogoutProvider(provider.id),
     };
   }
@@ -211,7 +213,7 @@ function resolveProviderAction(
   if (provider.oauthSupported && provider.authSource === "none") {
     return {
       disabled: false,
-      label: "Login",
+      label: t("provider.login"),
       onClick: () => onLoginProvider(provider.id),
     };
   }
@@ -219,7 +221,7 @@ function resolveProviderAction(
   if (provider.apiKeySetupSupported && (provider.authSource === "none" || provider.authSource === "auth_file")) {
     return {
       disabled: false,
-      label: provider.authSource === "auth_file" ? "Manage" : "Set API key",
+      label: provider.authSource === "auth_file" ? t("provider.manage") : t("settings.providers.setApiKey"),
       onClick: () => onConfigureApiKey(provider),
     };
   }
@@ -230,6 +232,6 @@ function resolveProviderAction(
 
   return {
     disabled: true,
-    label: "Configure externally",
+    label: t("provider.configureExternally"),
   };
 }

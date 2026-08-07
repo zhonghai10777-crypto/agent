@@ -7,17 +7,18 @@ import {
   type CustomProviderConfig,
   type DesktopNotificationPermissionStatus,
 } from "../ipc";
+import { useI18n } from "../i18n/I18nProvider";
 import { SkillsView } from "../skills-view";
 import { ExtensionsView } from "../extensions-view";
 import { SettingsView, type SettingsSection } from "../settings-view";
 import { SecondarySurface } from "../secondary-surface";
 
 const settingsNav = [
-  { id: "appearance", label: "Appearance" },
-  { id: "general", label: "General" },
-  { id: "providers", label: "Providers" },
-  { id: "models", label: "Models" },
-  { id: "notifications", label: "Notifications" },
+  { id: "appearance", labelKey: "settings.section.appearance" },
+  { id: "general", labelKey: "settings.section.general" },
+  { id: "providers", labelKey: "settings.section.providers" },
+  { id: "models", labelKey: "settings.section.models" },
+  { id: "notifications", labelKey: "settings.section.notifications" },
 ] as const;
 
 interface SecondarySurfacesProps {
@@ -58,6 +59,7 @@ export function SecondarySurfaces({
   const [notificationPermissionStatus, setNotificationPermissionStatus] =
     useState<DesktopNotificationPermissionStatus>("unknown");
   const [notificationPermissionPending, setNotificationPermissionPending] = useState(false);
+  const { t } = useI18n();
 
   const settingsWorkspace = settingsWorkspaceId
     ? rootWorkspaceOptions.find((workspace) => workspace.id === settingsWorkspaceId)
@@ -151,7 +153,7 @@ export function SecondarySurfaces({
 
   const handleSetProviderApiKey = async (providerId: string, apiKey: string): Promise<string | undefined> => {
     if (!settingsWorkspace) {
-      return "Select a workspace first.";
+      return t("settings.selectWorkspaceBody");
     }
     const state = await updateSnapshot(api, setSnapshot, () =>
       api.setProviderApiKey(settingsWorkspace.id, providerId, apiKey),
@@ -161,7 +163,7 @@ export function SecondarySurfaces({
 
   const handleRemoveProviderApiKey = async (providerId: string): Promise<string | undefined> => {
     if (!settingsWorkspace) {
-      return "Select a workspace first.";
+      return t("settings.selectWorkspaceBody");
     }
     const state = await updateSnapshot(api, setSnapshot, () => api.logoutProvider(settingsWorkspace.id, providerId));
     return state.lastError;
@@ -169,7 +171,7 @@ export function SecondarySurfaces({
 
   const handleSaveCustomProvider = async (config: CustomProviderConfig): Promise<string | undefined> => {
     if (!settingsWorkspace) {
-      return "Select a workspace first.";
+      return t("settings.selectWorkspaceBody");
     }
     const state = await updateSnapshot(api, setSnapshot, () => api.setCustomProvider(settingsWorkspace.id, config));
     return state.lastError;
@@ -177,7 +179,7 @@ export function SecondarySurfaces({
 
   const handleDeleteCustomProvider = async (providerId: string): Promise<string | undefined> => {
     if (!settingsWorkspace) {
-      return "Select a workspace first.";
+      return t("settings.selectWorkspaceBody");
     }
     const state = await updateSnapshot(api, setSnapshot, () =>
       api.deleteCustomProvider(settingsWorkspace.id, providerId),
@@ -215,6 +217,10 @@ export function SecondarySurfaces({
 
   const handleSetThemeMode = (mode: "system" | "light" | "dark") => {
     void updateSnapshot(api, setSnapshot, () => api.setThemeMode(mode));
+  };
+
+  const handleSetLocale = (locale: "en" | "zh-CN") => {
+    void updateSnapshot(api, setSnapshot, () => api.setLocale(locale));
   };
 
   const handleSetThemePresetId = (presetId: DesktopAppState["themePresetId"]) => {
@@ -256,10 +262,10 @@ export function SecondarySurfaces({
 
   if (activeView === "skills") {
     return (
-      <SecondarySurface onBack={onBack} testId="skills-surface" title="Skills">
+      <SecondarySurface onBack={onBack} testId="skills-surface" title={t("skills.title")}>
         <div className="surface-toolbar">
           <label className="surface-toolbar__field">
-            <span>Workspace</span>
+            <span>{t("app.workspace")}</span>
             <select
               value={skillsWorkspace?.id ?? ""}
               onChange={(event) => onSelectSkillsWorkspace(event.target.value)}
@@ -287,7 +293,7 @@ export function SecondarySurfaces({
             onTrySkill(
               skill.filePath
                 ? `${skill.slashCommand} `
-                : "Create a new skill for this workspace and explain which files you will add.",
+                : t("skills.createNewSkillBody"),
             )
           }
         />
@@ -297,10 +303,10 @@ export function SecondarySurfaces({
 
   if (activeView === "extensions") {
     return (
-      <SecondarySurface onBack={onBack} testId="extensions-surface" title="Extensions">
+      <SecondarySurface onBack={onBack} testId="extensions-surface" title={t("extensions.title")}>
         <div className="surface-toolbar">
           <label className="surface-toolbar__field">
-            <span>Workspace</span>
+            <span>{t("app.workspace")}</span>
             <select
               value={extensionsWorkspace?.id ?? ""}
               onChange={(event) => onSelectExtensionsWorkspace(event.target.value)}
@@ -333,17 +339,17 @@ export function SecondarySurfaces({
   return (
     <SecondarySurface
       activeNavId={settingsSection}
-      navItems={settingsNav}
+      navItems={settingsNav.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
       onBack={onBack}
       onSelectNav={(section) => onSelectSettingsSection(section as SettingsSection)}
       testId="settings-surface"
-      title="Settings"
+      title={t("settings.emptyTitle")}
     >
       {settingsSection === "providers" ||
       (settingsSection === "models" && snapshot.modelSettingsScopeMode === "per-repo") ? (
         <div className="surface-toolbar">
           <label className="surface-toolbar__field">
-            <span>Workspace</span>
+            <span>{t("app.workspace")}</span>
             <select
               value={settingsWorkspace?.id ?? ""}
               onChange={(event) => onSelectSettingsWorkspace(event.target.value)}
@@ -386,6 +392,8 @@ export function SecondarySurfaces({
         onSetThemePresetId={handleSetThemePresetId}
         onSetThinkingLevel={handleSetThinkingLevel}
         onToggleSkillCommands={handleToggleSkillCommands}
+        locale={snapshot.locale}
+        onSetLocale={handleSetLocale}
         onSetEnableTransparency={(enabled) => {
           void updateSnapshot(api, setSnapshot, () => api.setEnableTransparency(enabled));
         }}

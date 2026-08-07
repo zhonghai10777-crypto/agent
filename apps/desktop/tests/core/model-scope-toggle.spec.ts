@@ -41,23 +41,23 @@ test("switches between app-global and per-repo model scope while worktrees inher
     await createNamedThread(window, "Repo A global session", { workspaceName: rootWorkspaceA.name });
     await expect(window.locator(".topbar__session")).toHaveText("Repo A global session");
     await expectComposerModelState(window, {
-      activeModel: "openai:gpt-5",
-      visibleModelLabels: ["GPT-5", "GPT-4o"],
-      hiddenModelLabels: ["GPT-4 Turbo"],
+      activeModel: "test-openai:gpt-5",
+      visibleModelLabels: ["gpt-5", "gpt-4o"],
+      hiddenModelLabels: ["gpt-4-turbo"],
     });
 
     await createNamedThread(window, "Repo B global session", { workspaceName: rootWorkspaceB.name });
     await expect(window.locator(".topbar__session")).toHaveText("Repo B global session");
     await expectComposerModelState(window, {
-      activeModel: "openai:gpt-5",
-      visibleModelLabels: ["GPT-5", "GPT-4o"],
-      hiddenModelLabels: ["GPT-4 Turbo"],
+      activeModel: "test-openai:gpt-5",
+      visibleModelLabels: ["gpt-5", "gpt-4o"],
+      hiddenModelLabels: ["gpt-4-turbo"],
     });
 
     await openSettings(window);
     await openSettingsSection(window, "Models");
     await expect(window.locator(".surface-toolbar__field")).toHaveCount(0);
-    await expect(window.locator(".settings-select")).toHaveValue("openai:gpt-5");
+    await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-5");
 
     await openSettingsSection(window, "General");
     await window.getByRole("button", { name: "Per repo" }).click();
@@ -68,71 +68,71 @@ test("switches between app-global and per-repo model scope while worktrees inher
     await expect(window.locator(".surface-toolbar__field option")).toHaveCount(2);
     await window.locator(".surface-toolbar__field select").selectOption({ label: rootWorkspaceA.name });
     await expect(window.locator(".surface-toolbar__field select")).toHaveValue(rootWorkspaceA.id);
-    await expect(window.locator(".settings-select")).toHaveValue("openai:gpt-5");
-    await setEnabledModels(window, ["openai/gpt-4o", "openai/gpt-4-turbo"], ["openai/gpt-5"]);
-    await window.locator(".settings-select").selectOption("openai:gpt-4o");
-    await expect(window.locator(".settings-select")).toHaveValue("openai:gpt-4o");
+    await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-5");
+    await setEnabledModels(window, ["test-openai/gpt-4o", "test-openai/gpt-4-turbo"], ["test-openai/gpt-5"]);
+    await window.locator(".settings-select").selectOption("test-openai:gpt-4o");
+    await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-4o");
 
     await window.locator(".surface-toolbar__field select").selectOption({ label: rootWorkspaceB.name });
-    await expect(window.locator(".settings-select")).toHaveValue("openai:gpt-5");
+    await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-5");
 
     await window.getByRole("button", { name: "Back to app", exact: true }).click();
     await selectSession(window, "Repo B global session");
     await expectComposerModelState(window, {
-      activeModel: "openai:gpt-5",
-      visibleModelLabels: ["GPT-5", "GPT-4o"],
-      hiddenModelLabels: ["GPT-4 Turbo"],
+      activeModel: "test-openai:gpt-5",
+      visibleModelLabels: ["gpt-5", "gpt-4o"],
+      hiddenModelLabels: ["gpt-4-turbo"],
     });
 
     await startThreadViaIpc(window, {
       workspaceName: rootWorkspaceA.name,
       environment: "worktree",
       prompt: "",
-      provider: "openai",
+      provider: "test-openai",
       modelId: "gpt-4o",
     });
     await expect(window.locator(".topbar__session")).toHaveText("New thread");
     await expectComposerModelState(window, {
-      activeModel: "openai:gpt-4o",
-      visibleModelLabels: ["GPT-4o", "GPT-4 Turbo"],
-      hiddenModelLabels: ["GPT-5"],
+      activeModel: "test-openai:gpt-4o",
+      visibleModelLabels: ["gpt-4o", "gpt-4-turbo"],
+      hiddenModelLabels: ["gpt-5"],
     });
 
     await openNewThread(window);
     await expect(window.locator(".new-thread__workspace")).toHaveValue(rootWorkspaceA.id);
     await expectNewThreadModelState(window, {
-      activeModel: "openai:gpt-4o",
-      visibleModelLabels: ["GPT-4o", "GPT-4 Turbo"],
-      hiddenModelLabels: ["GPT-5"],
+      activeModel: "test-openai:gpt-4o",
+      visibleModelLabels: ["gpt-4o", "gpt-4-turbo"],
+      hiddenModelLabels: ["gpt-5"],
     });
     await window.locator(".session-row--active .session-row__select").first().click();
     await expect(window.getByTestId("new-thread-composer")).toHaveCount(0);
 
-    await selectComposerModel(window, "GPT-4 Turbo");
-    await expect(window.getByRole("button", { name: "openai:gpt-4-turbo" }).first()).toBeVisible();
+    await selectComposerModel(window, "gpt-4-turbo");
+    await expect(window.getByRole("button", { name: "test-openai:gpt-4-turbo" }).first()).toBeVisible();
 
     await openSettings(window);
     await openSettingsSection(window, "Models");
     await expect(window.locator(".surface-toolbar__field option")).toHaveCount(2);
     expect((await window.locator(".surface-toolbar__field option").allTextContents()).every((text) => !/Worktree/i.test(text))).toBeTruthy();
-    await setEnabledModels(window, ["openai/gpt-5", "openai/gpt-4-turbo"], ["openai/gpt-4o"]);
-    await window.locator(".settings-select").selectOption("openai:gpt-5");
-    await expect(window.locator(".settings-select")).toHaveValue("openai:gpt-5");
+    await setEnabledModels(window, ["test-openai/gpt-5", "test-openai/gpt-4-turbo"], ["test-openai/gpt-4o"]);
+    await window.locator(".settings-select").selectOption("test-openai:gpt-5");
+    await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-5");
 
     await window.getByRole("button", { name: "Back to app", exact: true }).click();
-    await expect(window.getByRole("button", { name: "openai:gpt-4-turbo" }).first()).toBeVisible();
+    await expect(window.getByRole("button", { name: "test-openai:gpt-4-turbo" }).first()).toBeVisible();
     await expectComposerModelOptions(window, {
-      visibleModelLabels: ["GPT-5", "GPT-4 Turbo"],
-      hiddenModelLabels: ["GPT-4o"],
+      visibleModelLabels: ["gpt-5", "gpt-4-turbo"],
+      hiddenModelLabels: ["gpt-4o"],
     });
 
     const composer = window.getByTestId("composer");
     await composer.fill("/model");
     const optionsMenu = window.getByTestId("slash-options-menu");
     await expect(optionsMenu).toBeVisible();
-    await expect(optionsMenu).toContainText("GPT-5");
-    await expect(optionsMenu).toContainText("GPT-4 Turbo");
-    await expect(optionsMenu).not.toContainText("GPT-4o");
+    await expect(optionsMenu).toContainText("gpt-5");
+    await expect(optionsMenu).toContainText("gpt-4-turbo");
+    await expect(optionsMenu).not.toContainText("gpt-4o");
   } finally {
     await harness.close();
   }

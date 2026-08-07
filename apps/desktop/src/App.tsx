@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
+import { DEFAULT_LOCALE } from "./desktop-state";
+import { I18nProvider, useI18n, useRelativeTime } from "./i18n/I18nProvider";
 import {
   getSelectedSession,
   getSelectedWorkspace,
@@ -10,7 +12,6 @@ import { buildFileWorkbenchContexts } from "./app/file-workbench-contexts";
 import { canTogglePrimarySidebar, isEventInsideTerminal } from "./app/app-shell-utils";
 import { useRunningLabel } from "./hooks/use-running-label";
 import { useTimelineScroll, type SidePanelMode } from "./hooks/use-timeline-scroll";
-import { formatRelativeTime } from "./string-utils";
 import { restoreTopmostDialogFocus } from "./dialog-focus";
 import { ComposerPanel } from "./composer-panel";
 import { DiffPanel } from "./diff-panel";
@@ -50,6 +51,24 @@ import { useSessionComposer } from "./hooks/use-session-composer";
 
 export default function App() {
   const [snapshot, setSnapshot, selectedTranscript] = useDesktopAppState();
+  return (
+    <I18nProvider locale={snapshot?.locale ?? DEFAULT_LOCALE}>
+      <AppShell snapshot={snapshot} setSnapshot={setSnapshot} selectedTranscript={selectedTranscript} />
+    </I18nProvider>
+  );
+}
+
+function AppShell({
+  snapshot,
+  setSnapshot,
+  selectedTranscript,
+}: {
+  snapshot: ReturnType<typeof useDesktopAppState>[0];
+  setSnapshot: ReturnType<typeof useDesktopAppState>[1];
+  selectedTranscript: ReturnType<typeof useDesktopAppState>[2];
+}) {
+  const { t } = useI18n();
+  const relativeTime = useRelativeTime();
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [settingsWorkspaceId, setSettingsWorkspaceId] = useState("");
   const [skillsWorkspaceId, setSkillsWorkspaceId] = useState("");
@@ -141,7 +160,7 @@ export default function App() {
   });
   const queuedComposerMessages = snapshot?.queuedComposerMessages ?? [];
   const editingQueuedMessageId = snapshot?.editingQueuedMessageId;
-  const runningLabel = useRunningLabel(selectedSession?.status === "running" ? selectedSession.runningSince : undefined);
+  const runningLabel = useRunningLabel(selectedSession?.status === "running" ? selectedSession.runningSince : undefined, t);
   const selectedSessionKey = selectedWorkspace && selectedSession ? `${selectedWorkspace.id}:${selectedSession.id}` : "";
   const { composerDraft, setComposerDraft, composerDraftRef, flushComposerDraft } = useComposerDraftSync({
     api,
@@ -220,7 +239,7 @@ export default function App() {
     setOpenTerminalSessionKey("");
     setTakeoverTerminalSessionKey("");
   }, [selectedSessionKey]);
-  const selectedExtensionDock = useMemo(() => buildExtensionDockModel(selectedExtensionUi), [selectedExtensionUi]);
+  const selectedExtensionDock = useMemo(() => buildExtensionDockModel(selectedExtensionUi, t), [selectedExtensionUi, t]);
   const displayedSessionTitle = selectedExtensionUi?.title ?? selectedSession?.title ?? "";
   const activeExtensionDialog = selectedExtensionUi?.pendingDialogs[0];
   const isSelectedExtensionDockExpanded = dockExpandedBySession[selectedSessionKey] ?? false;
@@ -585,8 +604,8 @@ export default function App() {
       <div className="shell shell--loading">
         <main className="loading-card">
           <div className="loading-card__eyebrow">pi-gui</div>
-          <h1>Loading sessions</h1>
-          <p>The desktop shell is restoring folder and thread state from the main process.</p>
+          <h1>{t("app.loadingSessions")}</h1>
+          <p>{t("app.loadingSessionsBody")}</p>
         </main>
       </div>
     );
@@ -815,12 +834,12 @@ export default function App() {
 
         {snapshot.startupDiagnostics.length > 0 ? (
           <div className="startup-diagnostics" role="status" data-testid="startup-diagnostics">
-            <strong>Some saved workspaces could not be refreshed.</strong>
+            <strong>{t("diagnostics.title")}</strong>
             <span>
               {snapshot.startupDiagnostics
                 .map((diagnostic) => {
                   const workspaceName = diagnostic.workspacePath?.split(/[\\/]/).filter(Boolean).at(-1);
-                  return workspaceName ? `${workspaceName} is unavailable.` : diagnostic.message;
+                  return workspaceName ? t("diagnostics.unavailable", { workspaceName }) : diagnostic.message;
                 })
                 .join(" ")}
             </span>
@@ -883,9 +902,9 @@ export default function App() {
           ) : (
             <section className="canvas canvas--empty">
               <div className="empty-panel">
-                <div className="session-header__eyebrow">Workspace</div>
-                <h1>Open a folder to start</h1>
-                <p>Add a project folder before creating a new thread.</p>
+                <div className="session-header__eyebrow">{t("empty.workspaceHeader")}</div>
+                <h1>{t("app.openFolderToStart")}</h1>
+                <p>{t("empty.addFolderBeforeThread")}</p>
               </div>
             </section>
           )
@@ -896,30 +915,27 @@ export default function App() {
                 <div className="chat-header">
                   <div className="chat-header__eyebrow">
                     {selectedWorkspace.kind === "worktree"
-                      ? `${rootWorkspace?.name ?? selectedWorkspace.name} · ${selectedWorktree?.name ?? selectedWorkspace.branchName ?? "Worktree"}`
-                      : `${selectedWorkspace.name} · Local`}
+                      ? `${rootWorkspace?.name ?? selectedWorkspace.name} · ${selectedWorktree?.name ?? selectedWorkspace.branchName ?? t("common.worktree")}`
+                      : `${selectedWorkspace.name} · ${t("common.local")}`}
                   </div>
                   <div className="chat-header__row">
                     <h1 className="chat-header__title">{displayedSessionTitle}</h1>
                     <div className="chat-header__status">
-                      {selectedSession.status === "running" ? runningLabel : formatRelativeTime(selectedSession.updatedAt)}
+                      {selectedSession.status === "running" ? runningLabel : relativeTime(selectedSession.updatedAt)}
                     </div>
                   </div>
                 </div>
 
                 {showSchemaSkewNotice ? (
                   <div className="schema-skew-notice" role="status" data-testid="schema-skew-notice">
-                    <span className="schema-skew-notice__text">
-                      This session was written by a newer version of pi — some content may not display. Update pi-gui
-                      (or open it with the pi CLI) to see everything.
-                    </span>
+                    <span className="schema-skew-notice__text">{t("schemaSkew.title")}</span>
                     <button
                       type="button"
                       className="schema-skew-notice__dismiss"
-                      aria-label="Dismiss notice"
+                      aria-label={t("schemaSkew.dismissAria")}
                       onClick={() => dismissSchemaSkewNotice(selectedSessionKey)}
                     >
-                      Dismiss
+                      {t("schemaSkew.dismiss")}
                     </button>
                   </div>
                 ) : null}
@@ -1026,16 +1042,16 @@ export default function App() {
         ) : selectedWorkspace ? (
           <section className="canvas canvas--empty">
             <div className="empty-panel">
-              <div className="session-header__eyebrow">Workspace</div>
+              <div className="session-header__eyebrow">{t("empty.workspaceHeader")}</div>
               <h1>{selectedWorkspace.name}</h1>
-              <p>Create a thread for this folder, then jump between sessions from the sidebar.</p>
+              <p>{t("empty.createThreadForFolder")}</p>
               <div className="empty-panel__actions">
                 <button
                   className="button button--primary"
                   type="button"
                   onClick={() => newThread.openSurface(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id)}
                 >
-                  New thread
+                  {t("sidebar.newThread")}
                 </button>
               </div>
             </div>
@@ -1043,9 +1059,9 @@ export default function App() {
         ) : (
           <section className="canvas canvas--empty">
             <div className="empty-panel">
-              <div className="session-header__eyebrow">Workspace</div>
-              <h1>Open a folder to start</h1>
-              <p>Add project folders, group sessions under them, and jump between threads from the sidebar.</p>
+              <div className="session-header__eyebrow">{t("empty.workspaceHeader")}</div>
+              <h1>{t("app.openFolderToStart")}</h1>
+              <p>{t("empty.addFoldersAndGroup")}</p>
             </div>
           </section>
         )}

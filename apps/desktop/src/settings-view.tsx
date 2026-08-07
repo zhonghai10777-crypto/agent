@@ -1,6 +1,7 @@
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { ModelSettingsScopeMode, NotificationPreferences, ThemePresetId, WorkspaceRecord } from "./desktop-state";
+import type { Locale, ModelSettingsScopeMode, NotificationPreferences, ThemePresetId, WorkspaceRecord } from "./desktop-state";
 import type { CustomProviderConfig, DesktopNotificationPermissionStatus } from "./ipc";
+import { useI18n } from "./i18n/I18nProvider";
 import { SettingsAppearanceSection } from "./settings-appearance-section";
 import { SettingsGeneralSection } from "./settings-general-section";
 import { SettingsModelsSection } from "./settings-models-section";
@@ -22,6 +23,8 @@ interface SettingsViewProps {
   readonly themeMode: "system" | "light" | "dark";
   readonly themePresetId: ThemePresetId;
   readonly enableTransparency: boolean;
+  readonly locale: Locale;
+  readonly onSetLocale: (locale: Locale) => void;
   readonly onSetModelSettingsScopeMode: (mode: ModelSettingsScopeMode) => void;
   readonly onSetDefaultModel: (provider: string, modelId: string) => void;
   readonly onSetThinkingLevel: (thinkingLevel: RuntimeSettingsSnapshot["defaultThinkingLevel"]) => void;
@@ -54,6 +57,8 @@ export function SettingsView({
   themeMode,
   themePresetId,
   enableTransparency,
+  locale,
+  onSetLocale,
   onSetModelSettingsScopeMode,
   onSetDefaultModel,
   onSetThinkingLevel,
@@ -73,6 +78,7 @@ export function SettingsView({
   onSetThemePresetId,
   onSetEnableTransparency,
 }: SettingsViewProps) {
+  const { t } = useI18n();
   if (
     !workspace &&
     section !== "general" &&
@@ -82,9 +88,9 @@ export function SettingsView({
     return (
       <section className="canvas canvas--empty">
         <div className="empty-panel">
-          <div className="session-header__eyebrow">Settings</div>
-          <h1>Select a workspace</h1>
-          <p>Provider and skill settings need a selected workspace.</p>
+          <div className="session-header__eyebrow">{t("settings.emptyTitle")}</div>
+          <h1>{t("settings.selectWorkspace")}</h1>
+          <p>{t("settings.selectWorkspaceBody")}</p>
         </div>
       </section>
     );
@@ -95,9 +101,9 @@ export function SettingsView({
       <div className="conversation settings-view">
         <header className="view-header">
           <div>
-            <h1 className="view-header__title">{sectionTitle(section)}</h1>
+            <h1 className="view-header__title">{sectionTitle(section, t)}</h1>
             <p className="view-header__body">
-              {sectionDescription(section, workspace?.name ?? "this workspace")}
+              {sectionDescription(section, workspace?.name ?? t("settings.general.thisWorkspace"), t)}
             </p>
           </div>
         </header>
@@ -119,6 +125,8 @@ export function SettingsView({
               runtime={runtime}
               modelSettingsScopeMode={modelSettingsScopeMode}
               integratedTerminalShell={integratedTerminalShell}
+              locale={locale}
+              onSetLocale={onSetLocale}
               onSetModelSettingsScopeMode={onSetModelSettingsScopeMode}
               onSetIntegratedTerminalShell={onSetIntegratedTerminalShell}
               onToggleSkillCommands={onToggleSkillCommands}

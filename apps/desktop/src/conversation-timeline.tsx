@@ -5,6 +5,7 @@ import { buildDisplayTimelineItems } from "./timeline-turns";
 import { ThreadSearchBar } from "./thread-search";
 import { TimelineItem } from "./timeline-item";
 import { SparkIcon } from "./icons";
+import { useI18n } from "./i18n/I18nProvider";
 
 const OVERSCAN_PX = 720;
 const ROW_GAP_PX = 14;
@@ -57,6 +58,7 @@ export function ConversationTimeline({
   onForkFromMessage,
   promptRailVisible = true,
 }: ConversationTimelineProps) {
+  const { t } = useI18n();
   const renderedMessageIndexById = useMemo(() => {
     const map = new Map<string, number>();
     let messageIndex = 0;
@@ -162,16 +164,17 @@ export function ConversationTimeline({
 
   const userPrompts = useMemo<readonly UserPromptEntry[]>(() => {
     const prompts: UserPromptEntry[] = [];
+    const emptyPromptLabel = t("timeline.prompt");
     let turnNumber = 0;
     for (const item of transcript) {
       if (item.kind !== "message" || item.role !== "user") {
         continue;
       }
       turnNumber += 1;
-      prompts.push({ id: item.id, turnNumber, preview: buildPromptPreview(item.text) });
+      prompts.push({ id: item.id, turnNumber, preview: buildPromptPreview(item.text, emptyPromptLabel) });
     }
     return prompts;
-  }, [transcript]);
+  }, [transcript, t]);
 
   const scrollToMessage = useCallback((messageId: string) => {
     const pane = timelinePaneRef.current;
@@ -288,7 +291,7 @@ export function ConversationTimeline({
       )}
       {showJumpToLatest ? (
         <button className="timeline-jump" data-testid="timeline-jump" type="button" onClick={onJumpToLatest}>
-          New activity below
+          {t("timeline.newActivityBelow")}
         </button>
       ) : null}
     </div>
@@ -312,9 +315,10 @@ function TimelineContextRail({
   readonly prompts: readonly UserPromptEntry[];
   readonly onSelect: (messageId: string) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <nav className="timeline-context-rail" data-testid="timeline-context-rail" aria-label="Prompts in this thread">
-      <div className="timeline-context-rail__title">Prompts</div>
+    <nav className="timeline-context-rail" data-testid="timeline-context-rail" aria-label={t("timeline.promptsInThread")}>
+      <div className="timeline-context-rail__title">{t("timeline.prompts")}</div>
       <ol className="timeline-context-rail__list">
         {prompts.map((prompt) => (
           <li key={prompt.id}>
@@ -335,9 +339,9 @@ function TimelineContextRail({
   );
 }
 
-function buildPromptPreview(text: string): string {
+function buildPromptPreview(text: string, emptyLabel: string): string {
   const firstLine = text.split("\n").map((line) => line.trim()).find((line) => line.length > 0) ?? "";
-  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine || "Prompt";
+  return firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine || emptyLabel;
 }
 
 function cssEscape(value: string): string {
@@ -348,6 +352,7 @@ function cssEscape(value: string): string {
 }
 
 function TranscriptSkeleton() {
+  const { t } = useI18n();
   return (
     <div className="transcript-skeleton" data-testid="transcript-skeleton" aria-hidden="true">
       <div className="transcript-skeleton__row transcript-skeleton__row--user">
@@ -365,19 +370,20 @@ function TranscriptSkeleton() {
         <span className="skeleton-line" style={{ width: "80%" }} />
         <span className="skeleton-line" style={{ width: "72%" }} />
       </div>
-      <span className="sr-only">Loading transcript…</span>
+      <span className="sr-only">{t("timeline.loadingTranscript")}</span>
     </div>
   );
 }
 
 function TranscriptEmptyState() {
+  const { t } = useI18n();
   return (
     <div className="transcript-empty" data-testid="transcript-empty">
       <span className="transcript-empty__glyph" aria-hidden="true">
         <SparkIcon />
       </span>
-      <p className="transcript-empty__title">Start the conversation</p>
-      <p className="transcript-empty__hint">Send a prompt below to begin this session.</p>
+      <p className="transcript-empty__title">{t("timeline.startConversation")}</p>
+      <p className="transcript-empty__hint">{t("timeline.startConversationBody")}</p>
     </div>
   );
 }

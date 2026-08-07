@@ -2302,6 +2302,8 @@
 
 .extension-dialog {
   width: min(560px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   display: grid;
   gap: 14px;
   padding: 22px;
@@ -2315,6 +2317,13 @@
   color: var(--text-strong);
   font-size: 20px;
   font-weight: 630;
+}
+
+/* Model checklist inside the custom-endpoint dialog can grow long; keep it
+   scrollable so the title and action buttons stay in view. */
+.extension-dialog .settings-list {
+  max-height: 240px;
+  overflow-y: auto;
 }
 
 .extension-dialog__body {

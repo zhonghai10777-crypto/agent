@@ -91,7 +91,7 @@ export function SettingsCustomEndpointsSection({
               <div className="settings-row__label">
                 <div className="settings-row__title">{entry.providerId}</div>
                 <div className="settings-row__description">
-                  {entry.baseUrl} · {entry.models.length} model{entry.models.length === 1 ? "" : "s"}
+                  {entry.baseUrl} · {(entry.models ?? []).length} model{(entry.models ?? []).length === 1 ? "" : "s"}
                 </div>
               </div>
               <div className="settings-row__control">
@@ -153,7 +153,7 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
   const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
   const [models, setModels] = useState<CustomProviderModelConfig[]>(
-    initial ? [...initial.models] : [],
+    initial ? [...(initial.models ?? [])] : [],
   );
   const [probeCandidates, setProbeCandidates] = useState<readonly string[]>([]);
   const [probeError, setProbeError] = useState<string | undefined>();
@@ -170,22 +170,30 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
     initial?.providerId,
   ]);
 
+  const probeModels = useCallback(
+    async (
+      targetUrl: string,
+      targetKey: string,
+    ): Promise<{ readonly ok: true; readonly models: readonly string[] } | { readonly ok: false; readonly error: string }> => {
+      const api = window.piApp;
+      if (!api) {
+        return { ok: false, error: "Desktop bridge is not available." };
+      }
+      if (!isValidHttpBaseUrl(targetUrl)) {
+        return { ok: false, error: "Base URL must start with http:// or https://" };
+      }
+      return api.probeCustomProviderModels({
+        baseUrl: targetUrl.trim(),
+        apiKey: targetKey.trim() ? targetKey.trim() : undefined,
+      });
+    },
+    [],
+  );
+
   const handleProbe = async () => {
-    const api = window.piApp;
-    if (!api) {
-      setProbeError("Desktop bridge is not available.");
-      return;
-    }
-    if (!isValidHttpBaseUrl(baseUrl)) {
-      setProbeError("Base URL must start with http:// or https://");
-      return;
-    }
     setProbePending(true);
     setProbeError(undefined);
-    const result = await api.probeCustomProviderModels({
-      baseUrl: baseUrl.trim(),
-      apiKey: apiKey.trim() ? apiKey.trim() : undefined,
-    });
+    const result = await probeModels(baseUrl, apiKey);
     setProbePending(false);
     if (!result.ok) {
       setProbeError(result.error);
@@ -225,17 +233,32 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
       setFormError("Base URL must start with http:// or https://");
       return;
     }
-    if (models.length === 0) {
-      setFormError("Select at least one model.");
-      return;
-    }
     setSavePending(true);
     setFormError(undefined);
+
+    // Auto-discover models via GET {baseUrl}/models when none were picked or
+    // entered manually. Never write a provider with zero models. Reuse the
+    // already-probed candidates (from "Detect models") to avoid a redundant fetch.
+    let resolvedModels = models;
+    if (resolvedModels.length === 0) {
+      if (probeCandidates.length > 0) {
+        resolvedModels = probeCandidates.map((id) => ({ id }));
+      } else {
+        const probeResult = await probeModels(baseUrl, apiKey);
+        if (!probeResult.ok) {
+          setSavePending(false);
+          setFormError(`Could not discover models: ${probeResult.error}`);
+          return;
+        }
+        resolvedModels = probeResult.models.map((id) => ({ id }));
+      }
+    }
+
     const error = await onSave({
       providerId: providerId.trim(),
       baseUrl: baseUrl.trim(),
       ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-      models,
+      models: resolvedModels,
     });
     if (error) {
       setSavePending(false);
@@ -347,7 +370,7 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
           </button>
           <button
             className="button"
-            disabled={savePending || Boolean(idValidationError) || models.length === 0 || !baseUrl.trim()}
+            disabled={savePending || Boolean(idValidationError) || !baseUrl.trim()}
             type="button"
             onClick={() => void handleSave()}
           >

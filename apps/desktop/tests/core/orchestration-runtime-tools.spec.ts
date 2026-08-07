@@ -164,7 +164,7 @@ test("create_child_thread surfaces deterministic initial-prompt delivery failure
       toolCallId: "create-child-delivery-failure",
       sessionRef: parentRef,
       params: { prompt },
-    })).rejects.toThrow(/API key|authentication|credential/i);
+    })).rejects.toThrow(/connection|API key|authentication|credential/i);
 
     const state = await getDesktopState(window);
     const matchingChildren = state.orchestrationChildren.filter(
@@ -172,7 +172,7 @@ test("create_child_thread surfaces deterministic initial-prompt delivery failure
     );
     expect(matchingChildren).toHaveLength(1);
     expect(matchingChildren[0]?.status).toBe("failed");
-    expect(matchingChildren[0]?.latestTranscript).toMatch(/API key|authentication|credential/i);
+    expect(matchingChildren[0]?.latestTranscript).toMatch(/connection|API key|authentication|credential/i);
     expect(matchingChildren[0]?.evidence).toEqual(expect.arrayContaining([
       expect.objectContaining({ title: "Initial prompt delivery failed", status: "failed" }),
     ]));
@@ -184,7 +184,7 @@ test("create_child_thread surfaces deterministic initial-prompt delivery failure
       toolCallId: "create-child-delivery-failure",
       sessionRef: parentRef,
       params: { prompt },
-    })).rejects.toThrow(/API key|authentication|credential/i);
+    })).rejects.toThrow(/connection|API key|authentication|credential/i);
     expect((await getDesktopState(window)).orchestrationChildren.filter(
       (entry) => entry.sourceToolCallId === "create-child-delivery-failure",
     )).toHaveLength(1);

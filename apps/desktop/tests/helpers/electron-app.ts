@@ -79,6 +79,8 @@ export interface SeedAgentDirOptions {
   readonly withOpenAiAuth?: boolean;
   readonly withDefaultModel?: boolean;
   readonly enabledModels?: readonly string[];
+  /** When false, no custom provider (test-openai) is written to models.json. */
+  readonly withCustomProvider?: boolean;
 }
 
 export interface RealAuthConfig {
@@ -275,6 +277,7 @@ function buildDesktopLaunchEnv(
     PI_CODING_AGENT_DIR: agentDir,
     ...(options.notificationLogPath ? { PI_APP_NOTIFICATION_LOG_PATH: options.notificationLogPath } : {}),
     PI_APP_OPEN_DEVTOOLS: "0",
+    PI_APP_DEFAULT_LOCALE: "en",
     ...(options.envOverrides ?? {}),
   };
   for (const [key, value] of Object.entries(options.envOverrides ?? {})) {
@@ -535,11 +538,15 @@ export async function makeUserDataDir(prefix = "pi-gui-user-data-"): Promise<str
   return mkdtemp(join(tmpdir(), prefix));
 }
 
+const TEST_CUSTOM_PROVIDER_ID = "test-openai";
+const TEST_CUSTOM_PROVIDER_BASE_URL = "http://127.0.0.1:18080/v1";
+
 export async function seedAgentDir(agentDir: string, options: SeedAgentDirOptions = {}): Promise<void> {
   const {
     withOpenAiAuth = true,
     withDefaultModel = true,
-    enabledModels = ["openai/gpt-5", "openai/gpt-4o"],
+    withCustomProvider = true,
+    enabledModels = ["test-openai/gpt-5", "test-openai/gpt-4o"],
   } = options;
   await mkdir(agentDir, { recursive: true });
   await writeFile(
@@ -547,9 +554,30 @@ export async function seedAgentDir(agentDir: string, options: SeedAgentDirOption
     `${JSON.stringify(
       withOpenAiAuth
         ? {
-            openai: { type: "api_key", key: "test-openai-key" },
+            "test-openai": { type: "api_key", key: "test-openai-key" },
           }
         : {},
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(agentDir, "models.json"),
+    `${JSON.stringify(
+      {
+        providers: withCustomProvider
+          ? {
+              [TEST_CUSTOM_PROVIDER_ID]: {
+                baseUrl: TEST_CUSTOM_PROVIDER_BASE_URL,
+                api: "openai-completions",
+                apiKey: "unused",
+                piGuiCustomEndpoint: true,
+                models: [{ id: "gpt-5" }, { id: "gpt-4o" }, { id: "gpt-4-turbo" }],
+              },
+            }
+          : {},
+      },
       null,
       2,
     )}\n`,
@@ -559,7 +587,9 @@ export async function seedAgentDir(agentDir: string, options: SeedAgentDirOption
     join(agentDir, "settings.json"),
     `${JSON.stringify(
       {
-        ...(withDefaultModel ? { defaultProvider: "openai", defaultModel: "gpt-5" } : {}),
+        ...(withDefaultModel
+          ? { defaultProvider: TEST_CUSTOM_PROVIDER_ID, defaultModel: "gpt-5" }
+          : {}),
         defaultThinkingLevel: "medium",
         enabledModels,
       },
@@ -610,7 +640,7 @@ export async function seedBranchedTreeSessionFixture(
         timestamp: nextTimestamp(),
       });
 
-    sessionManager.appendModelChange("openai", "gpt-5.4");
+    sessionManager.appendModelChange("test-openai", "gpt-5.4");
     sessionManager.appendThinkingLevelChange("high");
     appendUser("Root question");
     const rootAnswerId = appendAssistant("Root answer");
@@ -730,7 +760,7 @@ export async function seedToolResultTreeSessionFixture(
         },
       ],
       api: "openai-responses",
-      provider: "openai",
+      provider: "test-openai",
       model: "gpt-5.4",
       usage: {
         input: 0,
@@ -763,7 +793,7 @@ export async function seedToolResultTreeSessionFixture(
       role: "assistant",
       content: [{ type: "text", text: "README inspected." }],
       api: "openai-responses",
-      provider: "openai",
+      provider: "test-openai",
       model: "gpt-5.4",
       usage: {
         input: 0,
@@ -823,7 +853,7 @@ export async function seedForkSessionFixture(
     const appendAssistant = (content: string) =>
       sessionManager.appendMessage({ role: "assistant", content, timestamp: nextTimestamp() });
 
-    sessionManager.appendModelChange("openai", "gpt-5.4");
+    sessionManager.appendModelChange("test-openai", "gpt-5.4");
     sessionManager.appendThinkingLevelChange("high");
     appendUser("First fork question");
     appendAssistant("First fork answer");

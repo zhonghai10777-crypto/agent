@@ -47,6 +47,7 @@ import {
   type CreateWorktreeInput,
   type DesktopAppState,
   type ForkThreadInput,
+  type Locale,
   type NotificationPreferences,
   type QueuedComposerMessage,
   type RemoveWorktreeInput,
@@ -59,9 +60,11 @@ import {
   type ThemePresetId,
   type TranscriptMessage,
   type WorkspaceSessionTarget,
+  isLocale,
   isThemeMode,
   isThemePresetId,
 } from "../src/desktop-state";
+import { setGlobalLocale } from "../src/i18n";
 import {
   applyTimelineEvent,
   appendAssistantDelta,
@@ -138,8 +141,15 @@ export interface DesktopAppViewState {
   readonly sidebarCollapsed?: boolean;
 }
 
+/** Build the initial app state, allowing tests/hosted environments to force a default locale via env. */
+function resolveInitialDesktopAppState(): DesktopAppState {
+  const state = createEmptyDesktopAppState();
+  const envLocale = process.env.PI_APP_DEFAULT_LOCALE;
+  return envLocale && isLocale(envLocale) ? { ...state, locale: envLocale } : state;
+}
+
 export class DesktopAppStore implements AppStoreInternals {
-  state = createEmptyDesktopAppState();
+  state = resolveInitialDesktopAppState();
   private readonly listeners = new Set<StateListener>();
   /** Monotonic publish counter; emit() stamps every published state with it. */
   private publishRevision = 1;
@@ -794,6 +804,25 @@ export class DesktopAppStore implements AppStoreInternals {
     return this.emit();
   }
 
+  async setLocale(locale: Locale): Promise<DesktopAppState> {
+    await this.initialize();
+    if (!isLocale(locale)) {
+      throw new Error(`Unsupported locale: ${String(locale)}`);
+    }
+    if (this.state.locale === locale) {
+      return structuredClone(this.state);
+    }
+    this.state = {
+      ...this.state,
+      locale,
+      lastError: undefined,
+      revision: this.state.revision + 1,
+    };
+    setGlobalLocale(locale);
+    await this.persistUiState();
+    return this.emit();
+  }
+
   async setModelSettingsScopeMode(modelSettingsScopeMode: ModelSettingsScopeMode): Promise<DesktopAppState> {
     await this.initialize();
     if (this.state.modelSettingsScopeMode === modelSettingsScopeMode) {
@@ -935,7 +964,7 @@ export class DesktopAppStore implements AppStoreInternals {
         providerId: config.providerId,
         baseUrl: config.baseUrl,
         ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
-        models: config.models.map((model) => ({
+        models: (config.models ?? []).map((model) => ({
           id: model.id,
           ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
         })),
@@ -1143,6 +1172,9 @@ export class DesktopAppStore implements AppStoreInternals {
         message: `Legacy UI state could not be fully migrated: ${message}`,
       });
     }
+    // Make the persisted locale available to main-process modules (menu, dialogs,
+    // notifications) via the shared i18n global.
+    setGlobalLocale(this.state.locale);
 
     try {
       const initialWorkspacePaths = this.initialWorkspacePaths.map((path) => path.trim()).filter(Boolean);
@@ -1222,6 +1254,7 @@ export class DesktopAppStore implements AppStoreInternals {
       workspaceOrder: persisted.workspaceOrder ?? [],
       themeMode: persisted.themeMode ?? this.state.themeMode,
       themePresetId: persisted.themePresetId ?? this.state.themePresetId,
+      locale: persisted.locale ?? this.state.locale,
       sidebarCollapsed: persisted.sidebarCollapsed ?? this.state.sidebarCollapsed,
       enableTransparency: persisted.enableTransparency ?? this.state.enableTransparency,
       orchestrationChildren: persisted.orchestrationChildren ?? [],
@@ -2644,6 +2677,7 @@ export class DesktopAppStore implements AppStoreInternals {
       appGlobalModelSettings: hasStoredModelSettings(this.state.globalModelSettings) ? this.state.globalModelSettings : undefined,
       themeMode: this.state.themeMode,
       themePresetId: this.state.themePresetId,
+      locale: this.state.locale,
       sidebarCollapsed: this.state.sidebarCollapsed || undefined,
       enableTransparency: this.state.enableTransparency,
       orchestrationChildren: orchestration.toPersistedOrchestrationChildren(this.state.orchestrationChildren),

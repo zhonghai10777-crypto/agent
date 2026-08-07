@@ -3,6 +3,7 @@ import type { RuntimeSkillRecord, RuntimeSnapshot } from "@pi-gui/session-driver
 import type { WorkspaceRecord } from "./desktop-state";
 import { RefreshIcon } from "./icons";
 import { titleCase } from "./string-utils";
+import { useI18n } from "./i18n/I18nProvider";
 
 interface SkillsViewProps {
   readonly workspace?: WorkspaceRecord;
@@ -21,6 +22,7 @@ export function SkillsView({
   onToggleSkill,
   onTrySkill,
 }: SkillsViewProps) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [selectedSkillPath, setSelectedSkillPath] = useState<string | undefined>();
   const skills = runtime?.skills ?? [];
@@ -43,9 +45,9 @@ export function SkillsView({
     return (
       <section className="canvas canvas--empty">
         <div className="empty-panel">
-          <div className="session-header__eyebrow">Skills</div>
-          <h1>Select a workspace</h1>
-          <p>Skills are discovered from the selected workspace plus your user-level skill directories.</p>
+          <div className="session-header__eyebrow">{t("skills.title")}</div>
+          <h1>{t("skills.selectWorkspace")}</h1>
+          <p>{t("skills.noWorkspaceBody")}</p>
         </div>
       </section>
     );
@@ -56,15 +58,13 @@ export function SkillsView({
       <div className="conversation skills-view">
         <header className="view-header">
           <div>
-            <h1 className="view-header__title">Skills</h1>
-            <p className="view-header__body">
-              Give pi workspace-specific capabilities and reusable workflows.
-            </p>
+            <h1 className="view-header__title">{t("skills.title")}</h1>
+            <p className="view-header__body">{t("skills.description")}</p>
           </div>
           <div className="view-header__actions">
             <button className="button button--secondary" type="button" onClick={onRefresh}>
               <RefreshIcon />
-              <span>Refresh</span>
+              <span>{t("common.refresh")}</span>
             </button>
             <button
               className="button button--primary"
@@ -72,7 +72,7 @@ export function SkillsView({
               onClick={() =>
                 onTrySkill({
                   name: "new-skill",
-                  description: "Create a new skill for this workspace",
+                  description: t("skills.newSkillForWorkspace"),
                   filePath: "",
                   baseDir: workspace.path,
                   source: "project",
@@ -82,16 +82,16 @@ export function SkillsView({
                 })
               }
             >
-              New skill
+              {t("skills.newSkill")}
             </button>
           </div>
         </header>
 
         <div className="skills-toolbar">
           <input
-            aria-label="Search skills"
+            aria-label={t("skills.searchPlaceholder")}
             className="skills-search"
-            placeholder="Search skills"
+            placeholder={t("skills.searchPlaceholder")}
             value={query}
             onChange={(event) => {
               setQuery(event.target.value);
@@ -102,7 +102,7 @@ export function SkillsView({
         <div className="skills-layout">
           <div className="skills-grid" data-testid="skills-list">
             {filteredSkills.length === 0 ? (
-              <SkillsEmptyState message="Refresh discovery or create a new skill for this workspace." />
+              <SkillsEmptyState message={t("skills.emptyGridBody")} />
             ) : (
               filteredSkills.map((skill) => (
                 <button
@@ -116,14 +116,14 @@ export function SkillsView({
                   <span className="skill-card__title-row">
                     <span className="skill-card__title">{titleCase(skill.name)}</span>
                     <span className={`skill-card__badge ${skill.enabled ? "skill-card__badge--enabled" : ""}`}>
-                      {skill.enabled ? "Enabled" : "Disabled"}
+                      {skill.enabled ? t("skills.enabled") : t("skills.disabled")}
                     </span>
                   </span>
                   <span className="skill-card__description">{skill.description}</span>
                   <span className="skill-card__meta">
                     <span>{skill.source}</span>
                     <span>{skill.slashCommand}</span>
-                    {skill.disableModelInvocation ? <span>slash only</span> : null}
+                    {skill.disableModelInvocation ? <span>{t("skills.slashOnly")}</span> : null}
                   </span>
                 </button>
               ))
@@ -139,38 +139,38 @@ export function SkillsView({
                     <div className="skill-detail__slash">{selectedSkill.slashCommand}</div>
                   </div>
                   <span className={`skill-detail__status ${selectedSkill.enabled ? "skill-detail__status--enabled" : ""}`}>
-                    {selectedSkill.enabled ? "Enabled" : "Disabled"}
+                    {selectedSkill.enabled ? t("skills.enabled") : t("skills.disabled")}
                   </span>
                 </div>
                 <p className="skill-detail__description">{selectedSkill.description}</p>
                 <div className="skill-detail__meta-list">
                   <div>
-                    <div className="skill-detail__meta-label">Source</div>
+                    <div className="skill-detail__meta-label">{t("skills.source")}</div>
                     <div className="skill-detail__description">{selectedSkill.source}</div>
                   </div>
                   <div>
-                    <div className="skill-detail__meta-label">Path</div>
+                    <div className="skill-detail__meta-label">{t("skills.path")}</div>
                     <div className="skill-detail__path">{selectedSkill.filePath}</div>
                   </div>
                 </div>
                 <div className="skill-detail__actions">
                   <button className="button button--secondary" type="button" onClick={() => onOpenSkillFolder(selectedSkill.filePath)}>
-                    Open folder
+                    {t("skills.openFolder")}
                   </button>
                   <button
                     className="button button--secondary"
                     type="button"
                     onClick={() => onToggleSkill(selectedSkill.filePath, !selectedSkill.enabled)}
                   >
-                    {selectedSkill.enabled ? "Disable" : "Enable"}
+                    {selectedSkill.enabled ? t("common.disable") : t("common.enable")}
                   </button>
                   <button className="button button--primary" type="button" onClick={() => onTrySkill(selectedSkill)}>
-                    Try
+                    {t("skills.try")}
                   </button>
                 </div>
               </>
             ) : (
-              <SkillsEmptyState message="Refresh runtime discovery to load workspace and user-level skills." />
+              <SkillsEmptyState message={t("skills.noSkillsFoundBody")} />
             )}
           </div>
         </div>
@@ -180,9 +180,10 @@ export function SkillsView({
 }
 
 function SkillsEmptyState({ message }: { readonly message: string }) {
+  const { t } = useI18n();
   return (
     <div className="empty-state">
-      <h2>No skills found</h2>
+      <h2>{t("skills.noSkillsFound")}</h2>
       <p>{message}</p>
     </div>
   );

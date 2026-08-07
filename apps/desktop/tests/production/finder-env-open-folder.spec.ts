@@ -23,17 +23,36 @@ test("launches a packaged app under a Finder-style PATH and opens the first fold
   await mkdir(agentDir, { recursive: true });
   await writeFile(
     join(agentDir, "auth.json"),
-    `${JSON.stringify({ openai: { type: "api_key", key: "test-openai-key" } }, null, 2)}\n`,
+    `${JSON.stringify({ "test-openai": { type: "api_key", key: "test-openai-key" } }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(agentDir, "models.json"),
+    `${JSON.stringify(
+      {
+        providers: {
+          "test-openai": {
+            baseUrl: "http://127.0.0.1:18080/v1",
+            api: "openai-completions",
+            apiKey: "unused",
+            piGuiCustomEndpoint: true,
+            models: [{ id: "gpt-5" }],
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
     "utf8",
   );
   await writeFile(
     join(agentDir, "settings.json"),
     `${JSON.stringify(
       {
-        defaultProvider: "openai",
+        defaultProvider: "test-openai",
         defaultModel: "gpt-5",
         defaultThinkingLevel: "medium",
-        enabledModels: ["openai/gpt-5"],
+        enabledModels: ["test-openai/gpt-5"],
         packages: ["npm:pi-read-mode"],
       },
       null,

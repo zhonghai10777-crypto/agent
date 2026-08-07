@@ -7,7 +7,7 @@ export interface CustomProviderInput {
   readonly providerId: string;
   readonly baseUrl: string;
   readonly apiKey?: string;
-  readonly models: readonly CustomProviderModelInput[];
+  readonly models?: readonly CustomProviderModelInput[];
 }
 
 export interface CustomProviderEntry {

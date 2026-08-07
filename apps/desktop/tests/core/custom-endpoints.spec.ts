@@ -30,7 +30,7 @@ test("settings lets the user add, edit, and delete an OpenAI-compatible custom e
   const agentDir = join(userDataDir, "agent");
   const workspacePath = await makeWorkspace("custom-endpoints-add-workspace");
   const otherWorkspacePath = await makeWorkspace("custom-endpoints-other-workspace");
-  await seedAgentDir(agentDir, { enabledModels: [] });
+  await seedAgentDir(agentDir, { enabledModels: [], withCustomProvider: false });
 
   const harness = await launchDesktop(userDataDir, {
     agentDir,
@@ -125,7 +125,7 @@ test("custom endpoints keep legacy managed entries separate from built-in overri
   const userDataDir = await makeUserDataDir();
   const agentDir = join(userDataDir, "agent");
   const workspacePath = await makeWorkspace("custom-endpoints-ownership-workspace");
-  await seedAgentDir(agentDir, { enabledModels: [] });
+  await seedAgentDir(agentDir, { enabledModels: [], withCustomProvider: false });
   await writeFile(
     join(agentDir, "models.json"),
     `${JSON.stringify(
@@ -249,8 +249,8 @@ test("custom endpoint dialog blocks colliding provider IDs and invalid base URLs
     const dialog = window.getByTestId("custom-endpoint-dialog");
     await expect(dialog).toBeVisible();
 
-    // Collides with the seeded openai provider.
-    await dialog.getByLabel("Provider ID").fill("openai");
+    // Collides with the seeded test-openai custom provider.
+    await dialog.getByLabel("Provider ID").fill("test-openai");
     await expect(dialog).toContainText("already in use");
     const saveButton = dialog.getByRole("button", { name: "Add endpoint", exact: true });
     await expect(saveButton).toBeDisabled();
@@ -268,7 +268,11 @@ test("custom endpoint dialog blocks colliding provider IDs and invalid base URLs
     // ESC closes the dialog without saving.
     await dialog.press("Escape");
     await expect(dialog).toHaveCount(0);
-    await expect(customEndpoints).toContainText("No custom endpoints yet.");
+    await expect(
+      customEndpoints.locator(".settings-row", {
+        has: window.locator(".settings-row__title", { hasText: /^my-endpoint$/ }),
+      }),
+    ).toHaveCount(0);
   } finally {
     await harness.close();
   }

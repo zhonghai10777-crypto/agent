@@ -107,19 +107,19 @@ test("new thread hides the onboarding notice after picking a thread model", asyn
 
     await modelBadge.click();
     const dropdown = window.locator(".new-thread__hint .model-selector__dropdown").first();
-    await expect(dropdown).toContainText("GPT-5");
-    await expect(dropdown).toContainText("GPT-4o");
+    await expect(dropdown).toContainText("gpt-5");
+    await expect(dropdown).toContainText("gpt-4o");
     const modelFilter = dropdown.locator(".model-selector__filter-input");
     await expect(modelFilter).toBeFocused();
     await modelFilter.fill("definitely-no-model");
     await expect(dropdown).toContainText("No matching models");
     await expect(modelBadge).toHaveText("Pick a model");
     await modelFilter.fill("4o");
-    await expect(dropdown).toContainText("GPT-4o");
-    await expect(dropdown).not.toContainText("GPT-5");
-    await dropdown.getByRole("button", { name: /GPT-4o/ }).click();
+    await expect(dropdown).toContainText("gpt-4o");
+    await expect(dropdown).not.toContainText("gpt-5");
+    await dropdown.getByRole("button", { name: /gpt-4o/ }).click();
 
-    await expect(modelBadge).toHaveText("openai:gpt-4o");
+    await expect(modelBadge).toHaveText("test-openai:gpt-4o");
     await expect(startButton).toBeEnabled();
     await expect(notice).toHaveCount(0);
 
@@ -210,11 +210,11 @@ test("refreshing after a provider becomes available auto-enables that provider's
     const modelBadge = window.locator(".new-thread__hint .model-selector__badge").first();
     await composer.fill("connect provider");
     await expect(modelBadge).toHaveText("No models available");
-    await expect(notice).toContainText("Open Settings > Providers");
+    await expect(notice).toContainText("Open Settings > Models");
 
     await writeFile(
       join(agentDir, "auth.json"),
-      `${JSON.stringify({ openai: { type: "api_key", key: "test-openai-key" } }, null, 2)}\n`,
+      `${JSON.stringify({ "test-openai": { type: "api_key", key: "test-openai-key" } }, null, 2)}\n`,
       "utf8",
     );
 
@@ -233,8 +233,8 @@ test("refreshing after a provider becomes available auto-enables that provider's
 
     await modelBadge.click();
     const dropdown = window.locator(".new-thread__hint .model-selector__dropdown").first();
-    await expect(dropdown).toContainText("GPT-5");
-    await expect(dropdown).toContainText("GPT-4o");
+    await expect(dropdown).toContainText("gpt-5");
+    await expect(dropdown).toContainText("gpt-4o");
   } finally {
     await harness.close();
   }
@@ -248,7 +248,8 @@ test("settings do not show stale enabled-model pills when no providers are conne
   await seedAgentDir(agentDir, {
     withOpenAiAuth: false,
     withDefaultModel: false,
-    enabledModels: ["openai/gpt-5", "openai/gpt-4o"],
+    withCustomProvider: false,
+    enabledModels: ["test-openai/gpt-5", "test-openai/gpt-4o"],
   });
   const harness = await launchDesktop(userDataDir, {
     agentDir,
@@ -273,8 +274,8 @@ test("settings do not show stale enabled-model pills when no providers are conne
       has: window.locator(".settings-section__title", { hasText: "Enabled models" }),
     });
     await expect(enabledModelsSection).toContainText("No connected models available yet.");
-    await expect(enabledModelsSection).not.toContainText("openai/gpt-5");
-    await expect(enabledModelsSection).not.toContainText("openai/gpt-4o");
+    await expect(enabledModelsSection).not.toContainText("test-openai/gpt-5");
+    await expect(enabledModelsSection).not.toContainText("test-openai/gpt-4o");
     await expect(enabledModelsSection.locator(".settings-disclosure__summary")).toContainText("0");
   } finally {
     await harness.close();

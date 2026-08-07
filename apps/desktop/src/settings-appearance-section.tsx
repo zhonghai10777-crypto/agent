@@ -1,6 +1,8 @@
 import type { ThemeMode, ThemePresetId } from "./desktop-state";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 import { themePresets } from "./theme-presets";
+import { useI18n } from "./i18n/I18nProvider";
+import type { MessageKey } from "./i18n";
 
 interface SettingsAppearanceSectionProps {
   readonly themeMode: ThemeMode;
@@ -11,11 +13,30 @@ interface SettingsAppearanceSectionProps {
   readonly onSetEnableTransparency: (enabled: boolean) => void;
 }
 
-const THEME_OPTIONS: { mode: ThemeMode; label: string; description: string }[] = [
-  { mode: "system", label: "System", description: "Follow your OS appearance setting" },
-  { mode: "light", label: "Light", description: "Always use the light theme" },
-  { mode: "dark", label: "Dark", description: "Always use the dark theme" },
-];
+const THEME_OPTION_MODES: readonly ThemeMode[] = ["system", "light", "dark"];
+
+const THEME_PRESET_KEYS: Record<ThemePresetId, { nameKey: MessageKey; descKey: MessageKey }> = {
+  default: { nameKey: "theme.defaultName", descKey: "theme.defaultDesc" },
+  catppuccin: { nameKey: "theme.catppuccinName", descKey: "theme.catppuccinDesc" },
+  "tokyo-night": { nameKey: "theme.tokyoNightName", descKey: "theme.tokyoNightDesc" },
+  nord: { nameKey: "theme.nordName", descKey: "theme.nordDesc" },
+  dracula: { nameKey: "theme.draculaName", descKey: "theme.draculaDesc" },
+  gruvbox: { nameKey: "theme.gruvboxName", descKey: "theme.gruvboxDesc" },
+  github: { nameKey: "theme.githubName", descKey: "theme.githubDesc" },
+  vscode: { nameKey: "theme.vscodeName", descKey: "theme.vscodeDesc" },
+};
+
+const THEME_OPTION_TITLE_KEYS: Record<ThemeMode, MessageKey> = {
+  system: "settings.appearance.system",
+  light: "settings.appearance.light",
+  dark: "settings.appearance.dark",
+};
+
+const THEME_OPTION_DESCRIPTION_KEYS: Record<ThemeMode, MessageKey> = {
+  system: "settings.appearance.systemDesc",
+  light: "settings.appearance.lightDesc",
+  dark: "settings.appearance.darkDesc",
+};
 
 export function SettingsAppearanceSection({
   themeMode,
@@ -25,9 +46,10 @@ export function SettingsAppearanceSection({
   enableTransparency,
   onSetEnableTransparency,
 }: SettingsAppearanceSectionProps) {
+  const { t } = useI18n();
   return (
     <>
-      <SettingsGroup title="Theme preset">
+      <SettingsGroup title={t("settings.appearance.themePreset")}>
         <div className="theme-preset-grid">
           {themePresets.map((preset) => (
             <label
@@ -50,34 +72,38 @@ export function SettingsAppearanceSection({
                 ))}
               </span>
               <span className="theme-preset-card__body">
-                <span className="theme-preset-card__title">{preset.name}</span>
-                <span className="theme-preset-card__description">{preset.description}</span>
+                <span className="theme-preset-card__title">{t(THEME_PRESET_KEYS[preset.id].nameKey)}</span>
+                <span className="theme-preset-card__description">{t(THEME_PRESET_KEYS[preset.id].descKey)}</span>
               </span>
             </label>
           ))}
         </div>
       </SettingsGroup>
 
-      <SettingsGroup title="Theme">
-        {THEME_OPTIONS.map((option) => (
-          <SettingsRow key={option.mode} title={option.label} description={option.description}>
+      <SettingsGroup title={t("settings.appearance.theme")}>
+        {THEME_OPTION_MODES.map((mode) => (
+          <SettingsRow
+            key={mode}
+            title={t(THEME_OPTION_TITLE_KEYS[mode])}
+            description={t(THEME_OPTION_DESCRIPTION_KEYS[mode])}
+          >
             <input
-              checked={themeMode === option.mode}
+              checked={themeMode === mode}
               name="theme"
               type="radio"
-              onChange={() => onSetThemeMode(option.mode)}
+              onChange={() => onSetThemeMode(mode)}
             />
           </SettingsRow>
         ))}
       </SettingsGroup>
 
-      <SettingsGroup title="Visuals">
+      <SettingsGroup title={t("settings.appearance.visuals")}>
         <SettingsRow
-          title="Window transparency"
-          description="Let desktop colors show through supported surfaces."
+          title={t("settings.appearance.windowTransparency")}
+          description={t("settings.appearance.windowTransparencyDesc")}
         >
           <input
-            aria-label="Window transparency"
+            aria-label={t("settings.appearance.windowTransparency")}
             type="checkbox"
             checked={enableTransparency}
             onChange={(event) => onSetEnableTransparency(event.currentTarget.checked)}

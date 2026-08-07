@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useI18n } from "./i18n/I18nProvider";
 
 export interface SecondarySurfaceNavItem {
   readonly id: string;
@@ -24,16 +25,17 @@ export function SecondarySurface({
   testId,
   children,
 }: SecondarySurfaceProps) {
+  const { t } = useI18n();
   return (
     <div className="secondary-surface" data-testid={testId}>
       <aside className="secondary-surface__sidebar">
         <button className="secondary-surface__back" type="button" onClick={onBack}>
           <span aria-hidden="true">←</span>
-          <span>Back to app</span>
+          <span>{t("secondarySurface.backToApp")}</span>
         </button>
         <div className="secondary-surface__title">{title}</div>
         {navItems.length > 0 ? (
-          <nav className="secondary-surface__nav" aria-label={`${title} sections`}>
+          <nav className="secondary-surface__nav" aria-label={t("secondarySurface.sections", { title })}>
             {navItems.map((item) => (
               <button
                 key={item.id}

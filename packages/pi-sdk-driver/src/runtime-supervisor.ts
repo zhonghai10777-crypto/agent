@@ -430,12 +430,12 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
 
   private async buildSnapshot(context: RuntimeContext): Promise<RuntimeSnapshot> {
     const resolvedPaths = await this.resolveRuntimePaths(context);
-    const [skills, extensions, providers, models] = await Promise.all([
+    const [skills, extensions, providers] = await Promise.all([
       this.buildSkillRecords(context, resolvedPaths.skills),
       this.buildExtensionRecords(context, resolvedPaths.extensions),
       this.buildProviderRecords(),
-      this.buildModelRecords(),
     ]);
+    const models = await this.buildModelRecords(providers);
 
     const defaultProvider = context.settingsManager.getDefaultProvider();
     const defaultModelId = context.settingsManager.getDefaultModel();
@@ -487,44 +487,52 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
   }
 
   private async buildProviderRecords(): Promise<readonly RuntimeProviderRecord[]> {
-    const oauthProviders = new Map(this.authStorage.getOAuthProviders().map((provider) => [provider.id, provider]));
-    const providerIds = new Set<string>([
-      ...this.modelRegistry.getAll().map((model) => model.provider),
-      ...oauthProviders.keys(),
-      ...this.authStorage.list(),
-    ]);
+    // Only custom OpenAI-compatible endpoints are surfaced. Built-in providers
+    // (anthropic, openai, OAuth like GitHub Copilot) and their catalog of 1000+
+    // hardcoded models stay out of the desktop UI; the runtime still resolves
+    // them through ModelRegistry for any sessions that reference them.
+    const customProviderIds = new Set(
+      (await this.customProviderStore.list()).map((entry) => entry.providerId),
+    );
+    const oauthProviderIds = new Set(
+      this.authStorage.getOAuthProviders().map((provider) => provider.id),
+    );
 
-    return [...providerIds]
+    return [...customProviderIds]
+      .filter((providerId) => !oauthProviderIds.has(providerId))
       .sort((left, right) => left.localeCompare(right))
       .map((providerId) => {
         const auth = this.authStorage.get(providerId);
-        const oauthProvider = oauthProviders.get(providerId);
         const apiKeySetupSupported = providerSupportsDesktopApiKeySetup(providerId);
         const providerAuthStatus = this.modelRegistry.getProviderAuthStatus(providerId);
         const hasAuth = providerAuthStatus.configured || this.authStorage.hasAuth(providerId);
         return {
           id: providerId,
-          name: oauthProvider?.name ?? providerId,
+          name: providerId,
           hasAuth,
           authType: auth?.type ?? "none",
           authSource: inferProviderAuthSource(auth, providerAuthStatus, apiKeySetupSupported),
-          oauthSupported: Boolean(oauthProvider),
+          oauthSupported: false,
           apiKeySetupSupported,
         };
       });
   }
 
-  private async buildModelRecords(): Promise<readonly RuntimeModelRecord[]> {
+  private async buildModelRecords(
+    providers: readonly RuntimeProviderRecord[],
+  ): Promise<readonly RuntimeModelRecord[]> {
     this.modelRegistry.refresh();
     const availableKeys = new Set(
       (await this.modelRegistry.getAvailable()).map((model) => `${model.provider}:${model.id}`),
     );
-    const providers = new Map((await this.buildProviderRecords()).map((provider) => [provider.id, provider]));
+    const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
+    const customProviderIds = new Set(providerMap.keys());
 
     return this.modelRegistry
       .getAll()
+      .filter((model) => customProviderIds.has(model.provider))
       .map<RuntimeModelRecord>((model) => {
-        const provider = providers.get(model.provider);
+        const provider = providerMap.get(model.provider);
         return {
           providerId: model.provider,
           providerName: provider?.name ?? model.provider,
@@ -553,7 +561,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     }
 
     const providers = await this.buildProviderRecords();
-    const models = await this.buildModelRecords();
+    const models = await this.buildModelRecords(providers);
     const hasSelectableModels = models.some((model) =>
       model.available && currentPatterns.includes(`${model.providerId}/${model.modelId}`),
     );
