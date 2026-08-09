@@ -27,6 +27,17 @@ export interface SessionQueuedMessage {
   readonly updatedAt: Timestamp;
 }
 
+/**
+ * Current context-window usage for a session, mirroring pi's ContextUsage.
+ * `tokens`/`percent` are null when the runtime cannot currently estimate usage
+ * (e.g. right after a compaction, before the next LLM response).
+ */
+export interface SessionContextUsage {
+  readonly tokens: number | null;
+  readonly contextWindow: number;
+  readonly percent: number | null;
+}
+
 export interface SessionSnapshot {
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;
@@ -38,6 +49,7 @@ export interface SessionSnapshot {
   readonly config?: SessionConfig;
   readonly runningRunId?: RunId;
   readonly queuedMessages?: readonly SessionQueuedMessage[];
+  readonly contextUsage?: SessionContextUsage;
 }
 
 export interface SessionImageAttachment {

@@ -38,6 +38,12 @@ declare module "@pi-gui/session-driver" {
     readonly updatedAt: Timestamp;
   }
 
+  export interface SessionContextUsage {
+    readonly tokens: number | null;
+    readonly contextWindow: number;
+    readonly percent: number | null;
+  }
+
   export interface SessionSnapshot {
     readonly ref: SessionRef;
     readonly workspace: WorkspaceRef;
@@ -49,6 +55,7 @@ declare module "@pi-gui/session-driver" {
     readonly config?: SessionConfig;
     readonly runningRunId?: RunId;
     readonly queuedMessages?: readonly SessionQueuedMessage[];
+    readonly contextUsage?: SessionContextUsage;
   }
 
   export interface SessionImageAttachment {

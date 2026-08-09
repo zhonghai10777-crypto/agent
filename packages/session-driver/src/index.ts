@@ -17,6 +17,7 @@ export type {
   SessionAttachment,
   SessionClosedEvent,
   SessionConfig,
+  SessionContextUsage,
   SessionDriver,
   SessionDriverEvent,
   SessionErrorInfo,

@@ -31,6 +31,7 @@ import type {
   HostUiRequest,
   HostUiResponse,
   SessionConfig,
+  SessionContextUsage,
   SessionDriverEvent,
   SessionEventListener,
   SessionModelSelection,
@@ -149,6 +150,24 @@ interface ManagedSessionRecord {
   leasePath: string | undefined;
   /** mtime (epoch ms) of the JSONL last reconciled into the served transcript. */
   transcriptDiskMtimeMs: number | undefined;
+  /** Last known context-window usage, refreshed on coarse-grained agent events. */
+  contextUsage: SessionContextUsage | undefined;
+  /**
+   * Set while cancelCurrentRun is aborting the active turn. Lets the async
+   * agent_end fallout from an aborted run be classified as a user-cancelled
+   * stop (idle) rather than a run failure (failed) — otherwise clicking Stop
+   * on a genuinely running task surfaces a red "run failed" error instead of a
+   * clean stop. Cleared once the abort settles (or by the terminal agent_end
+   * that consumes it), so it can never leak into an unrelated later failure.
+   */
+  cancelRequested: boolean;
+  /**
+   * In-flight cancellation, if any. New runs wait on this before starting so an
+   * aborted run's asynchronous agent_end can never be attributed to the run
+   * that follows it. pi's agent events carry no run identifier, so sequencing —
+   * not tagging — is what keeps run attribution correct.
+   */
+  pendingCancel: Promise<void> | undefined;
 }
 
 interface RegisteredCommandAdapter {
@@ -167,6 +186,14 @@ interface PromptTemplateAdapter {
 }
 
 const NEW_THREAD_PLACEHOLDER_TITLE = "New thread";
+
+/**
+ * How long Stop waits for an aborted run to fully unwind before it gives up and
+ * forces the UI back to idle. Long enough for a normal stream abort to settle
+ * (so the run's agent_end lands first and run attribution stays correct), short
+ * enough that a tool ignoring its abort signal never leaves the Stop button dead.
+ */
+const ABORT_SETTLE_TIMEOUT_MS = 2000;
 
 interface SkillAdapter {
   readonly name: string;
@@ -649,6 +676,11 @@ export class SessionSupervisor {
   async openSession(sessionRef: SessionRef): Promise<SessionSnapshot> {
     const record = await this.ensureRecord(sessionRef);
     await this.touchWorkspace(record.workspace);
+    // Populate usage before the snapshot is built: without this a reopened
+    // session reports no context usage until its next run, which is exactly when
+    // the "compact soon" warning matters least. The record starts at undefined
+    // and is otherwise only refreshed at run boundaries.
+    refreshSessionContextUsage(record);
     const snapshot = buildSnapshot(record);
     await this.emit(record, {
       type: "sessionOpened",
@@ -669,6 +701,14 @@ export class SessionSupervisor {
 
   async sendUserMessage(sessionRef: SessionRef, input: SessionMessageInput): Promise<void> {
     const record = await this.ensureRecord(sessionRef);
+    // Never start a run while a Stop is still unwinding the previous one. pi's
+    // agent events carry no run identifier, so an agent_end arriving after a new
+    // run began would be attributed to the new run — flipping a live run to
+    // "idle" and firing a bogus "run finished" notification. Waiting here is what
+    // keeps the two runs strictly ordered.
+    if (record.pendingCancel) {
+      await record.pendingCancel;
+    }
     const session = this.requireSession(record);
     const isExtensionCommand = this.isExtensionCommand(session, input.text);
     if (session.isStreaming && !isExtensionCommand && !input.deliverAs) {
@@ -778,12 +818,77 @@ export class SessionSupervisor {
       return;
     }
 
+    // A second Stop while the first is still aborting must not start a second
+    // abort — just wait for the one already in flight.
+    if (record.pendingCancel) {
+      await record.pendingCancel;
+      return;
+    }
+
+    const session = record.session;
+    // Mark the turn as user-cancelled before aborting so the agent_end fallout
+    // is classified as a clean stop (idle) rather than a run failure. Gate on
+    // the live agent loop, NOT on record.status: status is a cached field that
+    // still reads "running" after a crash-recovery reopen, and setting the flag
+    // with no loop to end would leave it set forever (nothing would consume it)
+    // and silently swallow the next genuine failure as a "user cancel".
+    if (!session.isIdle) {
+      record.cancelRequested = true;
+    }
+
+    const cancel = (async () => {
+      try {
+        // Abort the currently running turn. pi's abort() cancels the LLM stream,
+        // forwards the abort signal to the executing tool, and awaits the agent
+        // loop unwinding — which is what dispatches the run's agent_end. Awaiting
+        // it here is load-bearing: it is what guarantees a stopped run is fully
+        // settled before the next run can start, so a late agent_end can never be
+        // attributed to the wrong run. abortBash() additionally kills the
+        // interactive bash path (a no-op when no such bash is running).
+        //
+        // It can still hang: a tool that does not observe the signal (a blocked
+        // orchestration tool, a Windows bash child taskkill cannot kill) makes
+        // the unwind never complete. Cap the wait so the Stop button always
+        // responds and the UI is never stuck on "running".
+        session.abortBash();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, ABORT_SETTLE_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([session.abort(), timeout]);
+        } finally {
+          if (timer) {
+            clearTimeout(timer);
+          }
+        }
+      } catch (error) {
+        // Abort is best-effort. Even if the runtime reports a failure we still
+        // reset local run state below so the UI does not stay stuck on "running".
+        console.warn(`[pi-sdk-driver] abort failed for ${sessionKey(record.ref)}:`, error);
+      }
+    })();
+
+    record.pendingCancel = cancel;
     try {
-      await record.session.abort();
-    } catch (error) {
-      // Abort is best-effort. Even if the runtime reports a failure we still
-      // reset local run state below so the UI does not stay stuck on "running".
-      console.warn(`[pi-sdk-driver] abort failed for ${sessionKey(record.ref)}:`, error);
+      await cancel;
+    } finally {
+      record.pendingCancel = undefined;
+    }
+
+    if (session.isIdle) {
+      // The loop settled, so its agent_end has already been dispatched (and has
+      // either consumed the flag or classified itself). Drop the flag so it can
+      // never bleed into a later, unrelated run.
+      record.cancelRequested = false;
+    } else {
+      // The abort timed out: the run is still live and will emit its agent_end
+      // eventually, so the flag stays set for that event to consume. Because the
+      // session still reports streaming, sendUserMessage will reject a new
+      // prompt with an honest "already streaming" error rather than racing it.
+      console.warn(
+        `[pi-sdk-driver] abort did not settle within ${ABORT_SETTLE_TIMEOUT_MS}ms for ${sessionKey(record.ref)}; forcing idle`,
+      );
     }
 
     // Aborting ends the current turn, so any steer/follow-up messages queued
@@ -862,6 +967,7 @@ export class SessionSupervisor {
     record.status = "idle";
     record.config = deriveSessionConfig(record.session.sessionManager);
     record.preview = extractPreview(record.session.messages) ?? record.preview;
+    refreshSessionContextUsage(record);
     await this.persistSnapshot(record);
     await this.emit(record, sessionUpdatedEvent(record));
   }
@@ -936,6 +1042,12 @@ export class SessionSupervisor {
     record.closed = true;
     record.runningRunId = undefined;
     record.status = "idle";
+    // Records are reused across close/reopen, so run-scoped state must not
+    // survive the cycle: a leftover cancel flag would misclassify the first
+    // failure of the next session as a user cancel and silently swallow it.
+    record.cancelRequested = false;
+    record.pendingCancel = undefined;
+    record.contextUsage = undefined;
     this.clearExtensionUiState(record);
     this.cancelPendingHostUiRequests(record);
 
@@ -1019,6 +1131,11 @@ export class SessionSupervisor {
     record.preview = sessionEntry.previewSnippet ?? undefined;
     record.config = deriveSessionConfig(session.sessionManager);
     record.closed = false;
+    // A reused record carries run-scoped state from its previous life. Notably,
+    // status comes straight from the catalog above and reads "running" after a
+    // crash mid-run, so anything keyed off it must start clean.
+    record.cancelRequested = false;
+    record.pendingCancel = undefined;
 
     this.records.set(key, record);
     await this.bindSessionRuntime(record);
@@ -1056,6 +1173,9 @@ export class SessionSupervisor {
       sessionCommands: [],
       leasePath: undefined,
       transcriptDiskMtimeMs: undefined,
+      contextUsage: undefined,
+      cancelRequested: false,
+      pendingCancel: undefined,
     };
     return record;
   }
@@ -1779,6 +1899,9 @@ export class SessionSupervisor {
           }
         }
         this.updatePreviewFromMessage(record, event.message);
+        if (event.type === "message_end" && event.message.role === "assistant") {
+          refreshSessionContextUsage(record);
+        }
         return [sessionUpdatedEvent(record)];
       case "message_update":
         this.updatePreviewFromMessage(record, event.message);
@@ -1820,22 +1943,44 @@ export class SessionSupervisor {
           output: event.result,
         }, record);
       case "turn_end":
+        refreshSessionContextUsage(record);
         return [sessionUpdatedEvent(record)];
       case "agent_end": {
+        // NOTE on event.willRetry: pi fires agent_end before an automatic retry
+        // as well, so a will-retry agent_end is not strictly run-terminal, and
+        // reporting it as a failure can show a red error that a successful retry
+        // then contradicts. Suppressing it here is NOT safe today, though:
+        // orchestration's child-launch handshake decides "did this child start?"
+        // by racing runFailed against a bounded grace window
+        // (app-store-orchestration.ts, CHILD_RUNNING_FAILURE_GRACE_MS), and a
+        // connection/auth failure at launch matches pi's retryable pattern.
+        // Deferring it behind the retry backoff makes a child that cannot start
+        // report itself as "running". Surfacing the transient failure without the
+        // red banner needs a separate non-latching channel on the driver event
+        // contract; until that exists, report it and let the retry correct it.
         const outcome = determineRunOutcome(event.messages);
         const runId = record.runningRunId;
         record.runningRunId = undefined;
-        record.status = outcome.success ? "idle" : "failed";
+        // An aborted run that the user actively stopped is a clean cancel, not a
+        // failure. The cancelCurrentRun flag is consumed here so the UI settles on
+        // idle instead of flashing a red "run failed" error after Stop. Aborting a
+        // live SSE stream surfaces as "Stream ended without finish_reason" (code
+        // ERROR) rather than ABORTED, so treat any failure while a cancel is
+        // outstanding as a clean stop.
+        const cancelledByUser = record.cancelRequested && !outcome.success;
+        record.cancelRequested = false;
+        record.status = cancelledByUser || outcome.success ? "idle" : "failed";
         record.updatedAt = timestamp;
-        if (!outcome.success && outcome.error) {
+        if (!cancelledByUser && !outcome.success && outcome.error) {
           record.preview = outcome.error.message;
         }
         if (record.session) {
           record.sessionCommands = this.collectSessionCommands(record.session);
+          refreshSessionContextUsage(record);
         }
 
         return toDriverEvents(
-          outcome.success
+          cancelledByUser || outcome.success
             ? {
                 type: "runCompleted" as const,
                 sessionRef: record.ref,
@@ -1848,6 +1993,33 @@ export class SessionSupervisor {
                 timestamp,
                 error: outcome.error ?? toSessionErrorInfo(undefined, "RUN_FAILED"),
               },
+          record,
+          runId,
+        );
+      }
+      case "agent_settled": {
+        // The authoritative "nothing more will run" signal: no retry, no
+        // compaction continuation, no queued follow-up. agent_end normally
+        // finalized the run already; this is the backstop for the paths that
+        // continue the loop past an agent_end (threshold compaction, queued
+        // continuations), which would otherwise leave the session pinned to
+        // "running" with a stale runId.
+        if (record.status !== "running" && !record.runningRunId && !record.cancelRequested) {
+          return [];
+        }
+        const runId = record.runningRunId;
+        record.runningRunId = undefined;
+        record.cancelRequested = false;
+        record.status = "idle";
+        record.updatedAt = timestamp;
+        refreshSessionContextUsage(record);
+        return toDriverEvents(
+          {
+            type: "runCompleted" as const,
+            sessionRef: record.ref,
+            timestamp,
+            snapshot: buildSnapshot(record),
+          },
           record,
           runId,
         );
@@ -2538,6 +2710,29 @@ function sessionUpdatedEvent(record: ManagedSessionRecord): SessionDriverEvent {
     timestamp: record.updatedAt,
     snapshot: buildSnapshot(record),
   };
+}
+
+/**
+ * Read the latest context-window usage from a live pi session into the record,
+ * tolerating runtime errors (usage can be momentarily unavailable). Called only
+ * at coarse session boundaries — assistant message completion, turn end, run
+ * completion, and compaction — where usage genuinely changes. Refreshing on
+ * every sessionUpdated emit (which fires once per streamed token delta) would
+ * turn an O(conversation) estimate into O(n²) per turn.
+ */
+function refreshSessionContextUsage(record: ManagedSessionRecord): void {
+  const session = record.session;
+  if (!session || record.closed) {
+    return;
+  }
+  try {
+    const usage = session.getContextUsage();
+    if (usage) {
+      record.contextUsage = usage;
+    }
+  } catch {
+    // Keep the previous estimate; usage is best-effort.
+  }
 }
 
 function toDriverEvents(
