@@ -64,6 +64,7 @@ interface ComposerPanelProps {
   readonly extensionDock?: ExtensionDockModel;
   readonly extensionDockExpanded: boolean;
   readonly onToggleExtensionDock: () => void;
+  readonly onCompact?: () => void;
 }
 
 export function ComposerPanel({
@@ -114,10 +115,14 @@ export function ComposerPanel({
   extensionDock,
   extensionDockExpanded,
   onToggleExtensionDock,
+  onCompact,
 }: ComposerPanelProps) {
   const { t } = useI18n();
   const hasComposerInput = composerDraft.trim().length > 0 || attachments.length > 0;
   const primaryActionIsStop = selectedSession.status === "running" && !hasComposerInput;
+  const contextUsage = selectedSession.contextUsage;
+  const contextPercent = contextUsage?.percent;
+  const contextUsageSeverity = contextPercent == null ? "none" : contextPercent >= 75 ? "critical" : contextPercent >= 55 ? "warn" : "ok";
 
   return (
     <footer className="composer">
@@ -183,6 +188,14 @@ export function ComposerPanel({
                     onSetModel={onSetModel}
                     onSetThinking={onSetThinking}
                   />
+                  {contextUsageSeverity !== "none" ? (
+                    <ContextUsageIndicator
+                      percent={contextPercent ?? 0}
+                      severity={contextUsageSeverity}
+                      onCompact={onCompact}
+                      compactDisabled={selectedSession.status === "running"}
+                    />
+                  ) : null}
                 </div>
                 <div className="composer__actions">
                   <button
@@ -213,5 +226,40 @@ export function ComposerPanel({
         />
       </div>
     </footer>
+  );
+}
+
+function ContextUsageIndicator({
+  percent,
+  severity,
+  onCompact,
+  compactDisabled,
+}: {
+  readonly percent: number;
+  readonly severity: "ok" | "warn" | "critical";
+  readonly onCompact?: () => void;
+  readonly compactDisabled: boolean;
+}) {
+  const { t } = useI18n();
+  const rounded = Math.round(percent);
+  const label = t(
+    severity === "warn" || severity === "critical" ? "contextUsage.warn" : "contextUsage.used",
+    { percent: rounded },
+  );
+  return (
+    <span className={`context-usage context-usage--${severity}`} data-testid="context-usage">
+      <span className="context-usage__text">{label}</span>
+      {onCompact ? (
+        <button
+          className="context-usage__compact"
+          type="button"
+          disabled={compactDisabled}
+          title={compactDisabled ? t("contextUsage.compressBusy") : t("contextUsage.compressHint")}
+          onClick={onCompact}
+        >
+          {t("contextUsage.compress")}
+        </button>
+      ) : null}
+    </span>
   );
 }

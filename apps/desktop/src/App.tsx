@@ -48,13 +48,45 @@ import { deriveWorkspaceContext } from "./workspace-context";
 import { useTreeForkModals } from "./hooks/use-tree-fork-modals";
 import { useComposerDraftSync } from "./hooks/use-composer-draft-sync";
 import { useSessionComposer } from "./hooks/use-session-composer";
+import { ErrorBoundary } from "./error-boundary";
 
 export default function App() {
   const [snapshot, setSnapshot, selectedTranscript] = useDesktopAppState();
   return (
     <I18nProvider locale={snapshot?.locale ?? DEFAULT_LOCALE}>
-      <AppShell snapshot={snapshot} setSnapshot={setSnapshot} selectedTranscript={selectedTranscript} />
+      <ErrorBoundary
+        resetKey={snapshot?.selectedSessionId}
+        fallback={(error, reset) => <AppCrashScreen error={error} onRetry={reset} />}
+      >
+        <AppShell snapshot={snapshot} setSnapshot={setSnapshot} selectedTranscript={selectedTranscript} />
+      </ErrorBoundary>
     </I18nProvider>
+  );
+}
+
+/**
+ * Shown instead of a blank window when the app tree fails to render. Switching
+ * threads clears the error automatically (see resetKey above), so a single
+ * unrenderable conversation does not take the whole app down with it.
+ */
+function AppCrashScreen({ error, onRetry }: { readonly error: Error; readonly onRetry: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="crash-screen" role="alert">
+      <div className="crash-screen__panel">
+        <h1 className="crash-screen__title">{t("crash.title")}</h1>
+        <p className="crash-screen__body">{t("crash.body")}</p>
+        <div className="crash-screen__actions">
+          <button className="button button--primary" type="button" onClick={onRetry}>
+            {t("crash.retry")}
+          </button>
+          <button className="button" type="button" onClick={() => window.location.reload()}>
+            {t("crash.reload")}
+          </button>
+        </div>
+        <pre className="crash-screen__details">{error.message}</pre>
+      </div>
+    </div>
   );
 }
 
@@ -698,6 +730,15 @@ function AppShell({
     slashMenu.fillComposerFromSlash(command);
   };
 
+  const handleCompactSession = () => {
+    // Run /compact directly instead of typing it into the composer. Routing this
+    // through the slash-menu fill would replace whatever the user is currently
+    // writing (the fill overwrites the whole draft when it contains no slash
+    // token), and would only stage the command — leaving the user to press Enter
+    // for a button that says it compacts.
+    void updateSnapshot(api, setSnapshot, () => api.submitComposer("/compact"));
+  };
+
   const handleArchiveSession = (target: { workspaceId: string; sessionId: string }) => {
     void updateSnapshot(api, setSnapshot, () => api.archiveSession(target));
   };
@@ -1014,6 +1055,7 @@ function AppShell({
               extensionDock={selectedExtensionDock}
               extensionDockExpanded={isSelectedExtensionDockExpanded}
               onToggleExtensionDock={handleToggleExtensionDock}
+              onCompact={handleCompactSession}
             />
             {activeExtensionDialog ? (
               <ExtensionDialog dialog={activeExtensionDialog} onRespond={handleRespondToExtensionDialog} />

@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { Translator } from "./i18n";
 
-export type SettingsSection = "appearance" | "general" | "providers" | "models" | "notifications";
+export type SettingsSection = "appearance" | "general" | "providers" | "models" | "web" | "notifications";
 
 export const THINKING_LEVELS: NonNullable<RuntimeSettingsSnapshot["defaultThinkingLevel"]>[] = [
   "low",
@@ -44,6 +44,8 @@ export function sectionTitle(section: SettingsSection, t: Translator): string {
       return t("settings.section.models");
     case "notifications":
       return t("settings.section.notifications");
+    case "web":
+      return t("settings.section.web");
     default:
       return t("settings.section.general");
   }
@@ -59,6 +61,8 @@ export function sectionDescription(section: SettingsSection, workspaceName: stri
       return t("settings.section.modelsDesc");
     case "notifications":
       return t("settings.section.notificationsDesc");
+    case "web":
+      return t("settings.section.webDesc");
     default:
       return t("settings.section.generalDesc");
   }

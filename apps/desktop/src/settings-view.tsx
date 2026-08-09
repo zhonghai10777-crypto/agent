@@ -7,6 +7,7 @@ import { SettingsGeneralSection } from "./settings-general-section";
 import { SettingsModelsSection } from "./settings-models-section";
 import { SettingsNotificationsSection } from "./settings-notifications-section";
 import { SettingsProvidersSection } from "./settings-providers-section";
+import { SettingsWebSection } from "./settings-web-section";
 import { type SettingsSection, sectionTitle, sectionDescription } from "./settings-utils";
 
 export type { SettingsSection } from "./settings-utils";
@@ -83,6 +84,9 @@ export function SettingsView({
     !workspace &&
     section !== "general" &&
     section !== "notifications" &&
+    // Web access is an app-wide setting, so it stays reachable before any
+    // folder has been opened.
+    section !== "web" &&
     section !== "appearance"
   ) {
     return (
@@ -153,6 +157,8 @@ export function SettingsView({
               onSetThinkingLevel={onSetThinkingLevel}
             />
           ) : null}
+
+          {section === "web" ? <SettingsWebSection /> : null}
 
           {section === "notifications" ? (
             <SettingsNotificationsSection

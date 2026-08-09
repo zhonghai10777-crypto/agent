@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
+import { tGlobal } from "../src/i18n";
 import type { SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
 import type { ComposerAttachment, DesktopAppState, QueuedComposerMessage, WorkspaceSessionTarget } from "../src/desktop-state";
 import { toSessionRef } from "./app-store-utils";
@@ -613,9 +614,20 @@ async function runComposerCommand(
   }
 
   if (parsed.type === "compact") {
-    await store.driver.compactSession(sessionRef, parsed.customInstructions);
+    try {
+      await store.driver.compactSession(sessionRef, parsed.customInstructions);
+    } catch (error) {
+      // A too-short conversation is not an error the user needs a red banner for —
+      // compaction simply has nothing to summarize yet. Surface it as a quiet hint.
+      // (pi throws "Nothing to compact (session too small)" when the conversation
+      // is not long enough to summarize.)
+      if (error instanceof Error && error.message.includes("Nothing to compact")) {
+        return finishComposerCommand(store, sessionRef, key, tGlobal("contextUsage.tooShort"));
+      }
+      throw error;
+    }
     await store.reloadTranscriptFromDriver(sessionRef);
-    return finishComposerCommand(store, sessionRef, key, "Compacted session context");
+    return finishComposerCommand(store, sessionRef, key, tGlobal("composer.compacted"));
   }
 
   if (parsed.type === "reload") {

@@ -53,6 +53,36 @@ export type CustomProviderProbeResult =
   | { readonly ok: true; readonly models: readonly string[] }
   | { readonly ok: false; readonly error: string };
 
+export type WebSearchProvider = "bocha" | "tavily" | "searxng";
+
+/**
+ * Web-access settings as the renderer sees them. The API key is never sent to
+ * the renderer — `hasApiKey` reports whether one is stored, and an update sends
+ * a key only when the user actually typed a new one.
+ */
+export interface WebToolsSettingsView {
+  readonly enabled: boolean;
+  readonly provider: WebSearchProvider;
+  readonly hasApiKey: boolean;
+  readonly searxngBaseUrl: string;
+  readonly maxResults: number;
+  readonly allowedDomains: readonly string[];
+}
+
+export interface WebToolsSettingsUpdate {
+  readonly enabled: boolean;
+  readonly provider: WebSearchProvider;
+  /** Omitted to keep the stored key; empty string clears it. */
+  readonly apiKey?: string;
+  readonly searxngBaseUrl: string;
+  readonly maxResults: number;
+  readonly allowedDomains: readonly string[];
+}
+
+export type WebSearchTestResult =
+  | { readonly ok: true; readonly resultCount: number; readonly topResultTitle?: string }
+  | { readonly ok: false; readonly error: string };
+
 export const desktopIpc = {
   stateRequest: "pi-gui:state-request",
   stateChanged: "pi-gui:state-changed",
@@ -101,6 +131,9 @@ export const desktopIpc = {
   setCustomProvider: "pi-gui:set-custom-provider",
   deleteCustomProvider: "pi-gui:delete-custom-provider",
   probeCustomProviderModels: "pi-gui:probe-custom-provider-models",
+  getWebToolsSettings: "pi-gui:get-web-tools-settings",
+  setWebToolsSettings: "pi-gui:set-web-tools-settings",
+  testWebSearch: "pi-gui:test-web-search",
   setEnableSkillCommands: "pi-gui:set-enable-skill-commands",
   setScopedModelPatterns: "pi-gui:set-scoped-model-patterns",
   setSkillEnabled: "pi-gui:set-skill-enabled",
@@ -347,6 +380,9 @@ export interface PiDesktopApi {
   setCustomProvider(workspaceId: string, config: CustomProviderConfig): Promise<DesktopAppState>;
   deleteCustomProvider(workspaceId: string, providerId: string): Promise<DesktopAppState>;
   probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult>;
+  getWebToolsSettings(): Promise<WebToolsSettingsView>;
+  setWebToolsSettings(settings: WebToolsSettingsUpdate): Promise<WebToolsSettingsView>;
+  testWebSearch(query: string): Promise<WebSearchTestResult>;
   setEnableSkillCommands(workspaceId: string, enabled: boolean): Promise<DesktopAppState>;
   setScopedModelPatterns(workspaceId: string, patterns: readonly string[]): Promise<DesktopAppState>;
   setSkillEnabled(workspaceId: string, filePath: string, enabled: boolean): Promise<DesktopAppState>;

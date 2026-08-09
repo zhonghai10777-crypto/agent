@@ -58,6 +58,7 @@ interface SpawnChildThreadInput {
   readonly parentSessionId: string;
   readonly prompt: string;
   readonly sourceToolCallId?: string;
+  readonly signal?: AbortSignal;
 }
 
 interface CreatedChildThreadResult {
@@ -177,9 +178,22 @@ async function createChildThreadRecord(
 
     let deliveryStatus: CreatedChildThreadResult["deliveryStatus"];
     try {
-      deliveryStatus = await launchInitialChildPrompt(store, childRef, prompt);
+      deliveryStatus = await launchInitialChildPrompt(store, childRef, prompt, input.signal);
     } catch (error) {
       markInitialPromptDeliveryFailed(store, child.id, error);
+      // Only cancel a child that is genuinely still running — the abort/timeout
+      // case, where the prompt was already handed over and the child would
+      // otherwise keep working (and spending tokens) as an orphan. When the
+      // launch failed because the child's own run failed, there is nothing to
+      // cancel, and cancelling would emit an `idle` update that overwrites the
+      // "failed" status just recorded above.
+      if (store.sessionFromState(childRef)?.status === "running") {
+        try {
+          await store.driver.cancelCurrentRun(childRef);
+        } catch (cancelError) {
+          console.warn("[orchestration] failed to cancel orphaned child run:", cancelError);
+        }
+      }
       await store.persistUiState();
       throw error;
     }
@@ -370,12 +384,14 @@ export async function createChildThreadToolResult(
   store: AppStoreInternals,
   parentRef: SessionRef,
   input: { readonly prompt: string; readonly toolCallId: string },
+  signal?: AbortSignal,
 ): Promise<AgentToolResult<CreateChildThreadToolDetails>> {
   const { child, deliveryStatus } = await createChildThreadRecord(store, {
     parentWorkspaceId: parentRef.workspaceId,
     parentSessionId: parentRef.sessionId,
     prompt: input.prompt,
     sourceToolCallId: input.toolCallId,
+    signal,
   });
   const details: CreateChildThreadToolDetails = {
     action: createChildThreadAction,
@@ -709,13 +725,23 @@ async function launchInitialChildPrompt(
   store: AppStoreInternals,
   childRef: SessionRef,
   prompt: string,
+  signal?: AbortSignal,
 ): Promise<CreatedChildThreadResult["deliveryStatus"]> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let runningTimer: ReturnType<typeof setTimeout> | undefined;
+    if (signal?.aborted) {
+      reject(new Error("Aborted"));
+      return;
+    }
     const timeout = setTimeout(() => {
       finish(new Error(`Child thread did not acknowledge its initial prompt within ${CHILD_START_TIMEOUT_MS}ms.`));
     }, CHILD_START_TIMEOUT_MS);
+    // The parent session's abort() forwards its signal here; finish immediately so the
+    // create_child_thread tool returns and the parent turn can actually stop instead of
+    // blocking on this promise until the timeout.
+    const onAbort = () => finish(new Error("Aborted"));
+    signal?.addEventListener("abort", onAbort);
     const unsubscribe = store.subscribeToSessionEvents((event) => {
       if (sessionKey(event.sessionRef) !== sessionKey(childRef)) {
         return;
@@ -736,6 +762,7 @@ async function launchInitialChildPrompt(
       if (runningTimer) {
         clearTimeout(runningTimer);
       }
+      signal?.removeEventListener("abort", onAbort);
       unsubscribe();
     }
 

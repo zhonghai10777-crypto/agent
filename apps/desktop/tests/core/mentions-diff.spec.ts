@@ -37,7 +37,9 @@ test("shows workspace file mentions from the composer and inserts the selected f
     const mentionMenu = window.getByTestId("mention-menu");
     await expect(mentionMenu).toBeVisible();
     await expect(mentionMenu.locator(".mention-menu__section-title")).toHaveText(["Extensions", "Files"]);
-    await expect(mentionMenu.locator(".mention-menu__item")).toHaveCount(3);
+    // Two built-in pi-gui extensions (thread orchestration, web access) plus the
+    // workspace's two committed files.
+    await expect(mentionMenu.locator(".mention-menu__item")).toHaveCount(4);
 
     await composer.pressSequentially("README");
     await expect(mentionMenu.locator(".mention-menu__item")).toHaveCount(1);

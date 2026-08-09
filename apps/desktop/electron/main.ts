@@ -47,8 +47,14 @@ import {
   type CustomProviderConfig,
   type CustomProviderProbeInput,
   type CustomProviderProbeResult,
+  type WebSearchTestResult,
+  type WebToolsSettingsView,
 } from "../src/ipc";
 import { SUPPORTED_COMPOSER_IMAGE_TYPES } from "../src/composer-attachments";
+import { tGlobal } from "../src/i18n";
+import { createWebRuntimeExtension } from "./web-runtime";
+import { WebToolsStore } from "./web-tools-store";
+import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
 import type {
   ComposerAttachment,
   ComposerFileAttachment,
@@ -114,9 +120,9 @@ const NEW_WINDOW_MENU_ITEM_ID = "file.new-window";
 
 function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBridge {
   return {
-    createChildThread: async (ctx, input) => {
+    createChildThread: async (ctx, input, signal) => {
       await store.initialize();
-      return orchestrationTools.createChildThreadToolResult(store, sessionRefFromExtensionContext(ctx), input);
+      return orchestrationTools.createChildThreadToolResult(store, sessionRefFromExtensionContext(ctx), input, signal);
     },
     listThreads: async (ctx) => {
       await store.initialize();
@@ -1000,6 +1006,19 @@ if (!hasSingleInstanceLock) {
   app.quit();
 }
 
+// Node terminates the process on an unhandled rejection by default, and this app
+// has several deliberately fire-and-forget background tasks (debounced state
+// persistence, orchestration supervision ticks, dialog cleanup on window close).
+// A single failed background write — a full disk, an antivirus lock on Windows —
+// would otherwise take the whole app down mid-conversation. Log and keep running;
+// the operations that matter surface their own errors through the UI.
+process.on("unhandledRejection", (reason) => {
+  console.error("[main] unhandled promise rejection:", reason);
+});
+process.on("uncaughtException", (error) => {
+  console.error("[main] uncaught exception:", error);
+});
+
 app.on("second-instance", () => {
   const window = getForegroundAppWindow();
   if (!window) {
@@ -1044,17 +1063,27 @@ app.whenReady().then(async () => {
     path.join(getAgentDir(), "models.json"),
   );
   const secureAuthStorage = AuthStorage.fromStorage(secureAuthStorageBackend);
+  const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
   // One-time migration: absorb any plaintext API keys a prior pi CLI run left
   // in auth.json (and custom-endpoint keys a pre-encryption build left in
   // models.json) into the encrypted store and scrub the plaintext. Safe no-op
   // once secure-keys.json already covers every provider.
   secureAuthStorageBackend.migratePlaintextKeys();
   const driverOptions = {
-    extensionFactories: [createOrchestrationRuntimeExtension(orchestrationRuntimeBridge)],
+    extensionFactories: [
+      createOrchestrationRuntimeExtension(orchestrationRuntimeBridge),
+      // Reads settings lazily on each tool call, so toggling web access or
+      // changing the key takes effect without restarting the app.
+      createWebRuntimeExtension(() => webToolsStore.read()),
+    ],
     inlineExtensionMetadata: [
       {
         displayName: "Thread orchestration",
         description: "Start child pi-gui threads from transcript tool calls",
+      },
+      {
+        displayName: "Web access",
+        description: "Search the web and read pages from the conversation",
       },
     ],
     authStorage: secureAuthStorage,
@@ -1275,6 +1304,30 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.probeCustomProviderModels, (_event, input: CustomProviderProbeInput) =>
     probeCustomProviderModels(input),
   );
+  ipcMain.handle(desktopIpc.getWebToolsSettings, () => toWebToolsSettingsView(webToolsStore.read()));
+  ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
+    const current = webToolsStore.read();
+    const incoming = (update ?? {}) as Record<string, unknown>;
+    // An omitted apiKey means "keep the stored one": the renderer never receives
+    // the secret, so it cannot echo it back on an unrelated settings change.
+    const apiKey = typeof incoming.apiKey === "string" ? incoming.apiKey.trim() : current.apiKey;
+    return toWebToolsSettingsView(webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey })));
+  });
+  ipcMain.handle(desktopIpc.testWebSearch, async (_event, query: unknown): Promise<WebSearchTestResult> => {
+    const text = typeof query === "string" && query.trim() ? query.trim() : "pi-gui connectivity test";
+    try {
+      // Test against the saved settings with the master switch forced on, so the
+      // user can verify a key before committing to enabling web access.
+      const results = await runWebSearch(text, { ...webToolsStore.read(), enabled: true });
+      return {
+        ok: true,
+        resultCount: results.length,
+        ...(results[0]?.title ? { topResultTitle: results[0].title } : {}),
+      };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  });
   ipcMain.handle(desktopIpc.setScopedModelPatterns, (event, workspaceId: string, patterns: readonly string[]) =>
     runWindowScopedForEvent(event, () => store.setScopedModelPatterns(workspaceId, patterns)),
   );
@@ -1509,6 +1562,24 @@ app.whenReady().then(async () => {
       void notificationPermissionService?.getCurrentStatus();
     }
   });
+}).catch((error: unknown) => {
+  // Without this, a throw during startup (a corrupt catalogs.json is the live
+  // path) aborts the callback before any IPC handler is registered and before
+  // the first window is created — leaving a running process with no window, no
+  // menu, and, on Windows/Linux, no `window-all-closed` to ever quit it. The
+  // user sees nothing at all and has to kill it from Task Manager.
+  const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  console.error("[main] startup failed:", message);
+  try {
+    dialog.showErrorBox(
+      tGlobal("startup.failedTitle"),
+      `${tGlobal("startup.failedBody")}\n\n${message}`,
+    );
+  } catch {
+    // The dialog module can be unavailable if the failure happened early enough;
+    // exiting is still the right outcome.
+  }
+  app.exit(1);
 });
 
 app.on("window-all-closed", () => {
@@ -1799,6 +1870,19 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function toWebToolsSettingsView(settings: WebToolsSettings): WebToolsSettingsView {
+  // Deliberately omits apiKey: the renderer only needs to know whether one is
+  // stored, and a secret that never crosses the IPC boundary cannot leak from it.
+  return {
+    enabled: settings.enabled,
+    provider: settings.provider,
+    hasApiKey: settings.apiKey.length > 0,
+    searxngBaseUrl: settings.searxngBaseUrl,
+    maxResults: settings.maxResults,
+    allowedDomains: settings.allowedDomains,
+  };
 }
 
 async function probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult> {

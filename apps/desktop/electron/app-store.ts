@@ -23,6 +23,7 @@ import type {
   CreateSessionOptions,
   HostUiResponse,
   SessionConfig,
+  SessionContextUsage,
   SessionDriverEvent,
   SessionQueuedMessage,
   SessionRef,
@@ -622,7 +623,11 @@ export class DesktopAppStore implements AppStoreInternals {
   async cancelCurrentRun(): Promise<DesktopAppState> {
     const ref = this.selectedSessionRef();
     if (ref) {
-      await orchestration.cancelChildRunsForParent(this, ref);
+      // Do not block the current session's cancellation on child-session
+      // cancellation: a stuck child (e.g. a long-running sub-agent tool) would
+      // otherwise make the Stop button appear dead, because the parent session's
+      // cancel never gets a chance to run. Fire child cancellation and move on.
+      void orchestration.cancelChildRunsForParent(this, ref).catch(() => undefined);
     }
     return composer.cancelCurrentRun(this);
   }
@@ -1390,6 +1395,7 @@ export class DesktopAppStore implements AppStoreInternals {
         this.sessionState.transcriptCache,
         this.sessionState.runningSinceBySession,
         this.sessionState.sessionConfigBySession,
+        this.sessionState.contextUsageBySession,
         this.sessionState.lastViewedAtBySession,
         this.sessionState.pinnedAtBySession,
       );
@@ -1547,6 +1553,7 @@ export class DesktopAppStore implements AppStoreInternals {
     if (!this.sessionState.sessionSubscriptions.has(sessionKey(sessionRef))) {
       snapshot = await this.driver.openSession(sessionRef);
       this.updateSessionConfig(sessionRef, snapshot.config);
+      this.updateSessionContextUsage(sessionRef, snapshot.contextUsage);
     }
     await this.ensureSessionSubscribed(sessionRef);
     await this.refreshSessionCommands(sessionRef);
@@ -1557,6 +1564,7 @@ export class DesktopAppStore implements AppStoreInternals {
     if (!this.sessionState.sessionSubscriptions.has(sessionKey(sessionRef))) {
       const snapshot = await this.driver.openSession(sessionRef);
       this.updateSessionConfig(sessionRef, snapshot.config);
+      this.updateSessionContextUsage(sessionRef, snapshot.contextUsage);
       this.updateQueuedComposerMessages(sessionRef, snapshot.queuedMessages);
     }
     await this.ensureSessionSubscribed(sessionRef);
@@ -2275,11 +2283,13 @@ export class DesktopAppStore implements AppStoreInternals {
         case "sessionOpened":
         case "runCompleted":
           this.updateSessionConfig(event.sessionRef, event.snapshot.config);
+          this.updateSessionContextUsage(event.sessionRef, event.snapshot.contextUsage);
           this.updateQueuedComposerMessages(event.sessionRef, event.snapshot.queuedMessages);
           await this.refreshSessionCommands(event.sessionRef);
           break;
         case "sessionUpdated":
           this.updateSessionConfig(event.sessionRef, event.snapshot.config);
+          this.updateSessionContextUsage(event.sessionRef, event.snapshot.contextUsage);
           this.updateQueuedComposerMessages(event.sessionRef, event.snapshot.queuedMessages);
           if (event.snapshot.status !== "running") {
             this.refreshSessionCommandsCoalesced(event.sessionRef);
@@ -3161,6 +3171,16 @@ export class DesktopAppStore implements AppStoreInternals {
     } else {
       this.sessionState.sessionConfigBySession.delete(key);
     }
+  }
+
+  updateSessionContextUsage(sessionRef: SessionRef, contextUsage: SessionContextUsage | undefined): void {
+    if (!contextUsage) {
+      // `undefined` means "no estimate available right now" (a freshly reopened
+      // driver record, or a runtime that cannot currently measure), not "usage is
+      // zero". Deleting here would blank a percentage the UI is already showing.
+      return;
+    }
+    this.sessionState.contextUsageBySession.set(sessionKey(sessionRef), contextUsage);
   }
 
   updateQueuedComposerMessages(sessionRef: SessionRef, queuedMessages: readonly SessionQueuedMessage[] | undefined): void {

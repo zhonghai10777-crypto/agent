@@ -88,6 +88,26 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.enableExtension": "启用 {name}",
   "composer.files": "文件",
 
+  /* ── Composer context usage ───────────────────────── */
+  "contextUsage.used": "上下文 {percent}%",
+  "contextUsage.warn": "上下文 {percent}% · 建议压缩",
+  "contextUsage.compress": "压缩",
+  "contextUsage.compressHint": "把前面的对话总结成摘要，腾出空间继续聊",
+  "contextUsage.compressBusy": "等当前回答结束后再压缩",
+  "contextUsage.tooShort": "会话内容还太短，暂时无需压缩",
+  "composer.compacted": "已压缩会话上下文",
+  "composer.compacting": "正在压缩会话上下文……",
+
+  /* ── Startup failure ─────────────────────────────── */
+  "startup.failedTitle": "pi-gui 无法启动",
+  "startup.failedBody": "读取已保存的数据时出错，应用需要关闭。如果反复出现，下面的详细信息有助于排查。",
+
+  /* ── Render failure ──────────────────────────────── */
+  "crash.title": "这个界面显示不出来",
+  "crash.body": "当前线程的内容渲染失败了。您的对话都还在，可以重试，或者切换到别的线程。",
+  "crash.retry": "重试",
+  "crash.reload": "重新加载应用",
+
   /* ── New thread view ─────────────────────────────── */
   "newThread.promptLabel": "新线程提示词",
   "newThread.placeholder": "向 pi 提问，使用 / 调用命令和技能",
@@ -182,6 +202,37 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.section.providersDesc": "为 {workspaceName} 连接 Provider 并管理认证。",
   "settings.section.modelsDesc": "选择默认模型，以及哪些模型出现在选择器中。",
   "settings.section.notificationsDesc": "管理 macOS 通知权限，以及哪些后台事件应当提醒你。",
+  "settings.section.web": "联网查资料",
+  "settings.section.webDesc": "允许助手上网搜索并阅读网页，回答需要最新资料的问题。",
+
+  /* ── Web access ──────────────────────────────────── */
+  "web.groupTitle": "联网搜索",
+  "web.groupDesc": "打开后，助手可以上网查资料、打开找到的网页，并在回答里标注资料来源。",
+  "web.enable": "允许联网",
+  "web.enableDesc": "默认关闭。不打开就不会向搜索服务发送任何内容。",
+  "web.provider": "搜索服务",
+  "web.providerDesc": "由哪家服务来执行搜索。",
+  "web.provider.bocha": "博查（国内可直连）",
+  "web.provider.tavily": "Tavily（海外）",
+  "web.provider.searxng": "自建 SearXNG（内网）",
+  "web.apiKey": "API 密钥",
+  "web.apiKeyDesc": "加密保存在本机，保存后不再显示。",
+  "web.apiKeyPlaceholder": "粘贴你的密钥",
+  "web.searxngUrl": "SearXNG 地址",
+  "web.searxngUrlDesc": "你自己搭建的搜索服务地址，不需要密钥。",
+  "web.maxResults": "每次返回条数",
+  "web.maxResultsDesc": "每次搜索带回多少条结果（1–20）。",
+  "web.test": "连通性测试",
+  "web.testDesc": "真实搜一次，确认配置可用。",
+  "web.testButton": "立即测试",
+  "web.testing": "测试中……",
+  "web.testQuery": "电厂锅炉效率 标准",
+  "web.testOk": "可以用，返回了 {count} 条结果。",
+  "web.securityTitle": "访问限制",
+  "web.securityDesc": "给不允许连公网的环境准备的可选限制。",
+  "web.allowedDomains": "允许访问的网站",
+  "web.allowedDomainsDesc": "留空表示不限制。填写后，只有这些域名（含子域名）可以被搜索和打开。",
+  "web.allowedDomainsPlaceholder": "example.com, intranet.local",
 
   "settings.general.language": "语言",
   "settings.general.thisWorkspace": "此工作区",

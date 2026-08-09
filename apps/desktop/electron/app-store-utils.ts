@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { SessionCatalogEntry, WorkspaceCatalogEntry, WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
-import type { SessionAttachment, SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
+import type {
+  SessionAttachment,
+  SessionConfig,
+  SessionContextUsage,
+  SessionQueuedMessage,
+  SessionRef,
+} from "@pi-gui/session-driver";
 import type {
   ComposerAttachment,
   QueuedComposerMessage,
@@ -25,6 +31,7 @@ export function buildWorkspaceRecords(
   transcriptCache: Map<string, TranscriptMessage[]>,
   runningSinceBySession: Map<string, string>,
   sessionConfigBySession: Map<string, SessionConfig>,
+  contextUsageBySession: Map<string, SessionContextUsage>,
   lastViewedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
 ): WorkspaceRecord[] {
@@ -53,6 +60,7 @@ export function buildWorkspaceRecords(
             transcriptCache,
             runningSinceBySession,
             sessionConfigBySession,
+            contextUsageBySession,
             lastViewedAtBySession,
             pinnedAtBySession,
           ),
@@ -205,6 +213,7 @@ function buildSessionRecord(
   transcriptCache: Map<string, TranscriptMessage[]>,
   runningSinceBySession: Map<string, string>,
   sessionConfigBySession: Map<string, SessionConfig>,
+  contextUsageBySession: Map<string, SessionContextUsage>,
   lastViewedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
 ): SessionRecord {
@@ -225,6 +234,7 @@ function buildSessionRecord(
     runningSince: runningSinceBySession.get(key),
     hasUnseenUpdate: hasUnseenSessionUpdate(session.status, session.updatedAt, lastViewedAt, transcript),
     config: sessionConfigBySession.get(key),
+    contextUsage: contextUsageBySession.get(key),
   };
 }
 

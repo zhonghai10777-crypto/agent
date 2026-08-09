@@ -14,6 +14,9 @@ import {
   type TerminalExitEvent,
   type TerminalPanelSnapshot,
   type TerminalSize,
+  type WebSearchTestResult,
+  type WebToolsSettingsUpdate,
+  type WebToolsSettingsView,
 } from "../src/ipc";
 import type {
   NavigateSessionTreeOptions,
@@ -199,6 +202,12 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.deleteCustomProvider, workspaceId, providerId) as Promise<DesktopAppState>,
   probeCustomProviderModels: (input: CustomProviderProbeInput) =>
     ipcRenderer.invoke(desktopIpc.probeCustomProviderModels, input) as Promise<CustomProviderProbeResult>,
+  getWebToolsSettings: () =>
+    ipcRenderer.invoke(desktopIpc.getWebToolsSettings) as Promise<WebToolsSettingsView>,
+  setWebToolsSettings: (settings: WebToolsSettingsUpdate) =>
+    ipcRenderer.invoke(desktopIpc.setWebToolsSettings, settings) as Promise<WebToolsSettingsView>,
+  testWebSearch: (query: string) =>
+    ipcRenderer.invoke(desktopIpc.testWebSearch, query) as Promise<WebSearchTestResult>,
   setEnableSkillCommands: (workspaceId: string, enabled: boolean) =>
     ipcRenderer.invoke(desktopIpc.setEnableSkillCommands, workspaceId, enabled) as Promise<DesktopAppState>,
   setScopedModelPatterns: (workspaceId: string, patterns: readonly string[]) =>

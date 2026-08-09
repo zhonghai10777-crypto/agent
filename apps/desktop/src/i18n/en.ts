@@ -89,6 +89,26 @@ const enMessages = {
   "composer.enableExtension": "Enable {name}",
   "composer.files": "Files",
 
+  /* ── Composer context usage ───────────────────────── */
+  "contextUsage.used": "{percent}% context",
+  "contextUsage.warn": "{percent}% · compact soon",
+  "contextUsage.compress": "Compact",
+  "contextUsage.compressHint": "Summarize the earlier conversation to free up room",
+  "contextUsage.compressBusy": "Wait for the current answer to finish before compacting",
+  "contextUsage.tooShort": "Session too short to compact — nothing to summarize yet",
+  "composer.compacted": "Compacted session context",
+  "composer.compacting": "Compacting session context…",
+
+  /* ── Startup failure ─────────────────────────────── */
+  "startup.failedTitle": "pi-gui could not start",
+  "startup.failedBody": "Something went wrong while loading your saved data, so the app has to close. If this keeps happening, the details below will help track it down.",
+
+  /* ── Render failure ──────────────────────────────── */
+  "crash.title": "This screen could not be displayed",
+  "crash.body": "Something in this thread failed to render. Your conversations are saved — try again, or switch to another thread.",
+  "crash.retry": "Try again",
+  "crash.reload": "Reload the app",
+
   /* ── New thread view ─────────────────────────────── */
   "newThread.promptLabel": "New thread prompt",
   "newThread.placeholder": "Ask pi anything, use / for commands and skills",
@@ -183,6 +203,37 @@ const enMessages = {
   "settings.section.providersDesc": "Connect providers and manage auth for {workspaceName}.",
   "settings.section.modelsDesc": "Choose the default model and which models appear in pickers.",
   "settings.section.notificationsDesc": "Manage both macOS notification access and which background events should alert you.",
+  "settings.section.web": "Web access",
+  "settings.section.webDesc": "Let the assistant search the web and read pages when your question needs current information.",
+
+  /* ── Web access ──────────────────────────────────── */
+  "web.groupTitle": "Web search",
+  "web.groupDesc": "When enabled, the assistant can look things up online and read the pages it finds, then cite the sources in its answer.",
+  "web.enable": "Allow web access",
+  "web.enableDesc": "Off by default. Nothing is sent to a search service until you turn this on.",
+  "web.provider": "Search service",
+  "web.providerDesc": "Which service handles the search request.",
+  "web.provider.bocha": "Bocha (mainland China)",
+  "web.provider.tavily": "Tavily",
+  "web.provider.searxng": "Self-hosted SearXNG (intranet)",
+  "web.apiKey": "API key",
+  "web.apiKeyDesc": "Stored encrypted on this computer and never shown again after saving.",
+  "web.apiKeyPlaceholder": "Paste your key",
+  "web.searxngUrl": "SearXNG address",
+  "web.searxngUrlDesc": "Address of your own search service. No API key needed.",
+  "web.maxResults": "Results per search",
+  "web.maxResultsDesc": "How many results to bring back each time (1–20).",
+  "web.test": "Connection test",
+  "web.testDesc": "Runs one real search to confirm the settings work.",
+  "web.testButton": "Test now",
+  "web.testing": "Testing…",
+  "web.testQuery": "power plant boiler efficiency standard",
+  "web.testOk": "Works — {count} results returned.",
+  "web.securityTitle": "Restrictions",
+  "web.securityDesc": "Optional limits for networks that must not reach the open internet.",
+  "web.allowedDomains": "Allowed sites",
+  "web.allowedDomainsDesc": "Leave empty to allow any site. Otherwise only these domains (and their subdomains) can be searched or opened.",
+  "web.allowedDomainsPlaceholder": "example.com, intranet.local",
 
   "settings.general.language": "Language",
   "settings.general.thisWorkspace": "this workspace",

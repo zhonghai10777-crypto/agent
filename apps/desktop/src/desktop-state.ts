@@ -1,4 +1,4 @@
-import type { HostUiRequest, SessionConfig } from "@pi-gui/session-driver";
+import type { HostUiRequest, SessionConfig, SessionContextUsage } from "@pi-gui/session-driver";
 import type { ModelSettingsSnapshot, RuntimeCommandRecord, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
 export type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
@@ -94,6 +94,7 @@ export interface SessionRecord {
   readonly runningSince?: string;
   readonly hasUnseenUpdate: boolean;
   readonly config?: SessionConfig;
+  readonly contextUsage?: SessionContextUsage;
 }
 
 export type OrchestrationChildThreadStatus = "queued" | "running" | "waiting" | "complete" | "failed";

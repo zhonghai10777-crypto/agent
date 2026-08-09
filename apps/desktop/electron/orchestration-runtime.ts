@@ -82,6 +82,7 @@ export interface OrchestrationRuntimeBridge {
   readonly createChildThread: (
     ctx: ExtensionContext,
     input: { readonly prompt: string; readonly toolCallId: string },
+    signal: AbortSignal | undefined,
   ) => Promise<AgentToolResult<CreateChildThreadToolDetails>>;
   readonly listThreads: (ctx: ExtensionContext) => Promise<AgentToolResult<ListThreadsToolDetails>>;
   readonly readThread: (ctx: ExtensionContext, threadId: string) => Promise<AgentToolResult<ReadThreadToolDetails>>;
@@ -117,12 +118,12 @@ function createCreateChildThreadTool(bridge: OrchestrationRuntimeBridge): ToolDe
       },
       required: ["prompt"],
     },
-    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, params, signal, _onUpdate, ctx) {
       const prompt = createChildThreadPromptFromParams(params);
       if (!prompt) {
         throw new Error("create_child_thread requires a non-empty prompt.");
       }
-      return bridge.createChildThread(ctx, { prompt, toolCallId });
+      return bridge.createChildThread(ctx, { prompt, toolCallId }, signal);
     },
   };
 }
