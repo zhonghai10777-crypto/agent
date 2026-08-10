@@ -59,12 +59,34 @@ export interface SessionImageAttachment {
   readonly name?: string;
 }
 
+/**
+ * Outcome of parsing a file attachment into text. Deliberately small: it rides
+ * on the attachment through IPC, the transcript and every persisted snapshot,
+ * so the extracted body is never kept here.
+ */
+export interface SessionAttachmentExtraction {
+  readonly status: "ok" | "failed";
+  /** Present when `status` is "failed"; drives the user-facing explanation. */
+  readonly reason?: string;
+  readonly pages?: number;
+  readonly sheets?: readonly string[];
+  readonly chars?: number;
+  readonly encoding?: string;
+  readonly truncated?: boolean;
+}
+
 export interface SessionFileAttachment {
   readonly kind: "file";
   readonly name: string;
   readonly mimeType: string;
   readonly fsPath: string;
   readonly sizeBytes?: number;
+  readonly extraction?: SessionAttachmentExtraction;
+  /**
+   * Extracted body, attached only on the submit path so short documents can be
+   * inlined into the prompt. Never stored on the composer draft.
+   */
+  readonly documentText?: string;
 }
 
 export type SessionAttachment = SessionImageAttachment | SessionFileAttachment;

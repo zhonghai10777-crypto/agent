@@ -65,12 +65,24 @@ declare module "@pi-gui/session-driver" {
     readonly name?: string;
   }
 
+  export interface SessionAttachmentExtraction {
+    readonly status: "ok" | "failed";
+    readonly reason?: string;
+    readonly pages?: number;
+    readonly sheets?: readonly string[];
+    readonly chars?: number;
+    readonly encoding?: string;
+    readonly truncated?: boolean;
+  }
+
   export interface SessionFileAttachment {
     readonly kind: "file";
     readonly name: string;
     readonly mimeType: string;
     readonly fsPath: string;
     readonly sizeBytes?: number;
+    readonly extraction?: SessionAttachmentExtraction;
+    readonly documentText?: string;
   }
 
   export type SessionAttachment = SessionImageAttachment | SessionFileAttachment;
