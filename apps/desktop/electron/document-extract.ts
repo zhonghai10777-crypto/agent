@@ -42,6 +42,14 @@ export interface DocumentExtractionSuccess {
   readonly kind: DocumentKind;
   readonly text: string;
   readonly meta: DocumentExtractionMeta;
+  /**
+   * Per-page text, kept only when the extractor already had it (PDFs, which
+   * pdf.js hands over page by page before they are joined). read_document pages
+   * through exactly these, so keeping them costs one array and saves a second
+   * full parse of the file. Uncapped on purpose: `text` is truncated at the
+   * character budget, but paging must still reach the end of a long standard.
+   */
+  readonly pageTexts?: readonly string[];
 }
 
 export interface DocumentExtractionFailure {
@@ -140,30 +148,24 @@ export function normalizeExtractedText(text: string): string {
 }
 
 export async function extractPdf(buffer: Uint8Array, maxChars: number): Promise<DocumentExtraction> {
-  const perPage = await pdfPageTexts(buffer);
+  const perPage = await extractPdfPages(buffer);
   if ("ok" in perPage) {
     return perPage;
   }
-
-  const text = normalizeExtractedText(perPage.pages.join("\n\n"));
-  if (!text) {
-    // A PDF with pages but no text layer is a scan. Reporting this rather than
-    // returning "" is the whole point: the caller can tell the user to ask with
-    // a screenshot (the multimodal path already works) instead of letting the
-    // model invent an answer about a document it cannot see.
-    return {
-      ok: false,
-      kind: "pdf",
-      reason: "scanned-pdf",
-      detail: `${perPage.pages.length} page(s), no text layer`,
-    };
-  }
-  return success("pdf", text, maxChars, { pages: perPage.pages.length });
+  const extraction = success("pdf", normalizeExtractedText(perPage.pages.join("\n\n")), maxChars, {
+    pages: perPage.pages.length,
+  });
+  return { ...extraction, pageTexts: perPage.pages };
 }
 
 /**
  * Per-page text, so `read_document` can page through a long standard instead of
  * pushing the whole thing into the context window.
+ *
+ * A PDF with pages but no text layer is a scan. Reporting that rather than
+ * returning "" is the whole point: the caller can tell the user to ask with a
+ * screenshot (the multimodal path already works) instead of letting the model
+ * invent an answer about a document it cannot see.
  */
 export async function extractPdfPages(
   buffer: Uint8Array,
