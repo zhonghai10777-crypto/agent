@@ -23,7 +23,7 @@ export function toAttachmentExtraction(extraction: DocumentExtraction): SessionA
   }
   return {
     status: "ok",
-    chars: extraction.chars,
+    chars: extraction.text.length,
     ...(extraction.meta.pages !== undefined ? { pages: extraction.meta.pages } : {}),
     ...(extraction.meta.sheets ? { sheets: extraction.meta.sheets } : {}),
     ...(extraction.meta.encoding ? { encoding: extraction.meta.encoding } : {}),
@@ -66,7 +66,7 @@ export async function withDocumentText(
       }
       const extraction = await getDocumentExtraction(attachment.fsPath);
       const summary = toAttachmentExtraction(extraction);
-      const inline = extraction.ok && extraction.chars <= INLINE_DOCUMENT_CHAR_LIMIT;
+      const inline = extraction.ok && extraction.text.length <= INLINE_DOCUMENT_CHAR_LIMIT;
       return {
         ...attachment,
         extraction: summary,
