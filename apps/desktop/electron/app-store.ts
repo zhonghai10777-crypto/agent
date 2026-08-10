@@ -3202,6 +3202,41 @@ export class DesktopAppStore implements AppStoreInternals {
     return this.sessionState.queuedComposerMessagesBySession.get(sessionKey(sessionRef)) ?? [];
   }
 
+  /**
+   * Files `read_document` may open on behalf of this session: everything
+   * attached to its composer draft, its queue, or its transcript.
+   *
+   * Derived on each call rather than tracked in a registry. A registry would
+   * need updating at every point an attachment can enter a session — the
+   * picker, drag-and-drop, paste, queued-message editing, and the draft
+   * restored from disk at startup — and any one of those missed is either a
+   * file the model cannot read or, worse, one session reading another's.
+   */
+  attachedDocumentPathsFor(sessionRef: SessionRef): readonly string[] {
+    const key = sessionKey(sessionRef);
+    const paths = new Set<string>();
+    const collect = (attachments: readonly { readonly kind: string; readonly fsPath?: string }[] | undefined) => {
+      for (const attachment of attachments ?? []) {
+        if (attachment.kind === "file" && attachment.fsPath) {
+          paths.add(attachment.fsPath);
+        }
+      }
+    };
+
+    collect(this.sessionState.composerAttachmentsBySession.get(key));
+    for (const message of this.sessionState.queuedComposerMessagesBySession.get(key) ?? []) {
+      collect(message.attachments);
+    }
+    // Covers the common case: the draft is cleared the moment the message is
+    // sent, which is just before the model goes to read what it carried.
+    for (const message of this.sessionState.transcriptCache.get(key) ?? []) {
+      if (message.kind === "message") {
+        collect(message.attachments);
+      }
+    }
+    return [...paths];
+  }
+
   setQueuedComposerEditState(sessionRef: SessionRef, editState: QueuedComposerEditState | undefined): void {
     const key = sessionKey(sessionRef);
     if (editState) {

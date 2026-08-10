@@ -1,5 +1,11 @@
 import path from "node:path";
-import type { ExtensionAPI, ExtensionFactory, ToolDefinition, AgentToolResult } from "@earendil-works/pi-coding-agent";
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ExtensionContext,
+  ExtensionFactory,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
 import type { DocumentFailureReason, DocumentKind } from "./document-extract";
 import { getDocumentExtraction, getDocumentParts } from "./document-cache";
 import { numberParam, stringParam } from "./tool-params";
@@ -17,54 +23,25 @@ export interface ReadDocumentToolDetails {
 }
 
 /**
- * Read at call time rather than registration time so a newly attached file is
- * reachable immediately, matching how the web tools pick up settings changes.
+ * What one session may read.
+ *
+ * Resolved per tool call, never captured at registration: extensions are built
+ * once per workspace and shared by every session in it, so a scope fixed at
+ * registration would let any session read any other session's attachments.
  */
 export interface DocumentAccessScope {
   /** Directories the model may read documents from. */
   readonly workspaceRoots: readonly string[];
-  /** Individual files the user attached, which routinely live outside any workspace. */
+  /** Files attached to this conversation, which routinely live outside any workspace. */
   readonly allowedFiles: readonly string[];
 }
 
-export type DocumentAccessProvider = () => DocumentAccessScope;
+/** Receives the calling session's context so the scope can be narrowed to it. */
+export type DocumentAccessProvider = (ctx: ExtensionContext) => DocumentAccessScope;
 
 /**
- * Files the user attached during this app session.
- *
- * Attachments routinely live outside every workspace (a standard downloaded to
- * ~/Downloads), and the composer draft that carried them is cleared the moment
- * the message is sent — which is just before the model actually goes to read
- * them. Recording the path at the attachment chokepoint keeps it readable for
- * the rest of the session without widening the tool to "any path on disk".
- */
-const attachedDocuments = new Set<string>();
-const MAX_REMEMBERED_ATTACHMENTS = 500;
-
-export function rememberAttachedDocument(fsPath: string): void {
-  const resolved = path.resolve(fsPath);
-  // Re-inserting moves the entry to the end of the Set's iteration order, so
-  // the eviction below drops the least recently attached file.
-  attachedDocuments.delete(resolved);
-  attachedDocuments.add(resolved);
-  while (attachedDocuments.size > MAX_REMEMBERED_ATTACHMENTS) {
-    const oldest = attachedDocuments.values().next();
-    if (oldest.done) {
-      break;
-    }
-    attachedDocuments.delete(oldest.value);
-  }
-}
-
-export function attachedDocumentPaths(): readonly string[] {
-  return [...attachedDocuments];
-}
-
-
-
-/**
- * A path is in scope when it is one of the files the user attached, or sits
- * under a workspace root. Resolved and normalized before comparison so
+ * A path is in scope when it is one of the files attached to this conversation,
+ * or sits under a workspace root. Resolved and normalized before comparison so
  * `..` traversal cannot walk out of a root.
  */
 export function isPathInScope(target: string, scope: DocumentAccessScope): boolean {
@@ -135,13 +112,13 @@ function createReadDocumentTool(getScope: DocumentAccessProvider): ToolDefinitio
       },
       required: ["path"],
     },
-    async execute(_toolCallId, params, signal): Promise<AgentToolResult<ReadDocumentToolDetails>> {
+    async execute(_toolCallId, params, signal, _onUpdate, ctx): Promise<AgentToolResult<ReadDocumentToolDetails>> {
       const target = stringParam(params, "path");
       if (!target) {
         return errorResult({ action: "read_document", path: "", error: "read_document requires a path." });
       }
 
-      const scope = getScope();
+      const scope = getScope(ctx);
       if (!isPathInScope(target, scope)) {
         return errorResult({
           action: "read_document",
