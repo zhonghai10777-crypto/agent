@@ -54,9 +54,9 @@ import { SUPPORTED_COMPOSER_IMAGE_TYPES } from "../src/composer-attachments";
 import { tGlobal } from "../src/i18n";
 import { createWebRuntimeExtension } from "./web-runtime";
 import {
-  attachedDocumentPaths,
   createDocumentRuntimeExtension,
-  rememberAttachedDocument,
+  createDocumentRuntimeTools,
+  type DocumentAccessScope,
 } from "./document-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
@@ -146,17 +146,41 @@ function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBrid
 }
 
 function sessionRefFromExtensionContext(ctx: ExtensionContext): SessionRef {
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  if (!sessionRef) {
+    throw new Error(
+      `Unable to resolve orchestration session for ${ctx.sessionManager.getCwd?.() ?? ctx.cwd}:${ctx.sessionManager.getSessionId()}`,
+    );
+  }
+  return sessionRef;
+}
+
+function tryResolveSessionRefFromExtensionContext(ctx: ExtensionContext): SessionRef | undefined {
   const sessionId = ctx.sessionManager.getSessionId();
   const cwd = path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd);
   const workspace = store.state.workspaces.find(
     (entry) => path.resolve(entry.path) === cwd && entry.sessions.some((session) => session.id === sessionId),
   );
   if (!workspace) {
-    throw new Error(`Unable to resolve orchestration session for ${cwd}:${sessionId}`);
+    return undefined;
   }
   return {
     workspaceId: workspace.id,
     sessionId,
+  };
+}
+
+/**
+ * Scopes `read_document` to the session that called it: its own working
+ * directory, plus the files attached to that conversation. A session gets no
+ * reach into another workspace, nor into a document a different thread was
+ * given — an unresolvable session simply gets nothing.
+ */
+function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  return {
+    workspaceRoots: [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)],
+    allowedFiles: sessionRef ? store.attachedDocumentPathsFor(sessionRef) : [],
   };
 }
 
@@ -176,6 +200,15 @@ async function runOrchestrationRuntimeToolForTest(
     undefined,
     createTestExtensionContext(input.sessionRef),
   );
+}
+
+async function runReadDocumentToolForTest(sessionRef: SessionRef, params: unknown): Promise<AgentToolResult<unknown>> {
+  await store.initialize();
+  const tool = createDocumentRuntimeTools(documentAccessScopeFor)[0];
+  if (!tool) {
+    throw new Error("read_document tool is not registered");
+  }
+  return tool.execute("test-read-document", params, undefined, undefined, createTestExtensionContext(sessionRef));
 }
 
 function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
@@ -1081,12 +1114,9 @@ app.whenReady().then(async () => {
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(() => webToolsStore.read()),
-      // Same lazy read: a document attached seconds ago has to be reachable
-      // without restarting, and the workspace list changes while running.
-      createDocumentRuntimeExtension(() => ({
-        workspaceRoots: store.state.workspaces.map((workspace) => workspace.path),
-        allowedFiles: attachedDocumentPaths(),
-      })),
+      // Same lazy read, and scoped per call: extensions are built once per
+      // workspace, so the calling session decides what is reachable.
+      createDocumentRuntimeExtension(documentAccessScopeFor),
     ],
     inlineExtensionMetadata: [
       {
@@ -1138,6 +1168,8 @@ app.whenReady().then(async () => {
           promptForText(mainWindow, message, placeholder ?? "", allowEmpty ?? false),
         runOrchestrationRuntimeTool: (input: OrchestrationRuntimeToolTestInput) =>
           runOrchestrationRuntimeToolForTest(orchestrationRuntimeBridge, input),
+        runReadDocumentTool: (sessionRef: SessionRef, params: unknown) =>
+          runReadDocumentToolForTest(sessionRef, params),
         setDeferredThreadTitleMode: () => {
           generateThreadTitleOverride = () =>
             new Promise<string | null>((resolve, reject) => {
@@ -1686,9 +1718,6 @@ async function readComposerAttachment(filePath: string): Promise<ComposerAttachm
   }
 
   const stats = await stat(filePath);
-  // The native picker bypasses validateComposerAttachmentPayload, so authorise
-  // read_document for this path here too.
-  rememberAttachedDocument(filePath);
   return {
     id: randomUUID(),
     kind: "file",
@@ -1750,9 +1779,6 @@ function validateComposerAttachmentPayload(attachment: ComposerAttachment): Comp
   if (!normalized.fsPath) {
     return [];
   }
-  // Every file attachment funnels through here, which makes it the one place
-  // that can authorise read_document for a path outside any workspace.
-  rememberAttachedDocument(normalized.fsPath);
   return [normalized];
 }
 
