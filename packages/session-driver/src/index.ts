@@ -15,6 +15,7 @@ export type {
   RunFailedEvent,
   RunId,
   SessionAttachment,
+  SessionAttachmentExtraction,
   SessionClosedEvent,
   SessionConfig,
   SessionContextUsage,

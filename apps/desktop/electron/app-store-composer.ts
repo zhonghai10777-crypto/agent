@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import { tGlobal } from "../src/i18n";
-import type { SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
+import type { SessionAttachment, SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
 import type { ComposerAttachment, DesktopAppState, QueuedComposerMessage, WorkspaceSessionTarget } from "../src/desktop-state";
 import { toSessionRef } from "./app-store-utils";
 import {
@@ -21,6 +21,7 @@ import {
   toTranscriptAttachments,
 } from "./app-store-utils";
 import type { AppStoreInternals } from "./app-store-internals";
+import { withDocumentText } from "./document-attachments";
 
 /* ── Public methods ─────────────────────────────────────── */
 
@@ -493,7 +494,7 @@ export async function sendMessageToSession(
   try {
     await store.driver.sendUserMessage(sessionRef, {
       text,
-      attachments: toSessionAttachments(attachments),
+      attachments: await withDocumentText(toSessionAttachments(attachments)),
     });
   } catch (error) {
     if (rollbackOptimisticMessageOnError) {

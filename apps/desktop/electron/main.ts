@@ -58,6 +58,7 @@ import {
   createDocumentRuntimeExtension,
   rememberAttachedDocument,
 } from "./document-runtime";
+import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
 import type {
@@ -1460,15 +1461,29 @@ app.whenReady().then(async () => {
     if (result.canceled || result.filePaths.length === 0) {
       return stateForWindow(window);
     }
-    const attachments = await Promise.all(result.filePaths.map(readComposerAttachment));
-    return runWindowScopedForWindow(window, () => store.addComposerAttachments(attachments));
+    // Per-file tolerance: a single unreadable path used to reject the whole
+    // Promise.all and silently drop every other file the user picked.
+    const settled = await Promise.allSettled(result.filePaths.map(readComposerAttachment));
+    const attachments = settled.flatMap((outcome) => {
+      if (outcome.status === "fulfilled") {
+        return [outcome.value];
+      }
+      console.error("Failed to attach file", outcome.reason);
+      return [];
+    });
+    if (attachments.length === 0) {
+      return stateForWindow(window);
+    }
+    const enriched = await withExtractionMetadata(attachments);
+    return runWindowScopedForWindow(window, () => store.addComposerAttachments(enriched));
   });
   ipcMain.on(desktopIpc.readClipboardImage, (event) => {
     event.returnValue = readClipboardImageAttachment();
   });
-  ipcMain.handle(desktopIpc.addComposerAttachments, (event, attachments: readonly ComposerAttachment[]) => {
+  ipcMain.handle(desktopIpc.addComposerAttachments, async (event, attachments: readonly ComposerAttachment[]) => {
     const validated = attachments.flatMap(validateComposerAttachmentPayload);
-    return runWindowScopedForEvent(event, () => store.addComposerAttachments(validated));
+    const enriched = await withExtractionMetadata(validated);
+    return runWindowScopedForEvent(event, () => store.addComposerAttachments(enriched));
   });
   ipcMain.handle(desktopIpc.removeComposerAttachment, (event, attachmentId: string) =>
     runWindowScopedForEvent(event, () => store.removeComposerAttachment(attachmentId)),

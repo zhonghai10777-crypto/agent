@@ -1,4 +1,9 @@
-import type { HostUiRequest, SessionConfig, SessionContextUsage } from "@pi-gui/session-driver";
+import type {
+  HostUiRequest,
+  SessionAttachmentExtraction,
+  SessionConfig,
+  SessionContextUsage,
+} from "@pi-gui/session-driver";
 import type { ModelSettingsSnapshot, RuntimeCommandRecord, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
 export type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
@@ -67,6 +72,8 @@ export interface ComposerFileAttachment {
   readonly mimeType: string;
   readonly fsPath: string;
   readonly sizeBytes?: number;
+  /** Parse outcome, so the chip can report pages or explain a failure. */
+  readonly extraction?: SessionAttachmentExtraction;
 }
 
 export type ComposerAttachment = ComposerImageAttachment | ComposerFileAttachment;

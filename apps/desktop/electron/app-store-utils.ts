@@ -3,6 +3,7 @@ import type { SessionCatalogEntry, WorkspaceCatalogEntry, WorktreeCatalogEntry }
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type {
   SessionAttachment,
+  SessionAttachmentExtraction,
   SessionConfig,
   SessionContextUsage,
   SessionQueuedMessage,
@@ -448,8 +449,38 @@ function mergeQueuedComposerAttachments(
   });
 }
 
-function normalizeComposerAttachment(value: Record<string, unknown>): ComposerAttachment | null {
-  if (
+/**
+ * Extraction metadata is produced in the main process, but round-trips through
+ * persisted state, so it is re-validated field by field like the rest of this
+ * allowlist rather than trusted wholesale.
+ */
+function normalizeAttachmentExtraction(
+  value: unknown,
+): { readonly extraction: SessionAttachmentExtraction } | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.status !== "ok" && record.status !== "failed") {
+    return undefined;
+  }
+  const sheets = Array.isArray(record.sheets)
+    ? record.sheets.filter((sheet): sheet is string => typeof sheet === "string")
+    : undefined;
+  return {
+    extraction: {
+      status: record.status,
+      ...(typeof record.reason === "string" ? { reason: record.reason } : {}),
+      ...(typeof record.pages === "number" ? { pages: record.pages } : {}),
+      ...(sheets && sheets.length > 0 ? { sheets } : {}),
+      ...(typeof record.chars === "number" ? { chars: record.chars } : {}),
+      ...(typeof record.encoding === "string" ? { encoding: record.encoding } : {}),
+      ...(record.truncated === true ? { truncated: true } : {}),
+    },
+  };
+}
+
+function normalizeComposerAttachment(value: Record<string, unknown>): ComposerAttachment | null {  if (
     (value.kind === "image" || value.kind === undefined) &&
     typeof value.id === "string" &&
     typeof value.name === "string" &&
@@ -479,6 +510,7 @@ function normalizeComposerAttachment(value: Record<string, unknown>): ComposerAt
       mimeType: value.mimeType,
       fsPath: value.fsPath,
       ...(typeof value.sizeBytes === "number" ? { sizeBytes: value.sizeBytes } : {}),
+      ...(normalizeAttachmentExtraction(value.extraction) ?? {}),
     };
   }
 
