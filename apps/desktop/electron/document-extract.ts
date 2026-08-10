@@ -1,4 +1,5 @@
 import path from "node:path";
+import { readXlsx, type XlsxWorkbook } from "./xlsx-reader";
 
 /**
  * Document text extraction for chat attachments.
@@ -140,27 +141,94 @@ export function normalizeExtractedText(text: string): string {
 }
 
 export async function extractPdf(buffer: Uint8Array, maxChars: number): Promise<DocumentExtraction> {
-  const { extractText, getDocumentProxy } = await import("unpdf");
-  let pages: number;
-  let raw: string;
-  try {
-    const document = await getDocumentProxy(buffer);
-    const result = await extractText(document, { mergePages: true });
-    pages = result.totalPages;
-    raw = Array.isArray(result.text) ? result.text.join("\n\n") : result.text;
-  } catch (error) {
-    return pdfFailure(error);
+  const perPage = await pdfPageTexts(buffer);
+  if ("ok" in perPage) {
+    return perPage;
   }
 
-  const text = normalizeExtractedText(raw);
+  const text = normalizeExtractedText(perPage.pages.join("\n\n"));
   if (!text) {
     // A PDF with pages but no text layer is a scan. Reporting this rather than
     // returning "" is the whole point: the caller can tell the user to ask with
     // a screenshot (the multimodal path already works) instead of letting the
     // model invent an answer about a document it cannot see.
-    return { ok: false, kind: "pdf", reason: "scanned-pdf", detail: `${pages} page(s), no text layer` };
+    return {
+      ok: false,
+      kind: "pdf",
+      reason: "scanned-pdf",
+      detail: `${perPage.pages.length} page(s), no text layer`,
+    };
   }
-  return success("pdf", text, maxChars, { pages });
+  return success("pdf", text, maxChars, { pages: perPage.pages.length });
+}
+
+/**
+ * Per-page text, so `read_document` can page through a long standard instead of
+ * pushing the whole thing into the context window.
+ */
+export async function extractPdfPages(
+  buffer: Uint8Array,
+): Promise<{ readonly pages: readonly string[] } | DocumentExtractionFailure> {
+  const perPage = await pdfPageTexts(buffer);
+  if ("ok" in perPage) {
+    return perPage;
+  }
+  const pages = perPage.pages.map((page) => normalizeExtractedText(page));
+  if (pages.every((page) => page === "")) {
+    return { ok: false, kind: "pdf", reason: "scanned-pdf", detail: `${pages.length} page(s), no text layer` };
+  }
+  return { pages };
+}
+
+async function pdfPageTexts(
+  buffer: Uint8Array,
+): Promise<{ readonly pages: readonly string[] } | DocumentExtractionFailure> {
+  const { extractText, getDocumentProxy } = await import("unpdf");
+  try {
+    const document = await getDocumentProxy(buffer);
+    const result = await extractText(document, { mergePages: false });
+    const pages = Array.isArray(result.text) ? result.text : [result.text];
+    return { pages };
+  } catch (error) {
+    return pdfFailure(error);
+  }
+}
+
+/**
+ * Splits long non-paginated text into readable windows on paragraph boundaries,
+ * giving `read_document` the same "fetch part N" shape that PDF pages provide.
+ */
+export function segmentText(text: string, maxChars = 4_000): readonly string[] {
+  if (text.length <= maxChars) {
+    return text ? [text] : [];
+  }
+  const segments: string[] = [];
+  let current = "";
+  for (const paragraph of text.split("\n\n")) {
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length <= maxChars) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      segments.push(current);
+      current = "";
+    }
+    // A single paragraph past the budget still has to be delivered, so cut it
+    // on the character boundary rather than dropping it.
+    for (let start = 0; start < paragraph.length; start += maxChars) {
+      const slice = paragraph.slice(start, start + maxChars);
+      if (slice.length === maxChars) {
+        segments.push(slice);
+      } else {
+        current = slice;
+      }
+    }
+  }
+  if (current) {
+    segments.push(current);
+  }
+  return segments;
 }
 
 export async function extractDocx(buffer: Uint8Array, maxChars: number): Promise<DocumentExtraction> {
@@ -181,34 +249,21 @@ export async function extractDocx(buffer: Uint8Array, maxChars: number): Promise
 }
 
 export async function extractXlsx(buffer: Uint8Array, maxChars: number): Promise<DocumentExtraction> {
-  const ExcelJS = (await import("exceljs")).default;
-  const workbook = new ExcelJS.Workbook();
+  let workbook: XlsxWorkbook;
   try {
-    await workbook.xlsx.load(Buffer.from(buffer) as never);
+    workbook = readXlsx(buffer);
   } catch (error) {
     return { ok: false, kind: "xlsx", reason: "corrupt", detail: errorMessage(error) };
   }
 
   const sheets: string[] = [];
   const blocks: string[] = [];
-  for (const worksheet of workbook.worksheets) {
-    sheets.push(worksheet.name);
-    const rows: string[] = [];
-    worksheet.eachRow({ includeEmpty: false }, (row) => {
-      const cells: string[] = [];
-      row.eachCell({ includeEmpty: true }, (cell) => {
-        cells.push(cellText(cell));
-      });
-      while (cells.length > 0 && cells[cells.length - 1] === "") {
-        cells.pop();
-      }
-      if (cells.length > 0) {
-        rows.push(cells.join("\t"));
-      }
-    });
+  for (const sheet of workbook.sheets) {
+    sheets.push(sheet.name);
+    const rows = sheet.rows.map((cells) => cells.join("\t"));
     // Sheet names carry real meaning in these workbooks ("运行参数", "缺陷台账"),
     // so they stay in the text the model sees rather than only in metadata.
-    blocks.push(rows.length > 0 ? `## ${worksheet.name}\n${rows.join("\n")}` : `## ${worksheet.name}\n(空工作表)`);
+    blocks.push(rows.length > 0 ? `## ${sheet.name}\n${rows.join("\n")}` : `## ${sheet.name}\n(空工作表)`);
   }
 
   const text = normalizeExtractedText(blocks.join("\n\n"));
@@ -291,23 +346,6 @@ function pdfFailure(error: unknown): DocumentExtractionFailure {
     reason: protectedDocument ? "password-protected" : "corrupt",
     detail: message,
   };
-}
-
-function cellText(cell: { readonly text?: unknown; readonly value?: unknown }): string {
-  const text = cell.text;
-  if (typeof text === "string") {
-    return text.trim();
-  }
-  const value = cell.value;
-  if (value === null || value === undefined) {
-    return "";
-  }
-  if (typeof value === "object" && "result" in (value as Record<string, unknown>)) {
-    // Formula cells expose the cached result; the formula itself is noise here.
-    const result = (value as Record<string, unknown>).result;
-    return result === null || result === undefined ? "" : String(result).trim();
-  }
-  return String(value).trim();
 }
 
 function startsWithAscii(buffer: Uint8Array, prefix: string): boolean {
