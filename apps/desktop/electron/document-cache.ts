@@ -1,7 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import {
   extractDocument,
-  extractPdfPages,
   segmentText,
   type DocumentExtraction,
   type DocumentExtractionFailure,
@@ -60,9 +59,9 @@ export async function getDocumentParts(fsPath: string): Promise<DocumentParts | 
   }
 
   if (extraction.kind === "pdf") {
-    // Re-parsed once per file version rather than once per page turn.
-    const pages = await extractPdfPages(new Uint8Array(await readFile(fsPath)));
-    entry.parts = "ok" in pages ? pages : { unit: "page", parts: pages.pages };
+    // Kept from the first parse; only a PDF that arrived here some other way
+    // (an empty page set) needs re-reading.
+    entry.parts = { unit: "page", parts: extraction.pageTexts ?? [] };
   } else {
     entry.parts = { unit: "section", parts: segmentText(extraction.text) };
   }
@@ -106,7 +105,14 @@ async function load(fsPath: string): Promise<CacheEntry> {
 }
 
 function entrySize(entry: CacheEntry): number {
-  return entry.extraction.ok ? entry.extraction.text.length : 0;
+  if (!entry.extraction.ok) {
+    return 0;
+  }
+  // Page texts are held alongside `text`, so both count against the budget.
+  return (
+    entry.extraction.text.length +
+    (entry.extraction.pageTexts?.reduce((total, page) => total + page.length, 0) ?? 0)
+  );
 }
 
 function evict(): void {
