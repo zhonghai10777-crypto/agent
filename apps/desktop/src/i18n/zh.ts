@@ -130,6 +130,7 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Conversation / timeline ─────────────────────── */
   "timeline.newActivityBelow": "下方有新活动",
+  "timeline.runRetrying": "连接出错，正在自动重试…",
   "timeline.promptsInThread": "此线程中的提示词",
   "timeline.prompts": "提示词",
   "timeline.prompt": "提示",

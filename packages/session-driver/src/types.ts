@@ -253,6 +253,24 @@ export interface RunFailedEvent extends SessionEventBase {
   readonly error: SessionErrorInfo;
 }
 
+/**
+ * A recoverable error that the runtime is about to retry on its own. The run is
+ * still going.
+ *
+ * This exists as its own event because `runFailed` is latching: it moves the
+ * session to "failed", writes the error into the preview and fires a desktop
+ * notification. Reporting a retry that way flashes a red failure the successful
+ * retry then contradicts. Suppressing it outright is not an option either —
+ * orchestration decides whether a child thread started by racing a failure
+ * signal against a grace window, and a connection error at launch is exactly
+ * the kind pi retries. Consumers that need the signal subscribe here; the ones
+ * that would latch or notify do not.
+ */
+export interface RunRetryingEvent extends SessionEventBase {
+  readonly type: "runRetrying";
+  readonly error: SessionErrorInfo;
+}
+
 export type HostUiResponse =
   | {
       readonly requestId: string;
@@ -357,6 +375,7 @@ export type SessionDriverEvent =
   | ToolFinishedEvent
   | RunCompletedEvent
   | RunFailedEvent
+  | RunRetryingEvent
   | HostUiRequestEvent
   | ExtensionCompatibilityIssueEvent
   | SessionClosedEvent;

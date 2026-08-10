@@ -198,6 +198,12 @@ declare module "@pi-gui/session-driver" {
     readonly error: SessionErrorInfo;
   }
 
+  /** Recoverable error the runtime is retrying; non-latching, unlike runFailed. */
+  export interface RunRetryingEvent extends SessionEventBase {
+    readonly type: "runRetrying";
+    readonly error: SessionErrorInfo;
+  }
+
   export type HostUiResponse =
     | {
         readonly requestId: string;
@@ -302,6 +308,7 @@ declare module "@pi-gui/session-driver" {
     | ToolFinishedEvent
     | RunCompletedEvent
     | RunFailedEvent
+    | RunRetryingEvent
     | HostUiRequestEvent
     | ExtensionCompatibilityIssueEvent
     | SessionClosedEvent;

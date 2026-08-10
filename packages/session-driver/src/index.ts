@@ -13,6 +13,7 @@ export type {
   HostUiRequestEvent,
   RunCompletedEvent,
   RunFailedEvent,
+  RunRetryingEvent,
   RunId,
   SessionAttachment,
   SessionAttachmentExtraction,

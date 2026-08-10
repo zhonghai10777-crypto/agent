@@ -2,6 +2,7 @@ import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { SessionTranscriptItem } from "@pi-gui/pi-sdk-driver";
 import type { SessionDriverEvent, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
 import type { TranscriptMessage } from "../src/desktop-state";
+import { tGlobal } from "../src/i18n";
 import {
   formatElapsedDuration,
   makeActivityItem,
@@ -215,6 +216,18 @@ export function applyTimelineEvent(
           metadata: relativeDetail(event.timestamp),
         }));
       }
+      break;
+    }
+    case "runRetrying": {
+      // The run is still going, so no clearRunState and no error tone. Without
+      // some marker a retry is indistinguishable from a hang, which on a flaky
+      // link is the difference between "waiting" and "something is broken".
+      transcript.push(
+        makeActivityItem(tGlobal("timeline.runRetrying"), {
+          tone: "warning",
+          detail: event.error.message,
+        }),
+      );
       break;
     }
     case "runFailed": {
