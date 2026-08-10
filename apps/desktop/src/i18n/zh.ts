@@ -85,8 +85,6 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.attachment.pages": "已解析 {count} 页",
   "composer.attachment.sheets": "已解析 {count} 个工作表",
   "composer.attachment.chars": "已解析 {count} 字",
-  "composer.attachment.truncated": "（内容过长，已截断）",
-  "composer.attachment.encoding": "（{encoding} 编码）",
   "composer.attachment.failed.scannedPdf": "扫描件，无文字层——建议改为截图提问",
   "composer.attachment.failed.passwordProtected": "文件已加密，无法读取",
   "composer.attachment.failed.corrupt": "文件无法解析，可能已损坏",

@@ -6,6 +6,7 @@ import {
   type WebSearchResult,
   type WebToolsSettings,
 } from "./web-search";
+import { stringParam, toolErrorMessage as errorMessage } from "./tool-params";
 
 export const webSearchToolName = "web_search";
 export const webFetchToolName = "web_fetch";
@@ -168,16 +169,4 @@ function errorResult(details: WebToolDetails): AgentToolResult<WebToolDetails> {
     content: [{ type: "text", text: message }],
     details,
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function stringParam(params: unknown, key: string): string | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const value = (params as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

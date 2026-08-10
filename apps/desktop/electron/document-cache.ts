@@ -1,21 +1,35 @@
 import { readFile, stat } from "node:fs/promises";
-import { extractDocument, type DocumentExtraction } from "./document-extract";
+import {
+  extractDocument,
+  extractPdfPages,
+  segmentText,
+  type DocumentExtraction,
+  type DocumentExtractionFailure,
+} from "./document-extract";
 
 /**
  * Extraction results, cached per file version.
  *
- * A document is parsed twice on the normal path — once when it is attached, to
- * show the page count on the chip and surface failures before the user hits
- * send, and again when the message is submitted, to inline short documents into
- * the prompt. Caching keeps the second one free, and keeps `read_document`
- * from re-parsing a 300-page standard on every page turn.
+ * A document is parsed on three paths — when it is attached (to show the page
+ * count and surface failures before the user hits send), when the message is
+ * submitted (to inline short documents), and on every read_document call. The
+ * last one is why this matters: paging through a 300-page standard would
+ * otherwise re-read and re-parse the whole file for each page.
  *
  * The key includes mtime and size so editing a file in place invalidates it.
  */
 
+/** A document split into addressable parts: PDF pages, or text sections. */
+export interface DocumentParts {
+  readonly unit: "page" | "section";
+  readonly parts: readonly string[];
+}
+
 interface CacheEntry {
   readonly key: string;
   readonly extraction: DocumentExtraction;
+  /** Filled on first read_document call; PDFs need a separate per-page parse. */
+  parts?: DocumentParts | DocumentExtractionFailure;
 }
 
 /** Bounded by total extracted characters rather than entry count. */
@@ -25,12 +39,43 @@ const cache = new Map<string, CacheEntry>();
 let cachedChars = 0;
 
 export async function getDocumentExtraction(fsPath: string): Promise<DocumentExtraction> {
+  return (await load(fsPath)).extraction;
+}
+
+/**
+ * The document as addressable parts, for read_document. PDFs page natively;
+ * everything else is chunked on paragraph boundaries so the tool has the same
+ * "fetch part N" shape for every format.
+ */
+export async function getDocumentParts(fsPath: string): Promise<DocumentParts | DocumentExtractionFailure> {
+  const entry = await load(fsPath);
+  if (entry.parts) {
+    return entry.parts;
+  }
+
+  const extraction = entry.extraction;
+  if (!extraction.ok) {
+    entry.parts = extraction;
+    return extraction;
+  }
+
+  if (extraction.kind === "pdf") {
+    // Re-parsed once per file version rather than once per page turn.
+    const pages = await extractPdfPages(new Uint8Array(await readFile(fsPath)));
+    entry.parts = "ok" in pages ? pages : { unit: "page", parts: pages.pages };
+  } else {
+    entry.parts = { unit: "section", parts: segmentText(extraction.text) };
+  }
+  return entry.parts;
+}
+
+async function load(fsPath: string): Promise<CacheEntry> {
   let key: string;
   try {
     const stats = await stat(fsPath);
     key = `${fsPath}:${stats.mtimeMs}:${stats.size}`;
   } catch (error) {
-    return { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) };
+    return { key: "", extraction: { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) } };
   }
 
   const hit = cache.get(fsPath);
@@ -38,24 +83,30 @@ export async function getDocumentExtraction(fsPath: string): Promise<DocumentExt
     // Refresh recency so the eviction below drops the least recently used file.
     cache.delete(fsPath);
     cache.set(fsPath, hit);
-    return hit.extraction;
+    return hit;
   }
 
   let extraction: DocumentExtraction;
   try {
-    extraction = await extractDocument(new Uint8Array(await readFile(fsPath)), fsPath);
+    const buffer = new Uint8Array(await readFile(fsPath));
+    extraction = await extractDocument(buffer, fsPath);
   } catch (error) {
     extraction = { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) };
   }
 
   if (hit) {
-    cachedChars -= hit.extraction.ok ? hit.extraction.chars : 0;
+    cachedChars -= entrySize(hit);
     cache.delete(fsPath);
   }
-  cache.set(fsPath, { key, extraction });
-  cachedChars += extraction.ok ? extraction.chars : 0;
+  const entry: CacheEntry = { key, extraction };
+  cache.set(fsPath, entry);
+  cachedChars += entrySize(entry);
   evict();
-  return extraction;
+  return entry;
+}
+
+function entrySize(entry: CacheEntry): number {
+  return entry.extraction.ok ? entry.extraction.text.length : 0;
 }
 
 function evict(): void {
@@ -64,14 +115,8 @@ function evict(): void {
       return;
     }
     cache.delete(path);
-    cachedChars -= entry.extraction.ok ? entry.extraction.chars : 0;
+    cachedChars -= entrySize(entry);
   }
-}
-
-/** Test seam: drops every cached extraction. */
-export function resetDocumentExtractionCache(): void {
-  cache.clear();
-  cachedChars = 0;
 }
 
 function errorMessage(error: unknown): string {

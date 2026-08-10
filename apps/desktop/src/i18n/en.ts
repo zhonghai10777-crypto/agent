@@ -86,8 +86,6 @@ const enMessages = {
   "composer.attachment.pages": "{count} page(s) read",
   "composer.attachment.sheets": "{count} sheet(s) read",
   "composer.attachment.chars": "{count} characters read",
-  "composer.attachment.truncated": "(truncated)",
-  "composer.attachment.encoding": "({encoding})",
   "composer.attachment.failed.scannedPdf": "Scanned image, no text layer — attach a screenshot to ask about it",
   "composer.attachment.failed.passwordProtected": "Password protected, cannot be read",
   "composer.attachment.failed.corrupt": "Could not be parsed; the file may be damaged",

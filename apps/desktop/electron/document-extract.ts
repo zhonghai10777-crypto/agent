@@ -41,7 +41,6 @@ export interface DocumentExtractionSuccess {
   readonly ok: true;
   readonly kind: DocumentKind;
   readonly text: string;
-  readonly chars: number;
   readonly meta: DocumentExtractionMeta;
 }
 
@@ -331,7 +330,6 @@ function success(
     ok: true,
     kind,
     text: clipped,
-    chars: clipped.length,
     meta: truncated ? { ...meta, truncated: true } : meta,
   };
 }

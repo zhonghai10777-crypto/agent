@@ -1,14 +1,8 @@
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { ExtensionAPI, ExtensionFactory, ToolDefinition, AgentToolResult } from "@earendil-works/pi-coding-agent";
-import {
-  extractDocument,
-  extractPdfPages,
-  segmentText,
-  sniffDocumentKind,
-  type DocumentFailureReason,
-  type DocumentKind,
-} from "./document-extract";
+import type { DocumentFailureReason, DocumentKind } from "./document-extract";
+import { getDocumentExtraction, getDocumentParts } from "./document-cache";
+import { numberParam, stringParam } from "./tool-params";
 
 export const readDocumentToolName = "read_document";
 
@@ -66,13 +60,7 @@ export function attachedDocumentPaths(): readonly string[] {
   return [...attachedDocuments];
 }
 
-/** Test seam: drops the remembered attachments. */
-export function resetAttachedDocuments(): void {
-  attachedDocuments.clear();
-}
 
-/** Keeps a single tool result well inside the context window. */
-const SECTION_CHARS = 4_000;
 
 /**
  * A path is in scope when it is one of the files the user attached, or sits
@@ -164,44 +152,24 @@ function createReadDocumentTool(getScope: DocumentAccessProvider): ToolDefinitio
         });
       }
 
-      let buffer: Uint8Array;
-      try {
-        buffer = new Uint8Array(await readFile(target));
-      } catch (error) {
-        return errorResult({ action: "read_document", path: target, error: errorMessage(error) });
-      }
+      // Served from the per-file-version cache, so paging through a long
+      // standard parses it once rather than once per page turn.
+      const parts = await getDocumentParts(target);
       if (signal?.aborted) {
         return errorResult({ action: "read_document", path: target, error: "Cancelled." });
       }
-
-      const name = path.basename(target);
-      const kind = sniffDocumentKind(buffer, name);
-      const requested = numberParam(params, "part");
-
-      if (kind === "pdf") {
-        const pages = await extractPdfPages(buffer);
-        if ("ok" in pages) {
-          return errorResult({
-            action: "read_document",
-            path: target,
-            kind,
-            error: describeFailure(pages.reason, pages.detail),
-          });
-        }
-        return renderPart(target, name, kind, "page", pages.pages, requested);
-      }
-
-      const extraction = await extractDocument(buffer, name);
-      if (!extraction.ok) {
+      if ("ok" in parts) {
         return errorResult({
           action: "read_document",
           path: target,
-          kind: extraction.kind,
-          error: describeFailure(extraction.reason, extraction.detail),
+          kind: parts.kind,
+          error: describeFailure(parts.reason, parts.detail),
         });
       }
-      const sections = segmentText(extraction.text, SECTION_CHARS);
-      return renderPart(target, name, extraction.kind, "section", sections, requested);
+
+      const name = path.basename(target);
+      const kind = (await getDocumentExtraction(target)).kind;
+      return renderPart(target, name, kind, parts.unit, parts.parts, numberParam(params, "part"));
     },
   };
 }
@@ -270,31 +238,4 @@ function errorResult(details: ReadDocumentToolDetails): AgentToolResult<ReadDocu
     content: [{ type: "text", text: message }],
     details,
   };
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function stringParam(params: unknown, key: string): string | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const value = (params as Record<string, unknown>)[key];
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function numberParam(params: unknown, key: string): number | undefined {
-  if (typeof params !== "object" || params === null) {
-    return undefined;
-  }
-  const value = (params as Record<string, unknown>)[key];
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return Math.trunc(value);
-  }
-  // Models routinely send numeric arguments as strings.
-  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-    return Number.parseInt(value.trim(), 10);
-  }
-  return undefined;
 }

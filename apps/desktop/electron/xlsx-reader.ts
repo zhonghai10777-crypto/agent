@@ -212,14 +212,30 @@ function collectTextNodes(xml: string): string {
   return decodeXmlEntities(text);
 }
 
+/**
+ * Both of these run per cell, so a 20k-cell sheet would otherwise compile
+ * ~40k identical regexes. The pattern set is tiny and fixed (a handful of tag
+ * and attribute names), so caching by name makes it a map lookup instead.
+ */
+const innerTextPatterns = new Map<string, RegExp>();
+const attributePatterns = new Map<string, RegExp>();
+
 function innerText(xml: string, tagName: string): string | undefined {
-  const match = xml.match(new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)</${tagName}>`));
-  return match?.[1];
+  let pattern = innerTextPatterns.get(tagName);
+  if (!pattern) {
+    pattern = new RegExp(`<${tagName}\\b[^>]*>([\\s\\S]*?)</${tagName}>`);
+    innerTextPatterns.set(tagName, pattern);
+  }
+  return xml.match(pattern)?.[1];
 }
 
 function attribute(tag: string, name: string): string | undefined {
-  const match = tag.match(new RegExp(`\\b${name.replace(":", "\\:")}="([^"]*)"`));
-  return match?.[1];
+  let pattern = attributePatterns.get(name);
+  if (!pattern) {
+    pattern = new RegExp(`\\b${name.replace(":", "\\:")}="([^"]*)"`);
+    attributePatterns.set(name, pattern);
+  }
+  return tag.match(pattern)?.[1];
 }
 
 function columnIndex(reference: string): number {
