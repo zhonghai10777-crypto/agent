@@ -53,6 +53,11 @@ import {
 import { SUPPORTED_COMPOSER_IMAGE_TYPES } from "../src/composer-attachments";
 import { tGlobal } from "../src/i18n";
 import { createWebRuntimeExtension } from "./web-runtime";
+import {
+  attachedDocumentPaths,
+  createDocumentRuntimeExtension,
+  rememberAttachedDocument,
+} from "./document-runtime";
 import { WebToolsStore } from "./web-tools-store";
 import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
 import type {
@@ -1075,6 +1080,12 @@ app.whenReady().then(async () => {
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(() => webToolsStore.read()),
+      // Same lazy read: a document attached seconds ago has to be reachable
+      // without restarting, and the workspace list changes while running.
+      createDocumentRuntimeExtension(() => ({
+        workspaceRoots: store.state.workspaces.map((workspace) => workspace.path),
+        allowedFiles: attachedDocumentPaths(),
+      })),
     ],
     inlineExtensionMetadata: [
       {
@@ -1084,6 +1095,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Web access",
         description: "Search the web and read pages from the conversation",
+      },
+      {
+        displayName: "Document reading",
+        description: "Read attached PDF, Word, Excel and plain-text files as text",
       },
     ],
     authStorage: secureAuthStorage,
@@ -1656,6 +1671,9 @@ async function readComposerAttachment(filePath: string): Promise<ComposerAttachm
   }
 
   const stats = await stat(filePath);
+  // The native picker bypasses validateComposerAttachmentPayload, so authorise
+  // read_document for this path here too.
+  rememberAttachedDocument(filePath);
   return {
     id: randomUUID(),
     kind: "file",
@@ -1717,6 +1735,9 @@ function validateComposerAttachmentPayload(attachment: ComposerAttachment): Comp
   if (!normalized.fsPath) {
     return [];
   }
+  // Every file attachment funnels through here, which makes it the one place
+  // that can authorise read_document for a path outside any workspace.
+  rememberAttachedDocument(normalized.fsPath);
   return [normalized];
 }
 

@@ -51,6 +51,7 @@ const requiredPackages = [
   "cross-spawn",
   "data-uri-to-buffer",
   "diff",
+  "fflate",
   "glob",
   "highlight.js",
   "hosted-git-info",
@@ -59,6 +60,7 @@ const requiredPackages = [
   "ignore",
   "jiti",
   "lru-cache",
+  "mammoth",
   "mime-types",
   "minimatch",
   "node-pty",
@@ -76,7 +78,9 @@ const requiredPackages = [
   "tslib",
   "typebox",
   "undici",
+  "unpdf",
   "which",
+  "xmlbuilder",
   "yaml",
   "yargs",
 ];
@@ -120,6 +124,13 @@ const packagedRuntimeImportChecks = [
   ["@earendil-works", "pi-ai", "dist", "providers", "google.js"],
   ["@earendil-works", "pi-ai", "dist", "bedrock-provider.js"],
   ["proxy-agent", "dist", "index.js"],
+  // The document parsers are externalised as dynamic imports in the main
+  // bundle, so a dropped transitive dependency only surfaces the first time a
+  // user attaches a file. Importing each entry here moves that to build time —
+  // which is how the missing xmlbuilder under mammoth was caught.
+  ["unpdf", "dist", "index.mjs"],
+  ["mammoth", "lib", "index.js"],
+  ["fflate", "esm", "index.mjs"],
 ];
 
 if (!existsSync(asarPath)) {

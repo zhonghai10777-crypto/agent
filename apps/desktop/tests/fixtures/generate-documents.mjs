@@ -123,6 +123,24 @@ async function generateXlsx() {
   defectSheet.addRow(["D-001", "给水泵密封泄漏"]);
 
   await workbook.xlsx.writeFile(path.join(outDir, "standard-zh.xlsx"));
+
+  // Everything the hand-written reader has to get right that a plain workbook
+  // never exercises: date styles, gaps in a row, XML-escaped text, cached
+  // formula results and an empty sheet.
+  const tricky = new ExcelJS.Workbook();
+  const sheet = tricky.addWorksheet("台账");
+  sheet.addRow(["编号", "发现日期", "描述", "数量"]);
+  const dated = sheet.addRow(["D-002", new Date(Date.UTC(2025, 0, 15)), "阀门 A&B <泄漏>", 3]);
+  dated.getCell(2).numFmt = "yyyy-mm-dd";
+  // Column B and C left empty so column alignment has to survive the gap.
+  const sparse = sheet.getRow(3);
+  sparse.getCell(1).value = "D-003";
+  sparse.getCell(4).value = 7;
+  sparse.commit();
+  sheet.getRow(4).getCell(1).value = { formula: "COUNTA(A2:A3)", result: 2 };
+  tricky.addWorksheet("空表");
+
+  await tricky.xlsx.writeFile(path.join(outDir, "tricky-zh.xlsx"));
 }
 
 async function generateTextFiles() {
