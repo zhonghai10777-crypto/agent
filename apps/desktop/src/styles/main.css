@@ -1288,6 +1288,18 @@
   font-weight: 520;
 }
 
+.composer-attachment__status {
+  flex: 0 0 auto;
+  color: var(--muted-soft);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.composer-attachment__status--failed {
+  color: var(--error);
+}
+
 .composer-attachment__remove {
   color: var(--muted-soft);
   font-size: 18px;
