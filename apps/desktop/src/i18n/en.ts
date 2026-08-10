@@ -131,6 +131,7 @@ const enMessages = {
 
   /* ── Conversation / timeline ─────────────────────── */
   "timeline.newActivityBelow": "New activity below",
+  "timeline.runRetrying": "Request failed, retrying automatically…",
   "timeline.promptsInThread": "Prompts in this thread",
   "timeline.prompts": "Prompts",
   "timeline.prompt": "Prompt",

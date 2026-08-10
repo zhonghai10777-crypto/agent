@@ -180,13 +180,13 @@ async function createChildThreadRecord(
     try {
       deliveryStatus = await launchInitialChildPrompt(store, childRef, prompt, input.signal);
     } catch (error) {
-      markInitialPromptDeliveryFailed(store, child.id, error);
-      // Only cancel a child that is genuinely still running — the abort/timeout
-      // case, where the prompt was already handed over and the child would
-      // otherwise keep working (and spending tokens) as an orphan. When the
-      // launch failed because the child's own run failed, there is nothing to
-      // cancel, and cancelling would emit an `idle` update that overwrites the
-      // "failed" status just recorded above.
+      // Cancel before recording the failure, not after. A child whose launch
+      // failed may still be live — either an orphan that already took the
+      // prompt, or a run retrying a connection error — and it keeps spending
+      // tokens until it is stopped. But cancelCurrentRun emits an idle update,
+      // which would overwrite a "failed" status written before it. Doing the
+      // cancel first lets that update land, then the failure is recorded last
+      // and sticks.
       if (store.sessionFromState(childRef)?.status === "running") {
         try {
           await store.driver.cancelCurrentRun(childRef);
@@ -194,6 +194,7 @@ async function createChildThreadRecord(
           console.warn("[orchestration] failed to cancel orphaned child run:", cancelError);
         }
       }
+      markInitialPromptDeliveryFailed(store, child.id, error);
       await store.persistUiState();
       throw error;
     }
@@ -746,7 +747,12 @@ async function launchInitialChildPrompt(
       if (sessionKey(event.sessionRef) !== sessionKey(childRef)) {
         return;
       }
-      if (event.type === "runFailed") {
+      // runRetrying counts here as much as runFailed does. A child that cannot
+      // reach its provider fails with exactly the error pi classifies as
+      // retryable, so waiting for the terminal failure would park the launch
+      // behind the retry backoff and report a dead child as "running". The UI
+      // side deliberately ignores runRetrying; startup detection cannot.
+      if (event.type === "runFailed" || event.type === "runRetrying") {
         finish(new Error(`Failed to start child thread: ${event.error.message}`));
         return;
       }
