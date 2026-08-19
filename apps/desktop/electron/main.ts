@@ -58,6 +58,7 @@ import {
   createDocumentRuntimeTools,
   type DocumentAccessScope,
 } from "./document-runtime";
+import { createPermissionModeExtension } from "./permission-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
@@ -76,7 +77,8 @@ import type {
 } from "../src/desktop-state";
 import type { SessionDriverEvent } from "@pi-gui/session-driver";
 import type { GenerateThreadTitleOptions } from "@pi-gui/pi-sdk-driver";
-import type { SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
+import type { PermissionMode, SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
+import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 const appTestMode = resolveAppTestMode(process.env.PI_APP_TEST_MODE);
@@ -182,6 +184,24 @@ function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
     workspaceRoots: [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)],
     allowedFiles: sessionRef ? store.attachedDocumentPathsFor(sessionRef) : [],
   };
+}
+
+/**
+ * Resolves the calling session's permission mode for the permission extension.
+ * Per-call (not registration-time) for the same reason as `documentAccessScopeFor`:
+ * extensions are shared across sessions in a workspace. Fails open to `auto`
+ * when the session can't be resolved — `plan` is an opt-in read-only gear, not a
+ * security boundary, so an unresolved context must not block writes.
+ */
+function permissionModeFor(ctx: ExtensionContext): PermissionMode {
+  // Fast path for the common case: plan is opt-in, so most sessions never flip
+  // out of the default. When no session has switched to plan, skip the
+  // workspace/session resolution entirely — this runs on every tool call.
+  if (store.sessionState.permissionModeBySession.size === 0) {
+    return DEFAULT_PERMISSION_MODE;
+  }
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  return sessionRef ? store.sessionPermissionMode(sessionRef) : DEFAULT_PERMISSION_MODE;
 }
 
 async function runOrchestrationRuntimeToolForTest(
@@ -1117,6 +1137,11 @@ app.whenReady().then(async () => {
       // Same lazy read, and scoped per call: extensions are built once per
       // workspace, so the calling session decides what is reachable.
       createDocumentRuntimeExtension(documentAccessScopeFor),
+      // Blocks mutating tools (write/edit/bash/create_child_thread) when the
+      // active session is in `plan` mode. Last so it runs after the other tools
+      // register. Reads the mode per call, so toggling plan/auto takes effect
+      // on the next tool call without restarting the session.
+      createPermissionModeExtension(permissionModeFor),
     ],
     inlineExtensionMetadata: [
       {
@@ -1130,6 +1155,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Document reading",
         description: "Read attached PDF, Word, Excel and plain-text files as text",
+      },
+      {
+        displayName: "Permission gate",
+        description: "Read-only plan mode blocks write/edit/bash tools until the user switches to auto",
       },
     ],
     authStorage: secureAuthStorage,
@@ -1326,6 +1355,11 @@ app.whenReady().then(async () => {
     desktopIpc.setSessionThinkingLevel,
     (event, workspaceId: string, sessionId: string, thinkingLevel) =>
       runWindowScopedForEvent(event, () => store.setSessionThinkingLevel({ workspaceId, sessionId }, thinkingLevel)),
+  );
+  ipcMain.handle(
+    desktopIpc.setPermissionMode,
+    (event, workspaceId: string, sessionId: string, mode: PermissionMode) =>
+      runWindowScopedForEvent(event, () => store.setSessionPermissionMode({ workspaceId, sessionId }, mode)),
   );
   ipcMain.handle(desktopIpc.loginProvider, (event, workspaceId: string, providerId: string) => {
     const window = BrowserWindow.fromWebContents(event.sender);

@@ -22,6 +22,7 @@ import type {
 import type {
   CreateSessionOptions,
   HostUiResponse,
+  PermissionMode,
   SessionConfig,
   SessionContextUsage,
   SessionDriverEvent,
@@ -30,6 +31,7 @@ import type {
   SessionSnapshot,
   WorkspaceRef,
 } from "@pi-gui/session-driver";
+import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
 import type {
   ModelSettingsSnapshot,
   RuntimeCommandRecord,
@@ -502,6 +504,61 @@ export class DesktopAppStore implements AppStoreInternals {
       revision: this.state.revision + 1,
     };
     await this.persistUiState();
+    return this.emit();
+  }
+
+  /**
+   * Active permission mode for a session. Falls back to the default (`auto`)
+   * when the user has never flipped it, so the map only tracks non-default
+   * modes (keeping pruning cheap). Called per tool call by the permission
+   * extension — must stay cheap (a Map lookup, no allocation).
+   */
+  sessionPermissionMode(sessionRef: SessionRef): PermissionMode {
+    const stored = this.sessionState.permissionModeBySession.get(sessionKey(sessionRef));
+    return stored ?? DEFAULT_PERMISSION_MODE;
+  }
+
+  /**
+   * Switch a session between `plan` (read-only) and `auto` (writable). Pure
+   * local state: the permission extension reads this live on the next tool
+   * call, so the change takes effect without restarting the session.
+   */
+  async setSessionPermissionMode(
+    target: WorkspaceSessionTarget,
+    mode: PermissionMode,
+  ): Promise<DesktopAppState> {
+    await this.initialize();
+    const sessionRef = toSessionRef(target);
+    if (!this.sessionFromState(sessionRef)) {
+      return this.withError(`Unknown session: ${target.workspaceId}:${target.sessionId}`);
+    }
+
+    const key = sessionKey(sessionRef);
+    const current = this.sessionPermissionMode(sessionRef);
+    if (current === mode) {
+      return structuredClone(this.state);
+    }
+
+    // The map only tracks non-default modes; switching back to the default
+    // removes the entry so the projection stays sparse. `updateRecordValue`
+    // mirrors that (undefined deletes the key) and aligns with the incremental
+    // per-session update pattern used for `sessionCommandsBySession` etc.
+    if (mode === DEFAULT_PERMISSION_MODE) {
+      this.sessionState.permissionModeBySession.delete(key);
+    } else {
+      this.sessionState.permissionModeBySession.set(key, mode);
+    }
+
+    this.state = {
+      ...this.state,
+      permissionModeBySession: updateRecordValue(
+        this.state.permissionModeBySession,
+        key,
+        mode === DEFAULT_PERMISSION_MODE ? undefined : mode,
+      ),
+      lastError: undefined,
+      revision: this.state.revision + 1,
+    };
     return this.emit();
   }
 
@@ -1473,6 +1530,7 @@ export class DesktopAppStore implements AppStoreInternals {
         runtimeByWorkspace,
         sessionCommandsBySession: mapToRecord(this.sessionState.sessionCommandsBySession),
         sessionExtensionUiBySession: this.serializeSessionExtensionUiState(),
+        permissionModeBySession: mapToRecord(this.sessionState.permissionModeBySession),
         extensionCommandCompatibilityByWorkspace: serializeCompatibilityByWorkspace(this.extensionCommandCompatibilityByWorkspace),
         orchestrationChildren: this.state.orchestrationChildren,
         lastViewedAtBySession: mapToRecord(this.sessionState.lastViewedAtBySession),

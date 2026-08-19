@@ -97,6 +97,22 @@ export interface SessionConfig {
   readonly thinkingLevel?: string;
 }
 
+/**
+ * Desktop permission mode for a session. `auto` is the writable default; `plan`
+ * blocks mutating tools (write/edit/bash/create_child_thread) via a pre-execution
+ * hook. Declared in the shared type package so both the renderer (state projection)
+ * and the main process (permission logic) reference one definition.
+ */
+export type PermissionMode = "plan" | "auto";
+
+/**
+ * Default permission mode. Lives alongside the type (not in the desktop app)
+ * so the renderer's state projection, the main process permission logic and
+ * the extension provider all read one source of truth for "absent key reads as
+ * this value".
+ */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
+
 export type SessionTreeNodeKind =
   | "message"
   | "thinking_level_change"

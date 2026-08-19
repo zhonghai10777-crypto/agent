@@ -1,5 +1,6 @@
 import type {
   HostUiRequest,
+  PermissionMode,
   SessionAttachmentExtraction,
   SessionConfig,
   SessionContextUsage,
@@ -323,6 +324,9 @@ export interface DesktopAppState {
   readonly runtimeByWorkspace: Readonly<Record<string, RuntimeSnapshot>>;
   readonly sessionCommandsBySession: Readonly<Record<string, readonly RuntimeCommandRecord[]>>;
   readonly sessionExtensionUiBySession: Readonly<Record<string, SessionExtensionUiStateRecord>>;
+  /** Per-session permission mode, projected from `SessionStateMap`. Sessions
+   * absent from the record are at the default `auto` mode. */
+  readonly permissionModeBySession: Readonly<Record<string, PermissionMode>>;
   readonly extensionCommandCompatibilityByWorkspace: Readonly<Record<string, readonly ExtensionCommandCompatibilityRecord[]>>;
   readonly orchestrationChildren: readonly OrchestrationChildThread[];
   readonly notificationPreferences: NotificationPreferences;
@@ -368,6 +372,7 @@ export function createEmptyDesktopAppState(): DesktopAppState {
     runtimeByWorkspace: {},
     sessionCommandsBySession: {},
     sessionExtensionUiBySession: {},
+    permissionModeBySession: {},
     extensionCommandCompatibilityByWorkspace: {},
     orchestrationChildren: [],
     notificationPreferences: {

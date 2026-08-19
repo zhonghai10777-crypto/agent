@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
+import { DEFAULT_PERMISSION_MODE, type PermissionMode } from "@pi-gui/session-driver";
 import { DEFAULT_LOCALE } from "./desktop-state";
 import { I18nProvider, useI18n, useRelativeTime } from "./i18n/I18nProvider";
 import {
@@ -194,6 +195,11 @@ function AppShell({
   const editingQueuedMessageId = snapshot?.editingQueuedMessageId;
   const runningLabel = useRunningLabel(selectedSession?.status === "running" ? selectedSession.runningSince : undefined, t);
   const selectedSessionKey = selectedWorkspace && selectedSession ? `${selectedWorkspace.id}:${selectedSession.id}` : "";
+  // Permission mode is projected per-session; absent keys read as the writable
+  // default ("auto"). Matches session-state-map's "only non-default modes are
+  // stored" convention.
+  const resolvedPermissionMode: PermissionMode =
+    (selectedSessionKey && snapshot?.permissionModeBySession[selectedSessionKey]) || DEFAULT_PERMISSION_MODE;
   const { composerDraft, setComposerDraft, composerDraftRef, flushComposerDraft } = useComposerDraftSync({
     api,
     snapshot,
@@ -725,6 +731,15 @@ function AppShell({
     );
   };
 
+  const handleSetPermissionMode = (mode: PermissionMode) => {
+    if (!selectedWorkspace || !selectedSession) {
+      return;
+    }
+    void updateSnapshot(api, setSnapshot, () =>
+      api.setPermissionMode(selectedWorkspace.id, selectedSession.id, mode),
+    );
+  };
+
   const handleTrySkill = (command: string) => {
     void updateSnapshot(api, setSnapshot, () => api.setActiveView("threads"));
     slashMenu.fillComposerFromSlash(command);
@@ -1031,6 +1046,8 @@ function AppShell({
               }}
               onSetModel={handleSetSessionModel}
               onSetThinking={handleSetSessionThinking}
+              permissionMode={resolvedPermissionMode}
+              onSetPermissionMode={handleSetPermissionMode}
               modelOnboarding={selectedSessionModelOnboarding}
               onOpenModelSettings={(section) =>
                 openSettings(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id, section)

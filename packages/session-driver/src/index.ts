@@ -9,6 +9,7 @@ export type {
   HostUiResponse,
   NavigateSessionTreeOptions,
   NavigateSessionTreeResult,
+  PermissionMode,
   HostUiRequest,
   HostUiRequestEvent,
   RunCompletedEvent,
@@ -65,3 +66,5 @@ export type {
   RuntimeSourceScope,
   RuntimeSnapshot,
 } from "./runtime-types.js";
+
+export { DEFAULT_PERMISSION_MODE } from "./types.js";
