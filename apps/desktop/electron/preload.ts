@@ -21,6 +21,7 @@ import {
 import type {
   NavigateSessionTreeOptions,
   NavigateSessionTreeResult,
+  PermissionMode,
   SessionTreeSnapshot,
 } from "@pi-gui/session-driver/types";
 import type {
@@ -188,6 +189,8 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.setSessionModel, workspaceId, sessionId, provider, modelId) as Promise<DesktopAppState>,
   setSessionThinkingLevel: (workspaceId: string, sessionId: string, thinkingLevel: RuntimeSettingsSnapshot["defaultThinkingLevel"]) =>
     ipcRenderer.invoke(desktopIpc.setSessionThinkingLevel, workspaceId, sessionId, thinkingLevel) as Promise<DesktopAppState>,
+  setPermissionMode: (workspaceId: string, sessionId: string, mode: PermissionMode) =>
+    ipcRenderer.invoke(desktopIpc.setPermissionMode, workspaceId, sessionId, mode) as Promise<DesktopAppState>,
   loginProvider: (workspaceId: string, providerId: string) =>
     ipcRenderer.invoke(desktopIpc.loginProvider, workspaceId, providerId) as Promise<DesktopAppState>,
   logoutProvider: (workspaceId: string, providerId: string) =>

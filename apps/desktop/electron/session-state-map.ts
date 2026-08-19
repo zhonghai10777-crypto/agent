@@ -1,4 +1,4 @@
-import type { SessionConfig, SessionContextUsage } from "@pi-gui/session-driver";
+import type { PermissionMode, SessionConfig, SessionContextUsage } from "@pi-gui/session-driver";
 import { createEmptyExtensionUiState as createBaseExtensionUiState, type ExtensionUiState } from "@pi-gui/pi-sdk-driver";
 import type { RuntimeCommandRecord } from "@pi-gui/session-driver/runtime-types";
 import type {
@@ -51,6 +51,13 @@ export class SessionStateMap {
   readonly sessionCommandsBySession = new Map<string, RuntimeCommandRecord[]>();
   readonly extensionUiBySession = new Map<string, MutableSessionExtensionUiState>();
   readonly pendingAutoTitleBySession = new Map<string, PendingAutoTitle>();
+  /**
+   * Per-session permission mode, set only when the user has flipped it away
+   * from the default (`auto`). Unset reads as the default — see
+   * `DesktopAppStore.sessionPermissionMode`. Keys here track every session
+   * that has a non-default mode so pruning still reclaims them.
+   */
+  readonly permissionModeBySession = new Map<string, PermissionMode>();
   readonly loadedTranscriptKeys = new Set<string>();
 
   /**
@@ -94,6 +101,7 @@ export class SessionStateMap {
       this.sessionCommandsBySession,
       this.extensionUiBySession,
       this.pendingAutoTitleBySession,
+      this.permissionModeBySession,
     ];
     for (const map of maps) {
       for (const key of map.keys()) {
@@ -149,6 +157,7 @@ export class SessionStateMap {
     this.sessionCommandsBySession.delete(key);
     this.extensionUiBySession.delete(key);
     this.pendingAutoTitleBySession.delete(key);
+    this.permissionModeBySession.delete(key);
     pendingAutoTitle?.cancel();
     this.loadedTranscriptKeys.delete(key);
     this.transcriptCache.delete(key);

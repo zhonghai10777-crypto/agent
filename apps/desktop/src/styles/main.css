@@ -913,6 +913,34 @@
   opacity: 0.45;
 }
 
+/* Permission mode toggle in the composer hint row. Default (auto) reads as a
+ * quiet chip matching the surrounding hint; plan mode tints it as a warning so
+ * the "this turn is read-only" state is visible at a glance. */
+.composer__permission-toggle {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 10px;
+  padding: 2px 8px;
+  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted-soft);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.composer__permission-toggle:hover {
+  color: var(--text, currentColor);
+  border-color: var(--text, currentColor);
+}
+
+.composer__permission-toggle--plan {
+  color: var(--warning, #b58900);
+  border-color: var(--warning, #b58900);
+}
+
 .settings-inline {
   display: flex;
   align-items: center;
