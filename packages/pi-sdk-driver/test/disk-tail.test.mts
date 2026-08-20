@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldTailFromDisk } from "../dist/session-supervisor-utils.js";
+import { SessionSupervisor } from "../dist/session-supervisor.js";
+import { sessionKey, shouldTailFromDisk } from "../dist/session-supervisor-utils.js";
 
 const base = { isStreaming: false, diskMtimeMs: 2_000, baselineMtimeMs: 1_000 };
 
@@ -27,4 +28,33 @@ test("first serve (no baseline yet) serves memory, not disk", () => {
   // Baseline is captured at bind time against the freshly-opened file, so an
   // undefined baseline means we have nothing proving disk is ahead.
   assert.equal(shouldTailFromDisk({ ...base, baselineMtimeMs: undefined }), false);
+});
+
+test("does not advance the disk baseline when the external transcript read fails", async () => {
+  const supervisor = new SessionSupervisor();
+  const ref = {
+    workspaceId: "workspace",
+    sessionId: "session",
+  } as Parameters<SessionSupervisor["getTranscript"]>[0];
+  const record = {
+    session: { isStreaming: false, messages: [] },
+    sessionFile: "/tmp/session.jsonl",
+    transcriptDiskMtimeMs: 1_000,
+    updatedAt: new Date(0).toISOString(),
+    closed: false,
+  };
+  const internals = supervisor as unknown as {
+    records: Map<string, unknown>;
+    statMtimeMs: (filePath: string | undefined) => Promise<number | undefined>;
+    readTranscriptFromDisk: (sessionRef: typeof ref) => Promise<never>;
+  };
+
+  internals.records.set(sessionKey(ref), record);
+  internals.statMtimeMs = async () => 2_000;
+  internals.readTranscriptFromDisk = async () => {
+    throw new Error("simulated EBUSY");
+  };
+
+  await assert.rejects(supervisor.getTranscript(ref), /simulated EBUSY/);
+  assert.equal(record.transcriptDiskMtimeMs, 1_000);
 });

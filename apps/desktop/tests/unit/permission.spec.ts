@@ -4,7 +4,10 @@ import type {
   ExtensionContext,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
-import { createChildThreadToolName } from "../../electron/orchestration-runtime";
+import {
+  createChildThreadToolName,
+  sendMessageToThreadToolName,
+} from "../../electron/orchestration-runtime";
 import { PLAN_BLOCKED_TOOLS, shouldBlockTool } from "../../electron/permission-mode";
 import { createPermissionModeExtension } from "../../electron/permission-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
@@ -46,6 +49,13 @@ test("shouldBlockTool: create_child_thread is blocked via the orchestration cons
   // allowlist keeps a stale literal.
   expect(PLAN_BLOCKED_TOOLS.has(createChildThreadToolName)).toBe(true);
   expect(shouldBlockTool("plan", createChildThreadToolName)?.block).toBe(true);
+});
+
+test("shouldBlockTool: send_message_to_thread is blocked via the orchestration constant", () => {
+  // Sending or queueing a message mutates another thread and can indirectly
+  // start writable work, so plan mode must not treat it as a read-only action.
+  expect(PLAN_BLOCKED_TOOLS.has(sendMessageToThreadToolName)).toBe(true);
+  expect(shouldBlockTool("plan", sendMessageToThreadToolName)?.block).toBe(true);
 });
 
 // ── createPermissionModeExtension: the hook actually wires shouldBlockTool ──
