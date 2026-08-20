@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/plan-mode-transcript-baseline
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: write
@@ -17,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: fix/plan-mode-transcript-baseline
           fetch-depth: 0
 
       - name: Apply transcript baseline fix
@@ -76,4 +79,4 @@ jobs:
           git add --all
           git diff --cached --check
           git commit --amend -m "Fix plan-mode mutation bypass and transcript tailing"
-          git push --force-with-lease origin "HEAD:${GITHUB_REF_NAME}"
+          git push --force-with-lease origin "HEAD:fix/plan-mode-transcript-baseline"
