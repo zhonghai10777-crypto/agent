@@ -27,17 +27,19 @@ jobs:
 
           path = Path("packages/pi-sdk-driver/src/session-supervisor.ts")
           text = path.read_text(encoding="utf-8")
-          old = """      if (tail) {
-                record.transcriptDiskMtimeMs = diskMtimeMs;
-                return this.readTranscriptFromDisk(sessionRef);
-              }
-          """
-          new = """      if (tail) {
-                const transcript = await this.readTranscriptFromDisk(sessionRef);
-                record.transcriptDiskMtimeMs = diskMtimeMs;
-                return transcript;
-              }
-          """
+          old = (
+              "      if (tail) {\n"
+              "        record.transcriptDiskMtimeMs = diskMtimeMs;\n"
+              "        return this.readTranscriptFromDisk(sessionRef);\n"
+              "      }\n"
+          )
+          new = (
+              "      if (tail) {\n"
+              "        const transcript = await this.readTranscriptFromDisk(sessionRef);\n"
+              "        record.transcriptDiskMtimeMs = diskMtimeMs;\n"
+              "        return transcript;\n"
+              "      }\n"
+          )
           count = text.count(old)
           if count != 1:
               raise SystemExit(f"Expected exactly one transcript-tail block, found {count}")
