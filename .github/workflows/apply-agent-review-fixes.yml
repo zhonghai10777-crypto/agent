@@ -1,0 +1,77 @@
+name: Apply agent review fixes
+
+on:
+  push:
+    branches:
+      - fix/plan-mode-transcript-baseline
+
+permissions:
+  contents: write
+
+jobs:
+  apply-reviewed-fixes:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Apply transcript baseline fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("packages/pi-sdk-driver/src/session-supervisor.ts")
+          text = path.read_text(encoding="utf-8")
+          old = """      if (tail) {
+                record.transcriptDiskMtimeMs = diskMtimeMs;
+                return this.readTranscriptFromDisk(sessionRef);
+              }
+          """
+          new = """      if (tail) {
+                const transcript = await this.readTranscriptFromDisk(sessionRef);
+                record.transcriptDiskMtimeMs = diskMtimeMs;
+                return transcript;
+              }
+          """
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected exactly one transcript-tail block, found {count}")
+          path.write_text(text.replace(old, new), encoding="utf-8")
+          PY
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Driver unit tests
+        run: pnpm --filter @pi-gui/pi-sdk-driver test
+
+      - name: Permission unit test
+        run: >-
+          pnpm --filter @pi-gui/desktop run test:e2e:runner --
+          apps/desktop/tests/unit/permission.spec.ts
+
+      - name: Publish reviewed commit
+        run: |
+          git diff --check
+          rm .github/workflows/apply-agent-review-fixes.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add --all
+          git diff --cached --check
+          git commit --amend -m "Fix plan-mode mutation bypass and transcript tailing"
+          git push --force-with-lease origin "HEAD:${GITHUB_REF_NAME}"

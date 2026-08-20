@@ -17,14 +17,18 @@
  * (state projection), the main process (permission logic) and the extension
  * provider all read one source of truth for the default.
  */
-import { createChildThreadToolName } from "./orchestration-runtime";
+import {
+  createChildThreadToolName,
+  sendMessageToThreadToolName,
+} from "./orchestration-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
 
 /**
  * Tool names blocked in `plan` mode. `write`/`edit`/`bash` are pi's built-in
  * tool `toolName` values (`tools/write|edit|bash.d.ts`); `create_child_thread`
- * is the orchestration tool registered in `orchestration-runtime.ts` — pulled
- * from its constant rather than restated so the two stay in sync. Read-only
+ * and `send_message_to_thread` are the mutating orchestration tools registered
+ * in `orchestration-runtime.ts` — pulled from their constants rather than
+ * restated so the permission gate stays in sync. Read-only
  * tools (`read`, `grep`, `find`, `ls`, `read_document`, `web_search`,
  * `web_fetch`, `list_threads`, `read_thread`) stay available so the agent can
  * still investigate.
@@ -34,6 +38,7 @@ export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   "edit",
   "bash",
   createChildThreadToolName,
+  sendMessageToThreadToolName,
 ]);
 
 export interface ToolBlock {
@@ -59,7 +64,7 @@ export function shouldBlockTool(
   if (mode === "plan" && PLAN_BLOCKED_TOOLS.has(toolName)) {
     return {
       block: true,
-      reason: `Read-only (plan) mode blocks ${toolName}. Switch the session to auto mode to modify files or run commands.`,
+      reason: `Read-only (plan) mode blocks ${toolName}. Switch the session to auto mode to perform mutating actions.`,
     };
   }
   return null;
