@@ -394,8 +394,9 @@ export class SessionSupervisor {
         baselineMtimeMs: record.transcriptDiskMtimeMs,
       });
       if (tail) {
+        const transcript = await this.readTranscriptFromDisk(sessionRef);
         record.transcriptDiskMtimeMs = diskMtimeMs;
-        return this.readTranscriptFromDisk(sessionRef);
+        return transcript;
       }
       return transcriptFromMessages(record.session.messages ?? [], record.updatedAt);
     }
