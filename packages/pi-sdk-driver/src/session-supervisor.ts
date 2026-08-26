@@ -1965,19 +1965,32 @@ export class SessionSupervisor {
         refreshSessionContextUsage(record);
         return [sessionUpdatedEvent(record)];
       case "agent_end": {
-        // NOTE on event.willRetry: pi fires agent_end before an automatic retry
-        // as well, so a will-retry agent_end is not strictly run-terminal, and
-        // reporting it as a failure can show a red error that a successful retry
-        // then contradicts. Suppressing it here is NOT safe today, though:
-        // orchestration's child-launch handshake decides "did this child start?"
-        // by racing runFailed against a bounded grace window
-        // (app-store-orchestration.ts, CHILD_RUNNING_FAILURE_GRACE_MS), and a
-        // connection/auth failure at launch matches pi's retryable pattern.
-        // Deferring it behind the retry backoff makes a child that cannot start
-        // report itself as "running". Surfacing the transient failure without the
-        // red banner needs a separate non-latching channel on the driver event
-        // contract; until that exists, report it and let the retry correct it.
+        // pi fires agent_end before an automatic retry as well, so a
+        // will-retry agent_end is not run-terminal. Reporting it as a failure
+        // flashes a red error that the successful retry then contradicts.
+        // It cannot simply be dropped either: orchestration's child-launch
+        // handshake decides "did this child start?" by racing a failure signal
+        // against a bounded grace window (app-store-orchestration.ts,
+        // CHILD_RUNNING_FAILURE_GRACE_MS), and a connection/auth failure at
+        // launch matches pi's retryable pattern — swallowing it makes a child
+        // that cannot start report itself as "running". So it goes out on
+        // runRetrying, the non-latching channel: the handshake subscribes,
+        // the error banner and desktop notifications do not.
         const outcome = determineRunOutcome(event.messages);
+        if (event.willRetry && !outcome.success && !record.cancelRequested) {
+          record.updatedAt = timestamp;
+          return toDriverEvents(
+            {
+              type: "runRetrying" as const,
+              sessionRef: record.ref,
+              timestamp,
+              error: outcome.error ?? toSessionErrorInfo(undefined, "RUN_FAILED"),
+            },
+            record,
+            // The run continues, so runningRunId and "running" both stand.
+            record.runningRunId,
+          );
+        }
         const runId = record.runningRunId;
         record.runningRunId = undefined;
         // An aborted run that the user actively stopped is a clean cancel, not a

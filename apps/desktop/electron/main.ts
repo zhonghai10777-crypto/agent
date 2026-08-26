@@ -54,6 +54,13 @@ import {
 import { SUPPORTED_COMPOSER_IMAGE_TYPES } from "../src/composer-attachments";
 import { tGlobal } from "../src/i18n";
 import { createWebRuntimeExtension } from "./web-runtime";
+import {
+  createDocumentRuntimeExtension,
+  createDocumentRuntimeTools,
+  type DocumentAccessScope,
+} from "./document-runtime";
+import { createPermissionModeExtension } from "./permission-runtime";
+import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
 import type {
@@ -71,7 +78,8 @@ import type {
 } from "../src/desktop-state";
 import type { SessionDriverEvent } from "@pi-gui/session-driver";
 import type { GenerateThreadTitleOptions } from "@pi-gui/pi-sdk-driver";
-import type { SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
+import type { PermissionMode, SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
+import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 const appTestMode = resolveAppTestMode(process.env.PI_APP_TEST_MODE);
@@ -146,18 +154,60 @@ function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBrid
 }
 
 function sessionRefFromExtensionContext(ctx: ExtensionContext): SessionRef {
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  if (!sessionRef) {
+    throw new Error(
+      `Unable to resolve orchestration session for ${ctx.sessionManager.getCwd?.() ?? ctx.cwd}:${ctx.sessionManager.getSessionId()}`,
+    );
+  }
+  return sessionRef;
+}
+
+function tryResolveSessionRefFromExtensionContext(ctx: ExtensionContext): SessionRef | undefined {
   const sessionId = ctx.sessionManager.getSessionId();
   const cwd = path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd);
   const workspace = store.state.workspaces.find(
     (entry) => path.resolve(entry.path) === cwd && entry.sessions.some((session) => session.id === sessionId),
   );
   if (!workspace) {
-    throw new Error(`Unable to resolve orchestration session for ${cwd}:${sessionId}`);
+    return undefined;
   }
   return {
     workspaceId: workspace.id,
     sessionId,
   };
+}
+
+/**
+ * Scopes `read_document` to the session that called it: its own working
+ * directory, plus the files attached to that conversation. A session gets no
+ * reach into another workspace, nor into a document a different thread was
+ * given — an unresolvable session simply gets nothing.
+ */
+function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  return {
+    workspaceRoots: [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)],
+    allowedFiles: sessionRef ? store.attachedDocumentPathsFor(sessionRef) : [],
+  };
+}
+
+/**
+ * Resolves the calling session's permission mode for the permission extension.
+ * Per-call (not registration-time) for the same reason as `documentAccessScopeFor`:
+ * extensions are shared across sessions in a workspace. Fails open to `auto`
+ * when the session can't be resolved — `plan` is an opt-in read-only gear, not a
+ * security boundary, so an unresolved context must not block writes.
+ */
+function permissionModeFor(ctx: ExtensionContext): PermissionMode {
+  // Fast path for the common case: plan is opt-in, so most sessions never flip
+  // out of the default. When no session has switched to plan, skip the
+  // workspace/session resolution entirely — this runs on every tool call.
+  if (store.sessionState.permissionModeBySession.size === 0) {
+    return DEFAULT_PERMISSION_MODE;
+  }
+  const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
+  return sessionRef ? store.sessionPermissionMode(sessionRef) : DEFAULT_PERMISSION_MODE;
 }
 
 async function runOrchestrationRuntimeToolForTest(
@@ -176,6 +226,15 @@ async function runOrchestrationRuntimeToolForTest(
     undefined,
     createTestExtensionContext(input.sessionRef),
   );
+}
+
+async function runReadDocumentToolForTest(sessionRef: SessionRef, params: unknown): Promise<AgentToolResult<unknown>> {
+  await store.initialize();
+  const tool = createDocumentRuntimeTools(documentAccessScopeFor)[0];
+  if (!tool) {
+    throw new Error("read_document tool is not registered");
+  }
+  return tool.execute("test-read-document", params, undefined, undefined, createTestExtensionContext(sessionRef));
 }
 
 function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
@@ -1105,16 +1164,32 @@ app.whenReady().then(async () => {
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(() => webToolsStore.read()),
+      // Same lazy read, and scoped per call: extensions are built once per
+      // workspace, so the calling session decides what is reachable.
+      createDocumentRuntimeExtension(documentAccessScopeFor),
       ...(initialRuntimeMode === "agent" ? [createOrchestrationRuntimeExtension(orchestrationRuntimeBridge)] : []),
+      // Blocks mutating tools (write/edit/bash/create_child_thread) when the
+      // active session is in `plan` mode. Last so it runs after the other tools
+      // register. Reads the mode per call, so toggling plan/auto takes effect
+      // on the next tool call without restarting the session.
+      createPermissionModeExtension(permissionModeFor),
     ],
     inlineExtensionMetadata: [
       {
         displayName: "Web access",
         description: "Search the web and read pages from the conversation",
       },
+      {
+        displayName: "Document reading",
+        description: "Read attached PDF, Word, Excel and plain-text files as text",
+      },
       ...(initialRuntimeMode === "agent"
         ? [{ displayName: "Thread orchestration", description: "Start child pi-gui threads from transcript tool calls" }]
         : []),
+      {
+        displayName: "Permission gate",
+        description: "Read-only plan mode blocks write/edit/bash tools until the user switches to auto",
+      },
     ],
     authStorage: secureAuthStorage,
   };
@@ -1152,6 +1227,8 @@ app.whenReady().then(async () => {
           promptForText(mainWindow, message, placeholder ?? "", allowEmpty ?? false),
         runOrchestrationRuntimeTool: (input: OrchestrationRuntimeToolTestInput) =>
           runOrchestrationRuntimeToolForTest(orchestrationRuntimeBridge, input),
+        runReadDocumentTool: (sessionRef: SessionRef, params: unknown) =>
+          runReadDocumentToolForTest(sessionRef, params),
         setDeferredThreadTitleMode: () => {
           generateThreadTitleOverride = () =>
             new Promise<string | null>((resolve, reject) => {
@@ -1311,6 +1388,11 @@ app.whenReady().then(async () => {
     desktopIpc.setSessionThinkingLevel,
     (event, workspaceId: string, sessionId: string, thinkingLevel) =>
       runWindowScopedForEvent(event, () => store.setSessionThinkingLevel({ workspaceId, sessionId }, thinkingLevel)),
+  );
+  ipcMain.handle(
+    desktopIpc.setPermissionMode,
+    (event, workspaceId: string, sessionId: string, mode: PermissionMode) =>
+      runWindowScopedForEvent(event, () => store.setSessionPermissionMode({ workspaceId, sessionId }, mode)),
   );
   ipcMain.handle(desktopIpc.loginProvider, (event, workspaceId: string, providerId: string) => {
     const window = BrowserWindow.fromWebContents(event.sender);
@@ -1491,15 +1573,29 @@ app.whenReady().then(async () => {
     if (result.canceled || result.filePaths.length === 0) {
       return stateForWindow(window);
     }
-    const attachments = await Promise.all(result.filePaths.map(readComposerAttachment));
-    return runWindowScopedForWindow(window, () => store.addComposerAttachments(attachments));
+    // Per-file tolerance: a single unreadable path used to reject the whole
+    // Promise.all and silently drop every other file the user picked.
+    const settled = await Promise.allSettled(result.filePaths.map(readComposerAttachment));
+    const attachments = settled.flatMap((outcome) => {
+      if (outcome.status === "fulfilled") {
+        return [outcome.value];
+      }
+      console.error("Failed to attach file", outcome.reason);
+      return [];
+    });
+    if (attachments.length === 0) {
+      return stateForWindow(window);
+    }
+    const enriched = await withExtractionMetadata(attachments);
+    return runWindowScopedForWindow(window, () => store.addComposerAttachments(enriched));
   });
   ipcMain.on(desktopIpc.readClipboardImage, (event) => {
     event.returnValue = readClipboardImageAttachment();
   });
-  ipcMain.handle(desktopIpc.addComposerAttachments, (event, attachments: readonly ComposerAttachment[]) => {
+  ipcMain.handle(desktopIpc.addComposerAttachments, async (event, attachments: readonly ComposerAttachment[]) => {
     const validated = attachments.flatMap(validateComposerAttachmentPayload);
-    return runWindowScopedForEvent(event, () => store.addComposerAttachments(validated));
+    const enriched = await withExtractionMetadata(validated);
+    return runWindowScopedForEvent(event, () => store.addComposerAttachments(enriched));
   });
   ipcMain.handle(desktopIpc.removeComposerAttachment, (event, attachmentId: string) =>
     runWindowScopedForEvent(event, () => store.removeComposerAttachment(attachmentId)),

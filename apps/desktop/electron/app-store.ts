@@ -22,6 +22,7 @@ import type {
 import type {
   CreateSessionOptions,
   HostUiResponse,
+  PermissionMode,
   SessionConfig,
   SessionContextUsage,
   SessionDriverEvent,
@@ -30,6 +31,7 @@ import type {
   SessionSnapshot,
   WorkspaceRef,
 } from "@pi-gui/session-driver";
+import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
 import type {
   ModelSettingsSnapshot,
   RuntimeCommandRecord,
@@ -522,6 +524,61 @@ export class DesktopAppStore implements AppStoreInternals {
       revision: this.state.revision + 1,
     };
     await this.persistUiState();
+    return this.emit();
+  }
+
+  /**
+   * Active permission mode for a session. Falls back to the default (`auto`)
+   * when the user has never flipped it, so the map only tracks non-default
+   * modes (keeping pruning cheap). Called per tool call by the permission
+   * extension — must stay cheap (a Map lookup, no allocation).
+   */
+  sessionPermissionMode(sessionRef: SessionRef): PermissionMode {
+    const stored = this.sessionState.permissionModeBySession.get(sessionKey(sessionRef));
+    return stored ?? DEFAULT_PERMISSION_MODE;
+  }
+
+  /**
+   * Switch a session between `plan` (read-only) and `auto` (writable). Pure
+   * local state: the permission extension reads this live on the next tool
+   * call, so the change takes effect without restarting the session.
+   */
+  async setSessionPermissionMode(
+    target: WorkspaceSessionTarget,
+    mode: PermissionMode,
+  ): Promise<DesktopAppState> {
+    await this.initialize();
+    const sessionRef = toSessionRef(target);
+    if (!this.sessionFromState(sessionRef)) {
+      return this.withError(`Unknown session: ${target.workspaceId}:${target.sessionId}`);
+    }
+
+    const key = sessionKey(sessionRef);
+    const current = this.sessionPermissionMode(sessionRef);
+    if (current === mode) {
+      return structuredClone(this.state);
+    }
+
+    // The map only tracks non-default modes; switching back to the default
+    // removes the entry so the projection stays sparse. `updateRecordValue`
+    // mirrors that (undefined deletes the key) and aligns with the incremental
+    // per-session update pattern used for `sessionCommandsBySession` etc.
+    if (mode === DEFAULT_PERMISSION_MODE) {
+      this.sessionState.permissionModeBySession.delete(key);
+    } else {
+      this.sessionState.permissionModeBySession.set(key, mode);
+    }
+
+    this.state = {
+      ...this.state,
+      permissionModeBySession: updateRecordValue(
+        this.state.permissionModeBySession,
+        key,
+        mode === DEFAULT_PERMISSION_MODE ? undefined : mode,
+      ),
+      lastError: undefined,
+      revision: this.state.revision + 1,
+    };
     return this.emit();
   }
 
@@ -1540,6 +1597,7 @@ export class DesktopAppStore implements AppStoreInternals {
         runtimeByWorkspace,
         sessionCommandsBySession: mapToRecord(this.sessionState.sessionCommandsBySession),
         sessionExtensionUiBySession: this.serializeSessionExtensionUiState(),
+        permissionModeBySession: mapToRecord(this.sessionState.permissionModeBySession),
         extensionCommandCompatibilityByWorkspace: serializeCompatibilityByWorkspace(this.extensionCommandCompatibilityByWorkspace),
         orchestrationChildren: this.state.orchestrationChildren,
         lastViewedAtBySession: mapToRecord(this.sessionState.lastViewedAtBySession),
@@ -3274,6 +3332,41 @@ export class DesktopAppStore implements AppStoreInternals {
 
   getQueuedComposerMessages(sessionRef: SessionRef): readonly QueuedComposerMessage[] {
     return this.sessionState.queuedComposerMessagesBySession.get(sessionKey(sessionRef)) ?? [];
+  }
+
+  /**
+   * Files `read_document` may open on behalf of this session: everything
+   * attached to its composer draft, its queue, or its transcript.
+   *
+   * Derived on each call rather than tracked in a registry. A registry would
+   * need updating at every point an attachment can enter a session — the
+   * picker, drag-and-drop, paste, queued-message editing, and the draft
+   * restored from disk at startup — and any one of those missed is either a
+   * file the model cannot read or, worse, one session reading another's.
+   */
+  attachedDocumentPathsFor(sessionRef: SessionRef): readonly string[] {
+    const key = sessionKey(sessionRef);
+    const paths = new Set<string>();
+    const collect = (attachments: readonly { readonly kind: string; readonly fsPath?: string }[] | undefined) => {
+      for (const attachment of attachments ?? []) {
+        if (attachment.kind === "file" && attachment.fsPath) {
+          paths.add(attachment.fsPath);
+        }
+      }
+    };
+
+    collect(this.sessionState.composerAttachmentsBySession.get(key));
+    for (const message of this.sessionState.queuedComposerMessagesBySession.get(key) ?? []) {
+      collect(message.attachments);
+    }
+    // Covers the common case: the draft is cleared the moment the message is
+    // sent, which is just before the model goes to read what it carried.
+    for (const message of this.sessionState.transcriptCache.get(key) ?? []) {
+      if (message.kind === "message") {
+        collect(message.attachments);
+      }
+    }
+    return [...paths];
   }
 
   setQueuedComposerEditState(sessionRef: SessionRef, editState: QueuedComposerEditState | undefined): void {

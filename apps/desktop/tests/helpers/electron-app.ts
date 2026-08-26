@@ -1383,6 +1383,28 @@ export async function runOrchestrationRuntimeTool(
   }, input);
 }
 
+export async function runReadDocumentTool(
+  harness: DesktopHarness,
+  sessionRef: SessionRef,
+  params: unknown,
+): Promise<OrchestrationRuntimeToolTestResult> {
+  await harness.firstWindow();
+  return harness.electronApp.evaluate(async (_, payload) => {
+    const hooks = (globalThis as {
+      __PI_APP_TEST_HOOKS?: {
+        runReadDocumentTool?: (
+          sessionRef: SessionRef,
+          params: unknown,
+        ) => Promise<OrchestrationRuntimeToolTestResult>;
+      };
+    }).__PI_APP_TEST_HOOKS;
+    if (!hooks?.runReadDocumentTool) {
+      throw new Error("read_document runtime-tool hook is unavailable");
+    }
+    return hooks.runReadDocumentTool(payload.sessionRef, payload.params);
+  }, { sessionRef, params });
+}
+
 export async function emitTestSessionEvent(
   harness: DesktopHarness,
   event: SessionDriverEvent,

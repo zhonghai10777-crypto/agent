@@ -8,6 +8,7 @@ import type {
   ComposerSlashOptionEmptyState,
 } from "./composer-commands";
 import { hasFilesInDataTransfer } from "./composer-attachments";
+import { attachmentExtractionLabel } from "./composer-attachment-status";
 import { ExtensionDock, type ExtensionDockModel } from "./extension-session-ui";
 import { ExtensionIcon, FileIcon, ModelIcon, ReasoningIcon, SettingsIcon, SkillIcon, SparkIcon, StatusIcon } from "./icons";
 import { QueuedComposerMessages } from "./queued-composer-messages";
@@ -207,6 +208,7 @@ export function ComposerSurface({
                 </span>
               )}
               <span className="composer-attachment__name">{attachment.name}</span>
+              {attachment.kind === "file" ? <AttachmentExtractionNote attachment={attachment} /> : null}
               <button
                 aria-label={t("composer.removeAttachment", { name: attachment.name })}
                 className="composer-attachment__remove"
@@ -499,4 +501,28 @@ function SlashCommandIcon({ command }: { readonly command: ComposerSlashCommand 
     default:
       return <SparkIcon />;
   }
+}
+
+/**
+ * The parse result for a file attachment. A failure here is the user's only
+ * warning before they ask a question the model cannot actually answer from the
+ * document, so it is shown inline rather than hidden behind a tooltip.
+ */
+function AttachmentExtractionNote({
+  attachment,
+}: {
+  readonly attachment: Extract<ComposerAttachment, { readonly kind: "file" }>;
+}) {
+  const { t } = useI18n();
+  const label = attachmentExtractionLabel(attachment.extraction);
+  if (!label) {
+    return null;
+  }
+  return (
+    <span
+      className={`composer-attachment__status${label.failed ? " composer-attachment__status--failed" : ""}`}
+    >
+      {t(label.key, label.params)}
+    </span>
+  );
 }

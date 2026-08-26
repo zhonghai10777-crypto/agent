@@ -9,12 +9,15 @@ export type {
   HostUiResponse,
   NavigateSessionTreeOptions,
   NavigateSessionTreeResult,
+  PermissionMode,
   HostUiRequest,
   HostUiRequestEvent,
   RunCompletedEvent,
   RunFailedEvent,
+  RunRetryingEvent,
   RunId,
   SessionAttachment,
+  SessionAttachmentExtraction,
   SessionClosedEvent,
   SessionConfig,
   SessionContextUsage,
@@ -63,3 +66,5 @@ export type {
   RuntimeSourceScope,
   RuntimeSnapshot,
 } from "./runtime-types.js";
+
+export { DEFAULT_PERMISSION_MODE } from "./types.js";
