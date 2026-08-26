@@ -19,6 +19,7 @@ import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readFile, stat } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { augmentPosixPath } from "../scripts/augment-path.cjs";
@@ -38,8 +39,8 @@ import {
 } from "./notification-permission";
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-checker";
 import { ThemeManager } from "./theme-manager";
-import { TerminalService } from "./terminal-service";
-import type { AppView, DesktopAppState, Locale, ThemeMode, ThemePresetId } from "../src/desktop-state";
+import type { TerminalService } from "./terminal-service";
+import type { AppView, DesktopAppState, Locale, RuntimeMode, ThemeMode, ThemePresetId } from "../src/desktop-state";
 import {
   desktopIpc,
   getDesktopCommandFromShortcut,
@@ -82,6 +83,7 @@ let mainWindow: BrowserWindow | null = null;
 let notificationManager: NotificationManager | undefined;
 let notificationPermissionService: NotificationPermissionService | undefined;
 let terminalService: TerminalService | undefined;
+let terminalServicePromise: Promise<TerminalService> | undefined;
 let integratedTerminalShell = "";
 
 interface WindowViewState {
@@ -122,18 +124,22 @@ function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBrid
   return {
     createChildThread: async (ctx, input, signal) => {
       await store.initialize();
+      store.assertCapability("childAgents");
       return orchestrationTools.createChildThreadToolResult(store, sessionRefFromExtensionContext(ctx), input, signal);
     },
     listThreads: async (ctx) => {
       await store.initialize();
+      store.assertCapability("childAgents");
       return orchestrationTools.listThreadsToolResult(store, sessionRefFromExtensionContext(ctx));
     },
     readThread: async (ctx, threadId) => {
       await store.initialize();
+      store.assertCapability("childAgents");
       return orchestrationTools.readThreadToolResult(store, sessionRefFromExtensionContext(ctx), threadId);
     },
     sendMessageToThread: async (ctx, input) => {
       await store.initialize();
+      store.assertCapability("childAgents");
       return orchestrationTools.sendMessageToThreadToolResult(store, sessionRefFromExtensionContext(ctx), input);
     },
   };
@@ -208,15 +214,22 @@ const QUIT_FLUSH_TIMEOUT_MS = 5_000;
 const MAX_CLIPBOARD_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_CLIPBOARD_IMAGE_DIMENSION = 8_192;
 
-function getTerminalService(): TerminalService {
-  if (!terminalService) {
-    terminalService = new TerminalService({
-      getWorkspacePath: (workspaceId) => store.getWorkspacePath(workspaceId),
-      getIntegratedTerminalShell: () => integratedTerminalShell,
-      isPackaged: app.isPackaged,
+async function getTerminalService(): Promise<TerminalService> {
+  if (terminalService) {
+    return terminalService;
+  }
+  if (!terminalServicePromise) {
+    terminalServicePromise = import("./terminal-service.js").then(({ TerminalService: TerminalServiceImpl }) => {
+      const service = new TerminalServiceImpl({
+        getWorkspacePath: (workspaceId: string) => store.getWorkspacePath(workspaceId),
+        getIntegratedTerminalShell: () => integratedTerminalShell,
+        isPackaged: app.isPackaged,
+      });
+      terminalService = service;
+      return service;
     });
   }
-  return terminalService;
+  return terminalServicePromise;
 }
 
 // Resolve the bundled application icon. In dev the repo's `resources/icon.png`
@@ -729,6 +742,7 @@ function createAppWindow(sourceView?: DesktopAppViewState): BrowserWindow {
     if (appWindows.size === 0) {
       terminalService?.dispose();
       terminalService = undefined;
+      terminalServicePromise = undefined;
     }
   });
 
@@ -1001,6 +1015,19 @@ app.setName("pi");
 const configuredUserDataDir = process.env.PI_APP_USER_DATA_DIR?.trim() || app.getPath("userData");
 app.setPath("userData", configuredUserDataDir);
 
+function readInitialRuntimeMode(userDataDir: string): RuntimeMode {
+  const envMode = process.env.PI_APP_DEFAULT_RUNTIME_MODE;
+  if (envMode === "light" || envMode === "agent") {
+    return envMode;
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(path.join(userDataDir, "ui-state.json"), "utf8")) as { runtimeMode?: unknown };
+    return parsed.runtimeMode === "agent" ? "agent" : "light";
+  } catch {
+    return "light";
+  }
+}
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -1053,6 +1080,7 @@ app.whenReady().then(async () => {
       }
     | undefined;
   const orchestrationRuntimeBridge = createStoreBackedOrchestrationRuntimeBridge();
+  const initialRuntimeMode = readInitialRuntimeMode(configuredUserDataDir);
   // API keys are stored encrypted via Electron safeStorage (OS keychain) in a
   // dedicated file; OAuth tokens continue to live in pi's plaintext auth.json
   // so OAuth login/refresh and pi CLI interoperability are preserved.
@@ -1070,21 +1098,23 @@ app.whenReady().then(async () => {
   // once secure-keys.json already covers every provider.
   secureAuthStorageBackend.migratePlaintextKeys();
   const driverOptions = {
+    runtimeMode: initialRuntimeMode,
+    noExtensions: initialRuntimeMode === "light",
+    noSkills: initialRuntimeMode === "light",
     extensionFactories: [
-      createOrchestrationRuntimeExtension(orchestrationRuntimeBridge),
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(() => webToolsStore.read()),
+      ...(initialRuntimeMode === "agent" ? [createOrchestrationRuntimeExtension(orchestrationRuntimeBridge)] : []),
     ],
     inlineExtensionMetadata: [
-      {
-        displayName: "Thread orchestration",
-        description: "Start child pi-gui threads from transcript tool calls",
-      },
       {
         displayName: "Web access",
         description: "Search the web and read pages from the conversation",
       },
+      ...(initialRuntimeMode === "agent"
+        ? [{ displayName: "Thread orchestration", description: "Start child pi-gui threads from transcript tool calls" }]
+        : []),
     ],
     authStorage: secureAuthStorage,
   };
@@ -1184,6 +1214,9 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(desktopIpc.setLocale, (event, locale: Locale) =>
     runWindowScopedForEvent(event, () => store.setLocale(locale)),
+  );
+  ipcMain.handle(desktopIpc.setRuntimeMode, (event, mode: RuntimeMode) =>
+    runWindowScopedForEvent(event, () => store.setRuntimeMode(mode)),
   );
   ipcMain.handle(desktopIpc.openExternal, (_event, url: string) => {
     const parsed = parseExternalWebUrl(url);
@@ -1359,30 +1392,41 @@ app.whenReady().then(async () => {
     return nextState;
   });
   ipcMain.handle(desktopIpc.terminalEnsurePanel, (event, workspaceId: string, terminalScopeId: string, size) => {
-    return getTerminalService().ensurePanel(event.sender, workspaceId, terminalScopeId, size);
+    store.assertCapability("terminal");
+    return getTerminalService().then((service) => service.ensurePanel(event.sender, workspaceId, terminalScopeId, size));
   });
   ipcMain.handle(desktopIpc.terminalCreateSession, (event, workspaceId: string, terminalScopeId: string, size) => {
-    return getTerminalService().createSession(event.sender, workspaceId, terminalScopeId, size);
+    store.assertCapability("terminal");
+    return getTerminalService().then((service) => service.createSession(event.sender, workspaceId, terminalScopeId, size));
   });
   ipcMain.handle(desktopIpc.terminalSetActiveSession, (event, workspaceId: string, terminalScopeId: string, terminalId: string) => {
-    return getTerminalService().setActiveSession(event.sender, workspaceId, terminalScopeId, terminalId);
+    store.assertCapability("terminal");
+    return getTerminalService().then((service) => service.setActiveSession(event.sender, workspaceId, terminalScopeId, terminalId));
   });
   ipcMain.handle(desktopIpc.terminalWrite, (event, terminalId: string, data: string) => {
+    store.assertCapability("shellExecution");
     terminalService?.write(event.sender, terminalId, data);
   });
   ipcMain.handle(desktopIpc.terminalResize, (event, terminalId: string, size) => {
+    store.assertCapability("terminal");
     terminalService?.resize(event.sender, terminalId, size);
   });
   ipcMain.handle(desktopIpc.terminalRestartSession, (event, terminalId: string, size) => {
-    return getTerminalService().restart(event.sender, terminalId, size);
+    store.assertCapability("terminal");
+    return getTerminalService().then((service) => service.restart(event.sender, terminalId, size));
   });
   ipcMain.handle(desktopIpc.terminalCloseSession, (event, terminalId: string) => {
-    return getTerminalService().close(event.sender, terminalId);
+    store.assertCapability("terminal");
+    return getTerminalService().then((service) => service.close(event.sender, terminalId));
   });
   ipcMain.handle(desktopIpc.terminalSetTitle, (event, terminalId: string, title: string) => {
+    store.assertCapability("terminal");
     terminalService?.setTitle(event.sender, terminalId, title);
   });
   ipcMain.on(desktopIpc.terminalSetFocused, (event, focused: boolean) => {
+    if (store.activeRuntimeMode !== "agent") {
+      return;
+    }
     if (focused) {
       terminalFocusedWebContentsIds.add(event.sender.id);
     } else {
@@ -1414,6 +1458,7 @@ app.whenReady().then(async () => {
     runWindowScopedForEvent(event, () => store.setChildSupervisionLoop(input)),
   );
   ipcMain.handle(desktopIpc.openSkillInFinder, async (_event, workspaceId: string, filePath: string) => {
+    store.assertCapability("extensions");
     const resolved = store.getSkillFilePath(workspaceId, filePath);
     if (!resolved) {
       throw new Error(`Unknown skill: ${filePath}`);
@@ -1421,6 +1466,7 @@ app.whenReady().then(async () => {
     await shell.openPath(path.dirname(resolved));
   });
   ipcMain.handle(desktopIpc.openExtensionInFinder, async (_event, workspaceId: string, filePath: string) => {
+    store.assertCapability("extensions");
     const resolved = store.getExtensionFilePath(workspaceId, filePath);
     if (!resolved) {
       throw new Error(`Unknown extension: ${filePath}`);
@@ -1532,6 +1578,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     desktopIpc.stageFile,
     async (_event, workspaceId: string, filePath: string, stagingSourcePath?: string) => {
+      store.assertCapability("fileMutation");
       const workspacePath = store.getWorkspacePath(workspaceId);
       if (!workspacePath) {
         throw new Error(`Unknown workspace: ${workspaceId}`);
@@ -1598,6 +1645,7 @@ app.on("window-all-closed", () => {
     stopPruningTerminals = undefined;
     terminalService?.dispose();
     terminalService = undefined;
+    terminalServicePromise = undefined;
     app.quit();
   }
 });
@@ -1614,6 +1662,7 @@ app.on("before-quit", (event) => {
   stopPruningTerminals = undefined;
   terminalService?.dispose();
   terminalService = undefined;
+  terminalServicePromise = undefined;
   if (quittingAfterStoreFlush || !store) {
     return;
   }

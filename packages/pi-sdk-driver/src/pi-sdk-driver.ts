@@ -52,6 +52,10 @@ export class PiSdkDriver implements SessionDriver {
     this.runtimeSupervisor = new RuntimeSupervisor({ ...options, ...deps });
   }
 
+  setRuntimeMode(mode: "light" | "agent"): void {
+    this.supervisor.setRuntimeMode(mode);
+  }
+
   createSession(workspace: WorkspaceRef, options?: CreateSessionOptions): Promise<SessionSnapshot> {
     return this.supervisor.createSession(workspace, options);
   }

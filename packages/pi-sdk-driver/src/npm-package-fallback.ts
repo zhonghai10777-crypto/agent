@@ -13,6 +13,8 @@ import {
 
 export interface PiResourceLoaderOptions {
   readonly extensionFactories?: ExtensionFactory[];
+  readonly noExtensions?: boolean;
+  readonly noSkills?: boolean;
 }
 
 export interface PiCreateAgentSessionOptions extends CreateAgentSessionOptions {

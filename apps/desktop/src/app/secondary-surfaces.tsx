@@ -224,6 +224,10 @@ export function SecondarySurfaces({
     void updateSnapshot(api, setSnapshot, () => api.setLocale(locale));
   };
 
+  const handleSetRuntimeMode = (mode: DesktopAppState["runtimeMode"]) => {
+    void updateSnapshot(api, setSnapshot, () => api.setRuntimeMode(mode));
+  };
+
   const handleSetThemePresetId = (presetId: DesktopAppState["themePresetId"]) => {
     void updateSnapshot(api, setSnapshot, () => api.setThemePresetId(presetId));
   };
@@ -372,6 +376,8 @@ export function SecondarySurfaces({
         notificationPermissionStatus={notificationPermissionStatus}
         notificationPermissionPending={notificationPermissionPending}
         modelSettingsScopeMode={snapshot.modelSettingsScopeMode}
+        runtimeMode={snapshot.runtimeMode}
+        activeRuntimeMode={snapshot.activeRuntimeMode}
         integratedTerminalShell={snapshot.integratedTerminalShell}
         themeMode={snapshot.themeMode}
         themePresetId={snapshot.themePresetId}
@@ -395,6 +401,7 @@ export function SecondarySurfaces({
         onToggleSkillCommands={handleToggleSkillCommands}
         locale={snapshot.locale}
         onSetLocale={handleSetLocale}
+        onSetRuntimeMode={handleSetRuntimeMode}
         onSetEnableTransparency={(enabled) => {
           void updateSnapshot(api, setSnapshot, () => api.setEnableTransparency(enabled));
         }}

@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { Locale, ModelSettingsScopeMode } from "./desktop-state";
+import type { Locale, ModelSettingsScopeMode, RuntimeMode } from "./desktop-state";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
+  readonly runtimeMode: RuntimeMode;
+  readonly activeRuntimeMode: RuntimeMode;
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly integratedTerminalShell: string;
   readonly locale: Locale;
   readonly onSetLocale: (locale: Locale) => void;
+  readonly onSetRuntimeMode: (mode: RuntimeMode) => void;
   readonly onSetModelSettingsScopeMode: (mode: ModelSettingsScopeMode) => void;
   readonly onSetIntegratedTerminalShell: (shellPath: string) => void;
   readonly onToggleSkillCommands: (enabled: boolean) => void;
@@ -17,10 +20,13 @@ interface SettingsGeneralSectionProps {
 
 export function SettingsGeneralSection({
   runtime,
+  runtimeMode,
+  activeRuntimeMode,
   modelSettingsScopeMode,
   integratedTerminalShell,
   locale,
   onSetLocale,
+  onSetRuntimeMode,
   onSetModelSettingsScopeMode,
   onSetIntegratedTerminalShell,
   onToggleSkillCommands,
@@ -42,6 +48,34 @@ export function SettingsGeneralSection({
   return (
     <>
       <SettingsGroup title={t("settings.section.general")}>
+        <SettingsRow
+          title={t("settings.general.runtimeMode")}
+          description={t("settings.general.runtimeModeDesc")}
+        >
+          <div className="settings-pill-row">
+            <button
+              className={settingsPill(runtimeMode === "light")}
+              type="button"
+              aria-pressed={runtimeMode === "light"}
+              onClick={() => onSetRuntimeMode("light")}
+            >
+              {t("settings.general.lightMode")}
+            </button>
+            <button
+              className={settingsPill(runtimeMode === "agent")}
+              type="button"
+              aria-pressed={runtimeMode === "agent"}
+              onClick={() => onSetRuntimeMode("agent")}
+            >
+              {t("settings.general.agentMode")}
+            </button>
+          </div>
+          <p className="settings-inline-note">
+            {runtimeMode === activeRuntimeMode
+              ? t("settings.general.runtimeModeRestart")
+              : t("settings.general.runtimeModePending")}
+          </p>
+        </SettingsRow>
         <SettingsRow title={t("settings.general.language")} description={t("settings.general.languageDesc")}>
           <div className="settings-pill-row">
             <button

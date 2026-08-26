@@ -1,5 +1,5 @@
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { Locale, ModelSettingsScopeMode, NotificationPreferences, ThemePresetId, WorkspaceRecord } from "./desktop-state";
+import type { Locale, ModelSettingsScopeMode, NotificationPreferences, RuntimeMode, ThemePresetId, WorkspaceRecord } from "./desktop-state";
 import type { CustomProviderConfig, DesktopNotificationPermissionStatus } from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsAppearanceSection } from "./settings-appearance-section";
@@ -20,12 +20,15 @@ interface SettingsViewProps {
   readonly notificationPermissionStatus: DesktopNotificationPermissionStatus;
   readonly notificationPermissionPending: boolean;
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
+  readonly runtimeMode: RuntimeMode;
+  readonly activeRuntimeMode: RuntimeMode;
   readonly integratedTerminalShell: string;
   readonly themeMode: "system" | "light" | "dark";
   readonly themePresetId: ThemePresetId;
   readonly enableTransparency: boolean;
   readonly locale: Locale;
   readonly onSetLocale: (locale: Locale) => void;
+  readonly onSetRuntimeMode: (mode: RuntimeMode) => void;
   readonly onSetModelSettingsScopeMode: (mode: ModelSettingsScopeMode) => void;
   readonly onSetDefaultModel: (provider: string, modelId: string) => void;
   readonly onSetThinkingLevel: (thinkingLevel: RuntimeSettingsSnapshot["defaultThinkingLevel"]) => void;
@@ -54,12 +57,15 @@ export function SettingsView({
   notificationPermissionStatus,
   notificationPermissionPending,
   modelSettingsScopeMode,
+  runtimeMode,
+  activeRuntimeMode,
   integratedTerminalShell,
   themeMode,
   themePresetId,
   enableTransparency,
   locale,
   onSetLocale,
+  onSetRuntimeMode,
   onSetModelSettingsScopeMode,
   onSetDefaultModel,
   onSetThinkingLevel,
@@ -128,9 +134,12 @@ export function SettingsView({
             <SettingsGeneralSection
               runtime={runtime}
               modelSettingsScopeMode={modelSettingsScopeMode}
+              runtimeMode={runtimeMode}
+              activeRuntimeMode={activeRuntimeMode}
               integratedTerminalShell={integratedTerminalShell}
               locale={locale}
               onSetLocale={onSetLocale}
+              onSetRuntimeMode={onSetRuntimeMode}
               onSetModelSettingsScopeMode={onSetModelSettingsScopeMode}
               onSetIntegratedTerminalShell={onSetIntegratedTerminalShell}
               onToggleSkillCommands={onToggleSkillCommands}

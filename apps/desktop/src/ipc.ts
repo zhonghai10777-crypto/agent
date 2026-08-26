@@ -13,6 +13,7 @@ import type {
   DesktopAppState,
   ForkThreadInput,
   Locale,
+  RuntimeMode,
   ModelSettingsScopeMode,
   NotificationPreferences,
   RemoveWorktreeInput,
@@ -181,6 +182,7 @@ export const desktopIpc = {
   setThemeMode: "pi-gui:set-theme-mode",
   setThemePresetId: "pi-gui:set-theme-preset-id",
   setLocale: "pi-gui:set-locale",
+  setRuntimeMode: "pi-gui:set-runtime-mode",
   themeChanged: "pi-gui:theme-changed",
   ping: "app:ping",
   openExternal: "app:open-external",
@@ -456,5 +458,6 @@ export interface PiDesktopApi {
   getResolvedTheme(): Promise<"light" | "dark">;
   setThemeMode(mode: "system" | "light" | "dark"): Promise<DesktopAppState>;
   setLocale(locale: Locale): Promise<DesktopAppState>;
+  setRuntimeMode(mode: RuntimeMode): Promise<DesktopAppState>;
   onThemeChanged(callback: (theme: "light" | "dark") => void): () => void;
 }

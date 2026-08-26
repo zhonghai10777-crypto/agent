@@ -75,6 +75,8 @@ export interface RuntimeSupervisorOptions {
   readonly extensionFactories?: readonly ExtensionFactory[];
   readonly inlineExtensionMetadata?: readonly RuntimeInlineExtensionMetadata[];
   readonly customProviderStore?: CustomProviderStore;
+  readonly noExtensions?: boolean;
+  readonly noSkills?: boolean;
 }
 
 type ResourceScope = "user" | "project";
@@ -92,6 +94,8 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
   private readonly extensionFactories: readonly ExtensionFactory[];
   private readonly inlineExtensionMetadata: readonly RuntimeInlineExtensionMetadata[];
   private readonly customProviderStore: CustomProviderStore;
+  private readonly noExtensions: boolean;
+  private readonly noSkills: boolean;
   private readonly contexts = new Map<string, RuntimeContext>();
 
   constructor(options: RuntimeSupervisorOptions = {}) {
@@ -102,6 +106,8 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     this.extensionFactories = options.extensionFactories ?? [];
     this.inlineExtensionMetadata = options.inlineExtensionMetadata ?? [];
     this.customProviderStore = deps.customProviderStore;
+    this.noExtensions = options.noExtensions ?? false;
+    this.noSkills = options.noSkills ?? false;
   }
 
   async getRuntimeSnapshot(workspace: WorkspaceRef): Promise<RuntimeSnapshot> {
@@ -384,6 +390,8 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       agentDir: this.agentDir,
       settingsManager,
       extensionFactories: [...this.extensionFactories],
+      noExtensions: this.noExtensions,
+      noSkills: this.noSkills,
     });
     try {
       await resourceLoader.reload();
@@ -414,6 +422,8 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
         agentDir: this.agentDir,
         settingsManager,
         extensionFactories: [...this.extensionFactories],
+        noExtensions: this.noExtensions,
+        noSkills: this.noSkills,
       });
       await resourceLoader.reload();
     }

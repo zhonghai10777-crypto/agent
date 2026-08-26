@@ -43,6 +43,7 @@ import type {
   StartThreadInput,
   ThemePresetId,
   WorkspaceSessionTarget,
+  RuntimeMode,
 } from "../src/desktop-state";
 
 const devReloadMarkersEnabled = process.env.PI_APP_DEV_RELOAD_MARKERS === "1";
@@ -308,6 +309,8 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.setThemeMode, mode) as Promise<DesktopAppState>,
   setLocale: (locale: "en" | "zh-CN") =>
     ipcRenderer.invoke(desktopIpc.setLocale, locale) as Promise<DesktopAppState>,
+  setRuntimeMode: (mode: RuntimeMode) =>
+    ipcRenderer.invoke(desktopIpc.setRuntimeMode, mode) as Promise<DesktopAppState>,
   onThemeChanged: (callback: (theme: "light" | "dark") => void) => {
     const handler = (_event: Electron.IpcRendererEvent, theme: "light" | "dark") => callback(theme);
     ipcRenderer.on(desktopIpc.themeChanged, handler);

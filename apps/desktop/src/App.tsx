@@ -268,6 +268,12 @@ function AppShell({
     }
   }, [snapshot]);
   useEffect(() => {
+    if (snapshot?.activeRuntimeMode !== "agent") {
+      setOpenTerminalSessionKey("");
+      setTakeoverTerminalSessionKey("");
+    }
+  }, [snapshot?.activeRuntimeMode]);
+  useEffect(() => {
     setOpenTerminalSessionKey("");
     setTakeoverTerminalSessionKey("");
   }, [selectedSessionKey]);
@@ -288,6 +294,9 @@ function AppShell({
     });
   };
   const toggleTerminal = useCallback(() => {
+    if (snapshot?.activeRuntimeMode !== "agent") {
+      return;
+    }
     if (!selectedSessionKey) {
       return;
     }
@@ -297,7 +306,7 @@ function AppShell({
       return;
     }
     setOpenTerminalSessionKey(selectedSessionKey);
-  }, [openTerminalSessionKey, selectedSessionKey]);
+  }, [openTerminalSessionKey, selectedSessionKey, snapshot?.activeRuntimeMode]);
   const handleViewFileInDiff = useCallback((path: string) => {
     setSidePanelMode("changes");
     setDiffFileRequest({ path, nonce: Date.now() });
@@ -682,6 +691,7 @@ function AppShell({
   };
 
   const openSkills = (workspaceId?: string) => {
+    if (snapshot?.activeRuntimeMode !== "agent") return;
     const nextWorkspaceId =
       workspaceId && rootWorkspaceOptions.some((workspace) => workspace.id === workspaceId)
         ? workspaceId
@@ -693,6 +703,7 @@ function AppShell({
   };
 
   const openExtensions = (workspaceId?: string) => {
+    if (snapshot?.activeRuntimeMode !== "agent") return;
     const nextWorkspaceId =
       workspaceId && rootWorkspaceOptions.some((workspace) => workspace.id === workspaceId)
         ? workspaceId
@@ -827,6 +838,7 @@ function AppShell({
       {!snapshot.sidebarCollapsed ? (
         <Sidebar
           activeView={snapshot.activeView}
+          agentFeaturesAvailable={snapshot.activeRuntimeMode === "agent"}
           selectedWorkspace={selectedWorkspace}
           selectedSession={selectedSession}
           visibleWorkspaces={visibleWorkspaces}
@@ -861,7 +873,7 @@ function AppShell({
           workspaces={snapshot.workspaces}
           wsMenu={wsMenu}
           api={api}
-          terminalAvailable={Boolean(selectedSessionKey)}
+          terminalAvailable={Boolean(selectedSessionKey) && snapshot.activeRuntimeMode === "agent"}
           terminalVisible={isTerminalVisibleForSelectedThread}
           onToggleTerminal={toggleTerminal}
           panelAvailable={sidePanelAvailable}

@@ -25,6 +25,7 @@ import type { DesktopAppState } from "./desktop-state";
 
 interface SidebarProps {
   readonly activeView: AppView;
+  readonly agentFeaturesAvailable: boolean;
   readonly selectedWorkspace: WorkspaceRecord | undefined;
   readonly selectedSession: SessionRecord | undefined;
   readonly visibleWorkspaces: readonly WorkspaceRecord[];
@@ -57,6 +58,7 @@ export function Sidebar(props: SidebarProps) {
   const { t } = useI18n();
   const {
     activeView,
+    agentFeaturesAvailable,
     selectedWorkspace,
     selectedSession,
     visibleWorkspaces,
@@ -229,22 +231,26 @@ export function Sidebar(props: SidebarProps) {
             <FolderIcon />
             <span>{t("sidebar.threads")}</span>
           </button>
-          <button
-            className="sidebar__nav-item"
-            type="button"
-            onClick={() => onOpenSkills(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id)}
-          >
-            <SkillIcon />
-            <span>{t("sidebar.skills")}</span>
-          </button>
-          <button
-            className="sidebar__nav-item"
-            type="button"
-            onClick={() => onOpenExtensions(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id)}
-          >
-            <ExtensionIcon />
-            <span>{t("sidebar.extensions")}</span>
-          </button>
+          {agentFeaturesAvailable ? (
+            <>
+              <button
+                className="sidebar__nav-item"
+                type="button"
+                onClick={() => onOpenSkills(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id)}
+              >
+                <SkillIcon />
+                <span>{t("sidebar.skills")}</span>
+              </button>
+              <button
+                className="sidebar__nav-item"
+                type="button"
+                onClick={() => onOpenExtensions(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id)}
+              >
+                <ExtensionIcon />
+                <span>{t("sidebar.extensions")}</span>
+              </button>
+            </>
+          ) : null}
           <button
             className="sidebar__nav-item"
             type="button"

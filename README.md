@@ -85,6 +85,21 @@ You need valid model/provider authentication that `pi` supports; pi-gui uses `pi
 auth and session state, so anything you've already configured with the `pi` CLI
 carries over.
 
+## Runtime modes
+
+Choose the mode under **Settings → General**. A mode change is saved immediately
+and takes effect after restarting pi-gui.
+
+- **Light mode** is the default for everyday questions and read-only assistance.
+  It keeps model and web access available while disabling terminal commands, file
+  changes, Git worktrees, local skills/extensions, and multi-agent orchestration.
+- **Agent mode** enables the complete coding-agent workflow, including terminal,
+  file mutation, worktrees, skills/extensions, and child agents.
+
+For Windows computers with 4 GB of RAM, use Light mode, keep one workspace open,
+and avoid running another Electron app or browser with many tabs at the same time.
+Agent mode is intended for machines with more memory or short, focused coding runs.
+
 ## Architecture
 
 pi-gui is an Electron app organized around a tight main/preload/renderer boundary,

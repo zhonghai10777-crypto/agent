@@ -25,6 +25,12 @@ export const themePresetIds = [
 ] as const;
 export type ThemePresetId = (typeof themePresetIds)[number];
 export type ModelSettingsScopeMode = "app-global" | "per-repo";
+export type RuntimeMode = "light" | "agent";
+export const DEFAULT_RUNTIME_MODE: RuntimeMode = "light";
+
+export function isRuntimeMode(value: unknown): value is RuntimeMode {
+  return value === "light" || value === "agent";
+}
 
 export function isThemeMode(value: unknown): value is ThemeMode {
   return value === "system" || value === "light" || value === "dark";
@@ -302,6 +308,8 @@ export interface StartupDiagnostic {
 }
 
 export interface DesktopAppState {
+  readonly runtimeMode: RuntimeMode;
+  readonly activeRuntimeMode: RuntimeMode;
   readonly workspaces: readonly WorkspaceRecord[];
   readonly worktreesByWorkspace: Readonly<Record<string, readonly WorktreeRecord[]>>;
   readonly selectedWorkspaceId: string;
@@ -348,6 +356,8 @@ export interface WorkspaceSessionTarget {
 
 export function createEmptyDesktopAppState(): DesktopAppState {
   return {
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    activeRuntimeMode: DEFAULT_RUNTIME_MODE,
     workspaces: [],
     worktreesByWorkspace: {},
     selectedWorkspaceId: "",

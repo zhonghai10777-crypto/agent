@@ -2138,6 +2138,13 @@
   color: var(--theme-selection-ink, var(--text-strong));
 }
 
+.settings-inline-note {
+  margin: 8px 0 0;
+  color: var(--muted-soft);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 .settings-toggle-list {
   display: grid;
   gap: 10px;

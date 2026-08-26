@@ -305,6 +305,7 @@ export async function sendChildThreadFollowUp(
   input: SendChildThreadFollowUpInput,
 ): Promise<DesktopAppState> {
   await store.initialize();
+  store.assertCapability("childAgents");
   const text = input.text.trim();
   if (!text) {
     return store.withError("Child thread follow-up cannot be empty.");
@@ -337,6 +338,7 @@ export async function setChildSupervisionLoopGate(
   input: SetChildSupervisionLoopInput,
 ): Promise<DesktopAppState> {
   await store.initialize();
+  store.assertCapability("childAgents");
   const child = store.state.orchestrationChildren.find((entry) => entry.id === input.childThreadId);
   if (!child) {
     return store.withError("Unknown child thread.");

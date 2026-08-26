@@ -107,6 +107,10 @@ export interface PiSdkDriverOptions {
   readonly createAgentSessionRuntimeImpl?: (options?: CreateAgentSessionOptions) => Promise<AgentSessionRuntime>;
   readonly modelRegistry?: ModelRegistry;
   readonly extensionFactories?: readonly ExtensionFactory[];
+  readonly noExtensions?: boolean;
+  readonly noSkills?: boolean;
+  readonly runtimeMode?: "light" | "agent";
+  readonly lightModeTools?: readonly string[];
   readonly generateThreadTitleOverride?: (
     workspace: WorkspaceRef,
     options: import("./thread-title-generator.js").GenerateThreadTitleOptions,
@@ -207,6 +211,7 @@ export class SessionSupervisor {
   private readonly catalogs: SessionFileCatalogStorage;
   private readonly createAgentSessionRuntimeImpl: (options?: CreateAgentSessionOptions) => Promise<AgentSessionRuntime>;
   private readonly modelRegistry: ModelRegistry | undefined;
+  private runtimeMode: "light" | "agent";
   private readonly records = new Map<string, ManagedSessionRecord>();
   private readonly ensureRecordInFlight = new Map<string, Promise<ManagedSessionRecord>>();
   private readonly leaseIdentity: LeaseIdentity = currentLeaseIdentity();
@@ -227,9 +232,16 @@ export class SessionSupervisor {
           resourceLoaderOptions: {
             ...(createOptions as PiCreateAgentSessionOptions | undefined)?.resourceLoaderOptions,
             ...(options.extensionFactories ? { extensionFactories: [...options.extensionFactories] } : {}),
+            ...(options.noExtensions ? { noExtensions: true } : {}),
+            ...(options.noSkills ? { noSkills: true } : {}),
           },
         }));
     this.modelRegistry = options.modelRegistry;
+    this.runtimeMode = options.runtimeMode ?? "agent";
+  }
+
+  setRuntimeMode(mode: "light" | "agent"): void {
+    this.runtimeMode = mode;
   }
 
   listWorkspaces(): Promise<WorkspaceCatalogSnapshot> {
@@ -493,6 +505,9 @@ export class SessionSupervisor {
     if (options?.initialThinkingLevel) {
       createOptions.thinkingLevel = options.initialThinkingLevel as NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
     }
+    if (this.runtimeMode === "light") {
+      createOptions.excludeTools = ["bash", "edit", "write"];
+    }
 
     const runtime = await this.createAgentSessionRuntimeImpl(createOptions);
     const session = runtime.session;
@@ -613,6 +628,9 @@ export class SessionSupervisor {
       createOptions.thinkingLevel = forkConfig.thinkingLevel as NonNullable<
         CreateAgentSessionOptions["thinkingLevel"]
       >;
+    }
+    if (this.runtimeMode === "light") {
+      createOptions.excludeTools = ["bash", "edit", "write"];
     }
 
     const runtime = await this.createAgentSessionRuntimeImpl(createOptions);
@@ -1117,6 +1135,7 @@ export class SessionSupervisor {
       cwd: workspace.path,
       sessionManager: SessionManager.open(sessionFile),
       ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}),
+      ...(this.runtimeMode === "light" ? { excludeTools: ["bash", "edit", "write"] } : {}),
     });
     const session = runtime.session;
 

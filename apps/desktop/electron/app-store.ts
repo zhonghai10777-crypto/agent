@@ -61,6 +61,8 @@ import {
   type ThemePresetId,
   type TranscriptMessage,
   type WorkspaceSessionTarget,
+  type RuntimeMode,
+  isRuntimeMode,
   isLocale,
   isThemeMode,
   isThemePresetId,
@@ -74,6 +76,7 @@ import {
 } from "./app-store-timeline";
 import { applySessionEventState, updateSessionRecord } from "./app-store-session-state";
 import type { AppStoreInternals, RefreshStateOptions } from "./app-store-internals";
+import { assertRuntimeCapability, type RuntimeCapability } from "./runtime-mode";
 import {
   readPersistedUiState,
   type LegacyPersistedUiState,
@@ -127,7 +130,7 @@ export interface DesktopAppStoreOptions {
   readonly shouldKeepSessionDialogs?: (sessionRef: SessionRef) => boolean;
   readonly driverOptions?: Pick<
     PiSdkDriverConfig,
-    "extensionFactories" | "inlineExtensionMetadata" | "authStorage"
+    "extensionFactories" | "inlineExtensionMetadata" | "authStorage" | "noExtensions" | "noSkills" | "runtimeMode"
   >;
   readonly generateThreadTitleOverride?: (
     workspace: WorkspaceRef,
@@ -146,11 +149,21 @@ export interface DesktopAppViewState {
 function resolveInitialDesktopAppState(): DesktopAppState {
   const state = createEmptyDesktopAppState();
   const envLocale = process.env.PI_APP_DEFAULT_LOCALE;
-  return envLocale && isLocale(envLocale) ? { ...state, locale: envLocale } : state;
+  const envRuntimeMode = process.env.PI_APP_DEFAULT_RUNTIME_MODE;
+  return {
+    ...state,
+    ...(envLocale && isLocale(envLocale) ? { locale: envLocale } : {}),
+    ...(envRuntimeMode && isRuntimeMode(envRuntimeMode)
+      ? { runtimeMode: envRuntimeMode, activeRuntimeMode: envRuntimeMode }
+      : {}),
+  };
 }
 
 export class DesktopAppStore implements AppStoreInternals {
   state = resolveInitialDesktopAppState();
+  get activeRuntimeMode(): RuntimeMode {
+    return this.state.activeRuntimeMode;
+  }
   private readonly listeners = new Set<StateListener>();
   /** Monotonic publish counter; emit() stamps every published state with it. */
   private publishRevision = 1;
@@ -328,6 +341,13 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   private scheduleOrchestrationSupervision(): void {
+    if (this.activeRuntimeMode !== "agent") {
+      if (this.orchestrationSupervisionTimer) {
+        clearTimeout(this.orchestrationSupervisionTimer);
+        this.orchestrationSupervisionTimer = undefined;
+      }
+      return;
+    }
     const nextRunAt = orchestration.nextSupervisionRunAt(this.state.orchestrationChildren);
     if (nextRunAt && nextRunAt === this.scheduledOrchestrationSupervisionRunAt && this.orchestrationSupervisionTimer) {
       return;
@@ -572,14 +592,22 @@ export class DesktopAppStore implements AppStoreInternals {
   /* ── Worktree methods (delegated) ──────────────────────── */
 
   async createWorktree(input: CreateWorktreeInput): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("worktrees");
     return worktree.createWorktree(this, input);
   }
 
   async forkThread(input: ForkThreadInput): Promise<DesktopAppState> {
+    await this.initialize();
+    if (input.environment === "worktree") {
+      this.assertCapability("worktrees");
+    }
     return worktree.forkThread(this, input);
   }
 
   async removeWorktree(input: RemoveWorktreeInput): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("worktrees");
     return worktree.removeWorktree(this, input);
   }
 
@@ -670,6 +698,10 @@ export class DesktopAppStore implements AppStoreInternals {
   /* ── Session / thread methods (delegated) ───────────────── */
 
   async startThread(input: StartThreadInput): Promise<DesktopAppState> {
+    await this.initialize();
+    if (input.environment === "worktree") {
+      this.assertCapability("worktrees");
+    }
     return worktree.startThread(this, input);
   }
 
@@ -678,12 +710,16 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   async sendChildThreadFollowUp(input: SendChildThreadFollowUpInput): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("childAgents");
     const state = await orchestration.sendChildThreadFollowUp(this, input);
     this.scheduleOrchestrationSupervision();
     return state;
   }
 
   async setChildSupervisionLoop(input: SetChildSupervisionLoopInput): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("childAgents");
     const state = await orchestration.setChildSupervisionLoopGate(this, input);
     this.scheduleOrchestrationSupervision();
     return state;
@@ -766,6 +802,24 @@ export class DesktopAppStore implements AppStoreInternals {
     this.state = {
       ...this.state,
       enableTransparency: enabled,
+      lastError: undefined,
+      revision: this.state.revision + 1,
+    };
+    await this.persistUiState();
+    return this.emit();
+  }
+
+  async setRuntimeMode(runtimeMode: RuntimeMode): Promise<DesktopAppState> {
+    await this.initialize();
+    if (!isRuntimeMode(runtimeMode)) {
+      throw new Error(`Unsupported runtime mode: ${String(runtimeMode)}`);
+    }
+    if (this.state.runtimeMode === runtimeMode) {
+      return structuredClone(this.state);
+    }
+    this.state = {
+      ...this.state,
+      runtimeMode,
       lastError: undefined,
       revision: this.state.revision + 1,
     };
@@ -986,6 +1040,8 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   async setEnableSkillCommands(workspaceId: string, enabled: boolean): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("extensions");
     return this.withRuntimeUpdate(workspaceId, (ws) =>
       this.driver.runtimeSupervisor.setEnableSkillCommands(ws, enabled),
       { reloadSessions: true },
@@ -1055,6 +1111,8 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   async setSkillEnabled(workspaceId: string, filePath: string, enabled: boolean): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("extensions");
     return this.withRuntimeUpdate(workspaceId, (ws) =>
       this.driver.runtimeSupervisor.setSkillEnabled(ws, filePath, enabled),
       { reloadSessions: true },
@@ -1062,6 +1120,8 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   async setExtensionEnabled(workspaceId: string, filePath: string, enabled: boolean): Promise<DesktopAppState> {
+    await this.initialize();
+    this.assertCapability("extensions");
     return this.withRuntimeUpdate(workspaceId, (ws) =>
       this.driver.runtimeSupervisor.setExtensionEnabled(ws, filePath, enabled),
       { reloadSessions: true },
@@ -1159,6 +1219,7 @@ export class DesktopAppStore implements AppStoreInternals {
     const startupDiagnostics: StartupDiagnostic[] = [];
     try {
       this.restorePersistedUiState(persisted);
+      this.driver.setRuntimeMode(this.state.runtimeMode);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.warn("[app-store] ignoring malformed persisted UI state", error);
@@ -1208,13 +1269,15 @@ export class DesktopAppStore implements AppStoreInternals {
         selectedSessionId: persisted.selectedSessionId,
         composerDraft: persisted.composerDraft,
         clearLastError: true,
-        refreshWorktrees: true,
+        refreshWorktrees: this.activeRuntimeMode === "agent",
         hydrateSelectedSession: false,
         markSelectedSessionViewed: false,
       });
       // Startup GC of leaked pi/* worktrees and branches; self-contained and
       // error-swallowing, so fire-and-forget without blocking initialization.
-      void worktree.reconcileWorktrees(this);
+      if (this.activeRuntimeMode === "agent") {
+        void worktree.reconcileWorktrees(this);
+      }
       const restoredSessionRef = this.selectedSessionRef();
       if (restoredSessionRef && persisted.selectedWorkspaceId && persisted.selectedSessionId) {
         this.restoredSelectedSessionKeysAwaitingSelection.add(sessionKey(restoredSessionRef));
@@ -1242,6 +1305,8 @@ export class DesktopAppStore implements AppStoreInternals {
   private restorePersistedUiState(persisted: LegacyPersistedUiState): void {
     this.state = {
       ...this.state,
+      runtimeMode: persisted.runtimeMode ?? this.state.runtimeMode,
+      activeRuntimeMode: persisted.runtimeMode ?? this.state.activeRuntimeMode,
       selectedWorkspaceId: persisted.selectedWorkspaceId ?? this.state.selectedWorkspaceId,
       selectedSessionId: persisted.selectedSessionId ?? this.state.selectedSessionId,
       activeView: persisted.activeView ?? this.state.activeView,
@@ -1362,9 +1427,11 @@ export class DesktopAppStore implements AppStoreInternals {
         this.driver.listWorkspaces(),
         this.driver.listSessions(),
       ]);
-      const worktreeEntries = options.refreshWorktrees
+      const worktreeEntries = this.activeRuntimeMode === "agent" && options.refreshWorktrees
         ? await worktree.syncAndListWorktrees(this, workspacesSnapshot.workspaces)
-        : (await this.catalogStore.worktrees.listWorktrees()).worktrees;
+        : this.activeRuntimeMode === "agent"
+          ? (await this.catalogStore.worktrees.listWorktrees()).worktrees
+          : [];
 
       await this.pruneStaleSessionSubscriptions(sessionsSnapshot.sessions);
       await this.ensureSubscriptionsForSessions(sessionsSnapshot.sessions);
@@ -1415,7 +1482,7 @@ export class DesktopAppStore implements AppStoreInternals {
       if (selectedWorkspaceId && !this.runtimeByWorkspace.has(selectedWorkspaceId)) {
         await this.ensureRuntimeLoaded(selectedWorkspaceId, workspacesSnapshot.workspaces);
       }
-      const secondaryWorkspacesToLoad = workspacesSnapshot.workspaces
+      const secondaryWorkspacesToLoad = (this.activeRuntimeMode === "agent" ? workspacesSnapshot.workspaces : [])
         .filter((workspace) => workspace.workspaceId !== selectedWorkspaceId)
         .filter((workspace) => !this.runtimeByWorkspace.has(workspace.workspaceId));
       const secondaryRuntimeLoads = await Promise.allSettled(
@@ -1490,12 +1557,14 @@ export class DesktopAppStore implements AppStoreInternals {
         lastError: this.resolveSelectedSessionError(selectedWorkspaceId, selectedSessionId, options.clearLastError),
         revision: this.state.revision + 1,
       };
-      await orchestration.hydrateOrchestrationChildren(this);
-      this.state = {
-        ...this.state,
-        orchestrationChildren: orchestration.projectOrchestrationChildren(this),
-      };
-      this.scheduleOrchestrationSupervision();
+      if (this.activeRuntimeMode === "agent") {
+        await orchestration.hydrateOrchestrationChildren(this);
+        this.state = {
+          ...this.state,
+          orchestrationChildren: orchestration.projectOrchestrationChildren(this),
+        };
+        this.scheduleOrchestrationSupervision();
+      }
 
       if (options.markSelectedSessionViewed ?? true) {
         this.markSelectedSessionViewedIfVisible();
@@ -2671,6 +2740,7 @@ export class DesktopAppStore implements AppStoreInternals {
       this.persistUiStateTimer = undefined;
     }
     const payload: PersistedUiState = {
+      runtimeMode: this.state.runtimeMode,
       selectedWorkspaceId: this.state.selectedWorkspaceId || undefined,
       selectedSessionId: this.state.selectedSessionId || undefined,
       activeView: this.state.activeView,
@@ -2694,6 +2764,10 @@ export class DesktopAppStore implements AppStoreInternals {
     };
 
     await writePersistedUiState(this.uiStateFilePath, payload);
+  }
+
+  assertCapability(capability: RuntimeCapability): void {
+    assertRuntimeCapability(this.activeRuntimeMode, capability);
   }
 
   async persistComposerAttachments(

@@ -17,6 +17,7 @@ import type {
   QueuedComposerMessage,
   TranscriptMessage,
   WorkspaceSessionTarget,
+  RuntimeMode,
 } from "../src/desktop-state";
 import type { PendingAutoTitle, QueuedComposerEditState, SessionStateMap } from "./session-state-map";
 import type { GitWorktreeManager } from "./worktree-manager";
@@ -31,6 +32,7 @@ import type { PendingRuntimeCommandExecution } from "./extension-command-compati
 export interface AppStoreInternals {
   /* ── State ─────────────────────────────────────────────── */
   state: DesktopAppState;
+  readonly activeRuntimeMode: RuntimeMode;
   readonly sessionState: SessionStateMap;
   readonly runtimeByWorkspace: Map<string, RuntimeSnapshot>;
   readonly extensionCommandCompatibilityByWorkspace: Map<string, Map<string, ExtensionCommandCompatibilityRecord>>;
@@ -89,6 +91,7 @@ export interface AppStoreInternals {
   publishSelectedTranscript(): void;
   publishSelectedTranscriptFor(sessionRef: SessionRef): void;
   buildCreateSessionOptions(workspaceId: string): Promise<CreateSessionOptions | undefined>;
+  assertCapability(capability: import("./runtime-mode").RuntimeCapability): void;
 }
 
 export interface RefreshStateOptions {

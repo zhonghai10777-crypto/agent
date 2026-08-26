@@ -278,6 +278,7 @@ function buildDesktopLaunchEnv(
     ...(options.notificationLogPath ? { PI_APP_NOTIFICATION_LOG_PATH: options.notificationLogPath } : {}),
     PI_APP_OPEN_DEVTOOLS: "0",
     PI_APP_DEFAULT_LOCALE: "en",
+    PI_APP_DEFAULT_RUNTIME_MODE: "agent",
     ...(options.envOverrides ?? {}),
   };
   for (const [key, value] of Object.entries(options.envOverrides ?? {})) {

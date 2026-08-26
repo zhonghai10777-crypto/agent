@@ -10,13 +10,15 @@ import type {
   OrchestrationSupervisionLoop,
   ThemeMode,
   ThemePresetId,
+  RuntimeMode,
 } from "../src/desktop-state";
-import { isLocale, isThemeMode, isThemePresetId } from "../src/desktop-state";
+import { isLocale, isRuntimeMode, isThemeMode, isThemePresetId } from "../src/desktop-state";
 import type { ModelSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
 import { readJsonWithBackup, writeFileAtomicQueued } from "./atomic-file-write";
 
 export interface PersistedUiState {
-  readonly version?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16;
+  readonly version?: 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17;
+  readonly runtimeMode?: RuntimeMode;
   readonly selectedWorkspaceId?: string;
   readonly selectedSessionId?: string;
   readonly activeView?: AppView;
@@ -65,6 +67,7 @@ export async function readPersistedUiState(uiStateFilePath: string): Promise<Leg
 
   return {
       version: toPersistedVersion(candidate.version),
+      runtimeMode: isRuntimeMode(candidate.runtimeMode) ? candidate.runtimeMode : undefined,
       selectedWorkspaceId: stringValue(candidate.selectedWorkspaceId),
       selectedSessionId: stringValue(candidate.selectedSessionId),
       activeView: toAppView(candidate.activeView),
@@ -104,7 +107,7 @@ export async function writePersistedUiState(
   const serialized = `${JSON.stringify(
     {
       ...payload,
-      version: 16,
+      version: 17,
     } satisfies PersistedUiState,
     null,
     2,
@@ -131,7 +134,7 @@ function toAppView(value: unknown): AppView | undefined {
 }
 
 function toPersistedVersion(value: unknown): NonNullable<PersistedUiState["version"]> | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 16
+  return typeof value === "number" && Number.isInteger(value) && value >= 2 && value <= 17
     ? value as NonNullable<PersistedUiState["version"]>
     : undefined;
 }
