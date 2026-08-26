@@ -217,6 +217,7 @@ export function injectFileAttachmentPreamble(
     return text;
   }
 
+  const instructions = fileAttachmentInstructions(files);
   const payload = JSON.stringify({
     version: 1,
     files: files.map((attachment) => ({
@@ -225,10 +226,59 @@ export function injectFileAttachmentPreamble(
       mimeType: attachment.mimeType,
       fsPath: attachment.fsPath,
       ...(attachment.sizeBytes !== undefined ? { sizeBytes: attachment.sizeBytes } : {}),
+      ...(attachment.extraction ? { extraction: attachment.extraction } : {}),
+      // Short documents ride along so a simple question is answered without a
+      // tool round-trip; long ones are left to read_document, which pages.
+      ...(attachment.documentText ? { text: attachment.documentText } : {}),
     })),
+    // Kept inside the block: everything between the delimiters is stripped back
+    // out before the transcript is rendered, so guidance placed outside would
+    // show up as part of the user's own message.
+    ...(instructions.length > 0 ? { instructions } : {}),
   });
   const block = `${FILE_ATTACHMENT_BLOCK_START}${payload}${FILE_ATTACHMENT_BLOCK_END}`;
   return text ? `${block}\n${text}` : block;
+}
+
+/**
+ * Without this the model reaches for pi's built-in `read`, which decodes any
+ * non-image file as UTF-8 and hands back mojibake with no error — the exact
+ * failure that makes it answer confidently about a document it never read.
+ */
+function fileAttachmentInstructions(
+  files: readonly Extract<SessionAttachment, { readonly kind: "file" }>[],
+): readonly string[] {
+  const lines: string[] = [];
+  for (const file of files) {
+    const extraction = file.extraction;
+    if (!extraction) {
+      continue;
+    }
+    if (extraction.status === "failed") {
+      lines.push(
+        `${file.name}: could not be read as text (${extraction.reason ?? "unknown reason"}). ` +
+          "Do NOT call read on it. Tell the user it could not be read, and why.",
+      );
+      continue;
+    }
+    if (file.documentText) {
+      lines.push(
+        `${file.name}: its full text is in this block's "text" field.` +
+          (extraction.truncated ? " It is truncated — call read_document for the remainder." : ""),
+      );
+      continue;
+    }
+    const size = extraction.pages
+      ? `${extraction.pages} page(s)`
+      : extraction.sheets
+        ? `sheets ${extraction.sheets.join(", ")}`
+        : `${extraction.chars ?? 0} characters`;
+    lines.push(
+      `${file.name}: ${size}. Call read_document with its fsPath to read it. ` +
+        "Do NOT use read — it returns meaningless characters for this file type.",
+    );
+  }
+  return lines;
 }
 
 export function transcriptFromMessages(messages: readonly unknown[], fallbackTimestamp = nowIso()): SessionTranscriptItem[] {

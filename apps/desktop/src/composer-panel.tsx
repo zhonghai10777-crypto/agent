@@ -1,5 +1,6 @@
 import { type ClipboardEvent, type Dispatch, type DragEvent, type KeyboardEvent, type RefObject, type SetStateAction } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
+import type { PermissionMode } from "@pi-gui/session-driver";
 import type { ComposerAttachment, QueuedComposerMessage, SessionRecord } from "./desktop-state";
 import type { MentionOption } from "./hooks/use-mention-menu";
 import { ArrowUpIcon, PlusIcon, StopSquareIcon } from "./icons";
@@ -53,6 +54,8 @@ interface ComposerPanelProps {
   readonly onSelectSlashOption: (option: ComposerSlashOption) => void;
   readonly onSetModel: (provider: string, modelId: string) => void;
   readonly onSetThinking: (level: string) => void;
+  readonly permissionMode: PermissionMode;
+  readonly onSetPermissionMode: (mode: PermissionMode) => void;
   readonly modelOnboarding: ModelOnboardingState;
   readonly onOpenModelSettings: (section: ModelOnboardingSettingsSection) => void;
   readonly onSubmit: () => void;
@@ -104,6 +107,8 @@ export function ComposerPanel({
   onSelectSlashOption,
   onSetModel,
   onSetThinking,
+  permissionMode,
+  onSetPermissionMode,
   modelOnboarding,
   onOpenModelSettings,
   onSubmit,
@@ -196,6 +201,18 @@ export function ComposerPanel({
                       compactDisabled={selectedSession.status === "running"}
                     />
                   ) : null}
+                  <button
+                    type="button"
+                    className={
+                      "composer__permission-toggle" +
+                      (permissionMode === "plan" ? " composer__permission-toggle--plan" : "")
+                    }
+                    aria-label={permissionMode === "plan" ? t("composer.permission.planHint") : t("composer.permission.autoHint")}
+                    aria-pressed={permissionMode === "plan"}
+                    onClick={() => onSetPermissionMode(permissionMode === "plan" ? "auto" : "plan")}
+                  >
+                    {permissionMode === "plan" ? t("composer.permission.plan") : t("composer.permission.auto")}
+                  </button>
                 </div>
                 <div className="composer__actions">
                   <button

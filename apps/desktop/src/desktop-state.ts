@@ -1,4 +1,10 @@
-import type { HostUiRequest, SessionConfig, SessionContextUsage } from "@pi-gui/session-driver";
+import type {
+  HostUiRequest,
+  PermissionMode,
+  SessionAttachmentExtraction,
+  SessionConfig,
+  SessionContextUsage,
+} from "@pi-gui/session-driver";
 import type { ModelSettingsSnapshot, RuntimeCommandRecord, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
 export type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
@@ -73,6 +79,8 @@ export interface ComposerFileAttachment {
   readonly mimeType: string;
   readonly fsPath: string;
   readonly sizeBytes?: number;
+  /** Parse outcome, so the chip can report pages or explain a failure. */
+  readonly extraction?: SessionAttachmentExtraction;
 }
 
 export type ComposerAttachment = ComposerImageAttachment | ComposerFileAttachment;
@@ -324,6 +332,9 @@ export interface DesktopAppState {
   readonly runtimeByWorkspace: Readonly<Record<string, RuntimeSnapshot>>;
   readonly sessionCommandsBySession: Readonly<Record<string, readonly RuntimeCommandRecord[]>>;
   readonly sessionExtensionUiBySession: Readonly<Record<string, SessionExtensionUiStateRecord>>;
+  /** Per-session permission mode, projected from `SessionStateMap`. Sessions
+   * absent from the record are at the default `auto` mode. */
+  readonly permissionModeBySession: Readonly<Record<string, PermissionMode>>;
   readonly extensionCommandCompatibilityByWorkspace: Readonly<Record<string, readonly ExtensionCommandCompatibilityRecord[]>>;
   readonly orchestrationChildren: readonly OrchestrationChildThread[];
   readonly notificationPreferences: NotificationPreferences;
@@ -371,6 +382,7 @@ export function createEmptyDesktopAppState(): DesktopAppState {
     runtimeByWorkspace: {},
     sessionCommandsBySession: {},
     sessionExtensionUiBySession: {},
+    permissionModeBySession: {},
     extensionCommandCompatibilityByWorkspace: {},
     orchestrationChildren: [],
     notificationPreferences: {

@@ -59,12 +59,34 @@ export interface SessionImageAttachment {
   readonly name?: string;
 }
 
+/**
+ * Outcome of parsing a file attachment into text. Deliberately small: it rides
+ * on the attachment through IPC, the transcript and every persisted snapshot,
+ * so the extracted body is never kept here.
+ */
+export interface SessionAttachmentExtraction {
+  readonly status: "ok" | "failed";
+  /** Present when `status` is "failed"; drives the user-facing explanation. */
+  readonly reason?: string;
+  readonly pages?: number;
+  readonly sheets?: readonly string[];
+  readonly chars?: number;
+  readonly encoding?: string;
+  readonly truncated?: boolean;
+}
+
 export interface SessionFileAttachment {
   readonly kind: "file";
   readonly name: string;
   readonly mimeType: string;
   readonly fsPath: string;
   readonly sizeBytes?: number;
+  readonly extraction?: SessionAttachmentExtraction;
+  /**
+   * Extracted body, attached only on the submit path so short documents can be
+   * inlined into the prompt. Never stored on the composer draft.
+   */
+  readonly documentText?: string;
 }
 
 export type SessionAttachment = SessionImageAttachment | SessionFileAttachment;
@@ -74,6 +96,22 @@ export interface SessionConfig {
   readonly modelId?: string;
   readonly thinkingLevel?: string;
 }
+
+/**
+ * Desktop permission mode for a session. `auto` is the writable default; `plan`
+ * blocks mutating tools (write/edit/bash/create_child_thread) via a pre-execution
+ * hook. Declared in the shared type package so both the renderer (state projection)
+ * and the main process (permission logic) reference one definition.
+ */
+export type PermissionMode = "plan" | "auto";
+
+/**
+ * Default permission mode. Lives alongside the type (not in the desktop app)
+ * so the renderer's state projection, the main process permission logic and
+ * the extension provider all read one source of truth for "absent key reads as
+ * this value".
+ */
+export const DEFAULT_PERMISSION_MODE: PermissionMode = "auto";
 
 export type SessionTreeNodeKind =
   | "message"
@@ -231,6 +269,24 @@ export interface RunFailedEvent extends SessionEventBase {
   readonly error: SessionErrorInfo;
 }
 
+/**
+ * A recoverable error that the runtime is about to retry on its own. The run is
+ * still going.
+ *
+ * This exists as its own event because `runFailed` is latching: it moves the
+ * session to "failed", writes the error into the preview and fires a desktop
+ * notification. Reporting a retry that way flashes a red failure the successful
+ * retry then contradicts. Suppressing it outright is not an option either —
+ * orchestration decides whether a child thread started by racing a failure
+ * signal against a grace window, and a connection error at launch is exactly
+ * the kind pi retries. Consumers that need the signal subscribe here; the ones
+ * that would latch or notify do not.
+ */
+export interface RunRetryingEvent extends SessionEventBase {
+  readonly type: "runRetrying";
+  readonly error: SessionErrorInfo;
+}
+
 export type HostUiResponse =
   | {
       readonly requestId: string;
@@ -335,6 +391,7 @@ export type SessionDriverEvent =
   | ToolFinishedEvent
   | RunCompletedEvent
   | RunFailedEvent
+  | RunRetryingEvent
   | HostUiRequestEvent
   | ExtensionCompatibilityIssueEvent
   | SessionClosedEvent;
