@@ -159,6 +159,7 @@ function TimelineToolCallItem({
   const filePath = isWriteTool(item.toolName) ? extractFilename(item.input) || undefined : undefined;
   const diffLanguage = diffText && filePath ? extensionToLanguage(filePath) : undefined;
   const inlineDetail = item.status === "error" ? item.detail : undefined;
+  const officeOutputPath = extractOfficeOutputPath(item.output);
 
   const handleCopy = () => {
     const text = diffText ?? formatToolContent(item.input, item.output);
@@ -210,6 +211,12 @@ function TimelineToolCallItem({
           >
             <DiffIcon />
           </button>
+        ) : null}
+        {officeOutputPath ? (
+          <span className="timeline-tool__office-actions">
+            <button className="button button--secondary" type="button" onClick={() => void window.piApp?.openOfficeFile(officeOutputPath)}>{t("timeline.openOfficeFile")}</button>
+            <button className="button button--secondary" type="button" onClick={() => void window.piApp?.showOfficeFileInFinder(officeOutputPath)}>{t("timeline.showOfficeFile")}</button>
+          </span>
         ) : null}
       </div>
       {expanded && hasContent ? (
@@ -288,6 +295,17 @@ function extractFilename(input: unknown): string {
     }
   }
   return "";
+}
+
+function extractOfficeOutputPath(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const record = output as Record<string, unknown>;
+  const details = typeof record.details === "object" && record.details !== null
+    ? record.details as Record<string, unknown>
+    : record;
+  const path = details.outputPath;
+  const format = details.format;
+  return typeof path === "string" && (format === "docx" || format === "xlsx") ? path : undefined;
 }
 
 function shortenPath(filePath: string): string {

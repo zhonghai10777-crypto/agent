@@ -29,7 +29,9 @@ export function deriveWorkspaceContext(snapshot: DesktopAppState | null | undefi
 
   const selectedWorkspace = getSelectedWorkspace(snapshot) ?? snapshot.workspaces[0];
   const workspacesById = new Map(snapshot.workspaces.map((workspace) => [workspace.id, workspace] as const));
-  const primaryWorkspaces = snapshot.workspaces.filter((workspace) => workspace.kind === "primary");
+  const primaryWorkspaces = snapshot.workspaces.filter(
+    (workspace) => workspace.kind === "primary" || workspace.kind === "personal",
+  );
   const orphanWorkspaces = snapshot.workspaces.filter(
     (workspace) => workspace.kind === "worktree" && !workspacesById.has(workspace.rootWorkspaceId ?? ""),
   );

@@ -149,6 +149,10 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.openSkillInFinder, workspaceId, filePath) as Promise<void>,
   openExtensionInFinder: (workspaceId: string, filePath: string) =>
     ipcRenderer.invoke(desktopIpc.openExtensionInFinder, workspaceId, filePath) as Promise<void>,
+  openOfficeFile: (filePath: string) =>
+    ipcRenderer.invoke(desktopIpc.openOfficeFile, filePath) as Promise<void>,
+  showOfficeFileInFinder: (filePath: string) =>
+    ipcRenderer.invoke(desktopIpc.showOfficeFileInFinder, filePath) as Promise<void>,
   syncCurrentWorkspace: () =>
     ipcRenderer.invoke(desktopIpc.syncCurrentWorkspace) as Promise<DesktopAppState>,
   selectSession: (target: WorkspaceSessionTarget) =>

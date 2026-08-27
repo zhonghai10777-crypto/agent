@@ -119,6 +119,7 @@
     "cross-spawn": "7.0.6",
     "data-uri-to-buffer": "^4.0.1",
     "diff": "8.0.4",
+    "exceljs": "^4.4.0",
     "fflate": "^0.8.3",
     "glob": "^13.0.1",
     "highlight.js": "10.7.3",
@@ -169,7 +170,6 @@
     "electron": "37.10.3",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
-    "exceljs": "^4.4.0",
     "playwright": "^1.58.2",
     "vite": "^6.2.0",
     "vite-tsconfig-paths": "^6.1.1"

@@ -145,8 +145,10 @@ export function Sidebar(props: SidebarProps) {
     return closest ? [{ id: closest.id, data: { droppableContainer: args.droppableContainers.find((c) => String(c.id) === closest!.id)! } }] : [];
   };
 
-  const rootGroups = threadGroups.filter((g) => g.rootWorkspace.kind === "primary");
-  const orphanGroups = threadGroups.filter((g) => g.rootWorkspace.kind !== "primary");
+  const rootGroups = threadGroups.filter(
+    (g) => g.rootWorkspace.kind === "primary" || g.rootWorkspace.kind === "personal",
+  );
+  const orphanGroups = threadGroups.filter((g) => g.rootWorkspace.kind === "worktree");
   const pinnedThreads = threadGroups
     .flatMap((group) => group.pinnedThreads)
     .sort((left, right) => comparePinnedThreads(left, right, pinnedSessionOrder));
@@ -510,7 +512,7 @@ function WorkspaceGroupContent(
               >
                 {t("sidebar.openFolder")}
               </button>
-              {linkedWorktree ? (
+              {rootWorkspace.kind === "personal" ? null : linkedWorktree ? (
                 <button
                   className="workspace-menu__item workspace-menu__item--danger"
                   type="button"
@@ -533,20 +535,20 @@ function WorkspaceGroupContent(
                   {t("sidebar.createPermanentWorktree")}
                 </button>
               )}
-              <button
+              {rootWorkspace.kind === "personal" ? null : <button
                 className="workspace-menu__item"
                 type="button"
                 onClick={(event) => wsMenu.runWorkspaceMenuAction(event, () => wsMenu.startRename(rootWorkspace))}
               >
                 {t("sidebar.editName")}
-              </button>
-              <button
+              </button>}
+              {rootWorkspace.kind === "personal" ? null : <button
                 className="workspace-menu__item workspace-menu__item--danger"
                 type="button"
                 onClick={(event) => wsMenu.runWorkspaceMenuAction(event, () => wsMenu.removeWorkspace(rootWorkspace))}
               >
                 {t("common.remove")}
-              </button>
+              </button>}
             </div>
           ) : null}
         </span>

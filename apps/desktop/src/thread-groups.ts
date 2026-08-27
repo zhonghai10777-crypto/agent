@@ -23,7 +23,9 @@ export interface ThreadGroup {
 
 export function buildThreadGroups(state: DesktopAppState): readonly ThreadGroup[] {
   const workspacesById = new Map(state.workspaces.map((workspace) => [workspace.id, workspace] as const));
-  const rootWorkspaces = state.workspaces.filter((workspace) => workspace.kind === "primary");
+  const rootWorkspaces = state.workspaces.filter(
+    (workspace) => workspace.kind === "primary" || workspace.kind === "personal",
+  );
   const orphanWorktrees = state.workspaces.filter(
     (workspace) => workspace.kind === "worktree" && !workspacesById.has(workspace.rootWorkspaceId ?? ""),
   );

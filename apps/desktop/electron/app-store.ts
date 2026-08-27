@@ -1,7 +1,7 @@
 import type { BrowserWindow } from "electron";
-import { readFile, stat } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   applyHostUiRequestToExtensionUiState,
   type GenerateThreadTitleOptions,
@@ -78,7 +78,7 @@ import {
 } from "./app-store-timeline";
 import { applySessionEventState, updateSessionRecord } from "./app-store-session-state";
 import type { AppStoreInternals, RefreshStateOptions } from "./app-store-internals";
-import { assertRuntimeCapability, type RuntimeCapability } from "./runtime-mode";
+import { assertRuntimeCapability, policyForRuntimeMode, type RuntimeCapability } from "./runtime-mode";
 import {
   readPersistedUiState,
   type LegacyPersistedUiState,
@@ -156,7 +156,11 @@ function resolveInitialDesktopAppState(): DesktopAppState {
     ...state,
     ...(envLocale && isLocale(envLocale) ? { locale: envLocale } : {}),
     ...(envRuntimeMode && isRuntimeMode(envRuntimeMode)
-      ? { runtimeMode: envRuntimeMode, activeRuntimeMode: envRuntimeMode }
+      ? {
+          runtimeMode: envRuntimeMode,
+          activeRuntimeMode: envRuntimeMode,
+          capabilities: policyForRuntimeMode(envRuntimeMode),
+        }
       : {}),
   };
 }
@@ -204,6 +208,7 @@ export class DesktopAppStore implements AppStoreInternals {
   readonly worktreeManager: GitWorktreeManager;
   readonly worktreeRoot: string;
   private readonly uiStateFilePath: string;
+  readonly personalWorkspacePath: string;
   readonly attachmentStore: JsonFileStore<ComposerAttachment[]>;
   readonly sessionState = new SessionStateMap();
   readonly runtimeByWorkspace = new Map<string, RuntimeSnapshot>();
@@ -239,6 +244,7 @@ export class DesktopAppStore implements AppStoreInternals {
     this.worktreeManager = new GitWorktreeManager({ catalogStorage: this.catalogStore });
     this.worktreeRoot = join(options.userDataDir, "worktrees");
     this.uiStateFilePath = join(options.userDataDir, "ui-state.json");
+    this.personalWorkspacePath = join(options.userDataDir, "personal-workspace");
     this.attachmentStore = new JsonFileStore<ComposerAttachment[]>(options.userDataDir, "attachments");
     this.initialWorkspacePaths = options.initialWorkspacePaths;
     this.getWindow = options.getWindow ?? (() => null);
@@ -437,7 +443,11 @@ export class DesktopAppStore implements AppStoreInternals {
 
   async reorderWorkspaces(order: readonly string[]): Promise<DesktopAppState> {
     await this.initialize();
-    const primaryIds = new Set(this.state.workspaces.filter((w) => w.kind === "primary").map((w) => w.id));
+    const primaryIds = new Set(
+      this.state.workspaces
+        .filter((w) => w.kind === "primary" || w.kind === "personal")
+        .map((w) => w.id),
+    );
     const sanitized = [...new Set(order)].filter((id) => primaryIds.has(id));
     this.state = {
       ...this.state,
@@ -1300,6 +1310,7 @@ export class DesktopAppStore implements AppStoreInternals {
     setGlobalLocale(this.state.locale);
 
     try {
+      await mkdir(this.personalWorkspacePath, { recursive: true });
       const initialWorkspacePaths = this.initialWorkspacePaths.map((path) => path.trim()).filter(Boolean);
       const knownWorkspaces = await this.driver.listWorkspaces();
       const workspacesToSync = new Map<string, string | undefined>();
@@ -1307,6 +1318,8 @@ export class DesktopAppStore implements AppStoreInternals {
       for (const workspacePath of initialWorkspacePaths) {
         workspacesToSync.set(workspacePath, undefined);
       }
+
+      workspacesToSync.set(this.personalWorkspacePath, "个人空间");
 
       for (const ws of knownWorkspaces.workspaces) {
         workspacesToSync.set(ws.path, ws.displayName);
@@ -1351,6 +1364,7 @@ export class DesktopAppStore implements AppStoreInternals {
       });
       this.state = {
         ...this.state,
+        capabilities: policyForRuntimeMode(this.state.activeRuntimeMode),
         startupDiagnostics,
         lastError: message,
         revision: this.state.revision + 1,
@@ -1364,6 +1378,7 @@ export class DesktopAppStore implements AppStoreInternals {
       ...this.state,
       runtimeMode: persisted.runtimeMode ?? this.state.runtimeMode,
       activeRuntimeMode: persisted.runtimeMode ?? this.state.activeRuntimeMode,
+      capabilities: policyForRuntimeMode(persisted.runtimeMode ?? this.state.activeRuntimeMode),
       selectedWorkspaceId: persisted.selectedWorkspaceId ?? this.state.selectedWorkspaceId,
       selectedSessionId: persisted.selectedSessionId ?? this.state.selectedSessionId,
       activeView: persisted.activeView ?? this.state.activeView,
@@ -1493,9 +1508,24 @@ export class DesktopAppStore implements AppStoreInternals {
       await this.pruneStaleSessionSubscriptions(sessionsSnapshot.sessions);
       await this.ensureSubscriptionsForSessions(sessionsSnapshot.sessions);
 
+      const persistedWorkspaceId = options.selectedWorkspaceId ?? this.state.selectedWorkspaceId;
+      const initialWorkspaceId = !persistedWorkspaceId
+        ? (
+            await Promise.all(
+              this.initialWorkspacePaths.map(async (workspacePath) => ({
+                path: await realpath(workspacePath).catch(() => resolve(workspacePath)),
+              })),
+            )
+          )
+            .map(({ path: initialPath }) =>
+              workspacesSnapshot.workspaces.find((workspace) => resolve(workspace.path) === initialPath)?.workspaceId,
+            )
+            .find((workspaceId): workspaceId is string => Boolean(workspaceId))
+        : undefined;
       const selectedWorkspaceId = resolveSelectedWorkspaceIdFromCatalog(
-        options.selectedWorkspaceId ?? this.state.selectedWorkspaceId,
+        persistedWorkspaceId || initialWorkspaceId || "",
         workspacesSnapshot.workspaces,
+        this.personalWorkspacePath,
       );
       const selectedSessionId = resolveSelectedSessionIdFromCatalog(
         selectedWorkspaceId,
@@ -1522,6 +1552,7 @@ export class DesktopAppStore implements AppStoreInternals {
         this.sessionState.contextUsageBySession,
         this.sessionState.lastViewedAtBySession,
         this.sessionState.pinnedAtBySession,
+        this.personalWorkspacePath,
       );
       const worktreesByWorkspace = buildWorktreeRecords(workspacesSnapshot.workspaces, worktreeEntries);
       const liveWorkspaceIds = new Set(workspaces.map((w) => w.id));
@@ -1589,6 +1620,7 @@ export class DesktopAppStore implements AppStoreInternals {
       const composerDraftSync = this.resolveComposerDraftSync(selectedWorkspaceId, selectedSessionId, options);
       this.state = {
         ...this.state,
+        capabilities: policyForRuntimeMode(this.activeRuntimeMode),
         workspaces,
         worktreesByWorkspace,
         selectedWorkspaceId,
@@ -3649,10 +3681,17 @@ function formatCapabilityLabel(capability: string): string {
 
 function resolveSelectedWorkspaceIdFromCatalog(
   preferredWorkspaceId: string,
-  workspaces: readonly { workspaceId: string }[],
+  workspaces: readonly { workspaceId: string; path: string }[],
+  personalWorkspacePath?: string,
 ): string {
   if (preferredWorkspaceId && workspaces.some((w) => w.workspaceId === preferredWorkspaceId)) {
     return preferredWorkspaceId;
+  }
+  const firstNonPersonal = personalWorkspacePath
+    ? workspaces.find((workspace) => resolve(workspace.path) !== resolve(personalWorkspacePath))
+    : undefined;
+  if (firstNonPersonal) {
+    return firstNonPersonal.workspaceId;
   }
   return workspaces[0]?.workspaceId ?? "";
 }

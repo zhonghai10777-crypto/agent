@@ -13,7 +13,7 @@ export type { SessionRole, TimelineToolCall, TranscriptMessage } from "./timelin
 import type { TranscriptMessage } from "./timeline-types";
 
 export type AppView = "threads" | "new-thread" | "skills" | "extensions" | "settings";
-export type WorkspaceKind = "primary" | "worktree";
+export type WorkspaceKind = "primary" | "worktree" | "personal";
 export type WorktreeStatus = "ready" | "missing" | "error";
 export type NewThreadEnvironment = "local" | "worktree";
 export type ThemeMode = "system" | "light" | "dark";
@@ -33,6 +33,17 @@ export type ThemePresetId = (typeof themePresetIds)[number];
 export type ModelSettingsScopeMode = "app-global" | "per-repo";
 export type RuntimeMode = "light" | "agent";
 export const DEFAULT_RUNTIME_MODE: RuntimeMode = "light";
+
+export type RuntimeCapability =
+  | "terminal"
+  | "worktrees"
+  | "fileMutation"
+  | "officeMutation"
+  | "shellExecution"
+  | "childAgents"
+  | "extensions";
+
+export type RuntimeCapabilitySnapshot = Readonly<Record<RuntimeCapability, boolean>>;
 
 export function isRuntimeMode(value: unknown): value is RuntimeMode {
   return value === "light" || value === "agent";
@@ -265,6 +276,7 @@ export interface WorkspaceRecord {
   readonly path: string;
   readonly lastOpenedAt: string;
   readonly kind: WorkspaceKind;
+  readonly managed?: boolean;
   readonly rootWorkspaceId?: string;
   readonly branchName?: string;
   readonly sessions: readonly SessionRecord[];
@@ -318,6 +330,7 @@ export interface StartupDiagnostic {
 export interface DesktopAppState {
   readonly runtimeMode: RuntimeMode;
   readonly activeRuntimeMode: RuntimeMode;
+  readonly capabilities: RuntimeCapabilitySnapshot;
   readonly workspaces: readonly WorkspaceRecord[];
   readonly worktreesByWorkspace: Readonly<Record<string, readonly WorktreeRecord[]>>;
   readonly selectedWorkspaceId: string;
@@ -369,6 +382,15 @@ export function createEmptyDesktopAppState(): DesktopAppState {
   return {
     runtimeMode: DEFAULT_RUNTIME_MODE,
     activeRuntimeMode: DEFAULT_RUNTIME_MODE,
+    capabilities: {
+      terminal: false,
+      worktrees: false,
+      fileMutation: false,
+      officeMutation: true,
+      shellExecution: false,
+      childAgents: false,
+      extensions: false,
+    },
     workspaces: [],
     worktreesByWorkspace: {},
     selectedWorkspaceId: "",

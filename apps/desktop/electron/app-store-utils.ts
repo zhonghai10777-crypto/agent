@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
+import path from "node:path";
 import type { SessionCatalogEntry, WorkspaceCatalogEntry, WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type {
@@ -21,6 +23,14 @@ import type {
 
 export const LEGACY_TRANSCRIPT_HISTORY_LIMIT = 180;
 
+function samePath(left: string, right: string): boolean {
+  try {
+    return realpathSync(left) === realpathSync(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
+  }
+}
+
 export function mapToRecord<V>(map: Map<string, V>): Record<string, V> {
   return Object.fromEntries(map.entries());
 }
@@ -35,18 +45,27 @@ export function buildWorkspaceRecords(
   contextUsageBySession: Map<string, SessionContextUsage>,
   lastViewedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
+  personalWorkspacePath?: string,
 ): WorkspaceRecord[] {
   const workspaceRoots = resolveWorkspaceRoots(workspaces, worktrees);
 
   return workspaces.map((workspace) => {
     const rootWorkspaceId = workspaceRoots.get(workspace.workspaceId);
+    const isPersonalWorkspace = Boolean(
+      personalWorkspacePath && samePath(workspace.path, personalWorkspacePath),
+    );
 
     return {
       id: workspace.workspaceId,
       name: workspace.displayName,
       path: workspace.path,
       lastOpenedAt: workspace.lastOpenedAt,
-      kind: rootWorkspaceId ? "worktree" : "primary",
+      kind: isPersonalWorkspace
+        ? "personal"
+        : rootWorkspaceId
+          ? "worktree"
+          : "primary",
+      ...(isPersonalWorkspace ? { managed: true } : {}),
       ...(rootWorkspaceId
         ? {
             rootWorkspaceId,

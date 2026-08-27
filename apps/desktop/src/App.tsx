@@ -660,7 +660,8 @@ function AppShell({
 
   const showTerminalTakeover = isTerminalVisibleForSelectedThread && isTerminalTakeoverForSelectedThread && Boolean(selectedWorkspace);
   const secondarySurfaceView =
-    snapshot.activeView === "settings" || snapshot.activeView === "skills" || snapshot.activeView === "extensions"
+    snapshot.activeView === "settings" ||
+    (snapshot.capabilities.extensions && (snapshot.activeView === "skills" || snapshot.activeView === "extensions"))
       ? snapshot.activeView
       : null;
   const mainClassName = [
@@ -918,13 +919,14 @@ function AppShell({
           terminalPanel
         ) : (
           <>
-        {snapshot.activeView === "new-thread" ? (
+        {snapshot.activeView === "new-thread" || (!selectedSession && selectedWorkspace?.kind === "personal") ? (
           rootWorkspaceOptions.length > 0 ? (
             <NewThreadView
               workspaces={rootWorkspaceOptions}
               selectedWorkspaceId={newThread.rootWorkspaceId || rootWorkspaceOptions[0]?.id || ""}
               runtime={newThread.runtime}
               environment={newThread.environment}
+              allowWorktree={snapshot.capabilities.worktrees}
               prompt={newThread.prompt}
               attachments={newThread.attachments}
               lastError={newThread.composerError}
