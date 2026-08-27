@@ -58,6 +58,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
     expandWorkspace,
     openSettings,
   } = params;
+  const allowWorktree = snapshot?.capabilities.worktrees ?? false;
 
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState("");
   const [rootWorkspaceId, setRootWorkspaceId] = useState("");
@@ -322,6 +323,12 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
   );
 
   useEffect(() => {
+    if (!allowWorktree) {
+      setEnvironment("local");
+    }
+  }, [allowWorktree]);
+
+  useEffect(() => {
     if (rootWorkspaceOptions.length === 0) {
       setPendingWorkspaceId("");
       setRootWorkspaceId("");
@@ -366,6 +373,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
       runtime,
       rootWorkspaceId,
       environment,
+      allowWorktree,
       prompt,
       attachments,
       composerError,
@@ -397,6 +405,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
       runtime,
       rootWorkspaceId,
       environment,
+      allowWorktree,
       prompt,
       attachments,
       composerError,

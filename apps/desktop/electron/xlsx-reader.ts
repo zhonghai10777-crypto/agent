@@ -3,13 +3,9 @@ import { unzipSync } from "fflate";
 /**
  * Minimal read-only XLSX reader.
  *
- * Why not a library: the maintained npm readers either ship known CVEs (the
- * `xlsx` package is frozen at 0.18.5, with fixes only on the vendor's own CDN)
- * or drag a ZIP *writer* in behind them — exceljs pulls archiver → lazystream →
- * readable-stream@2, a nested version that electron-builder's flattened
- * node_modules cannot express, so it breaks at package time. Reading cell text
- * out of OOXML needs none of that: the parts are machine-generated XML inside a
- * ZIP, and fflate unzips it with zero dependencies.
+ * The write path uses ExcelJS, but reads stay on this small OOXML parser: it is
+ * faster for attachment extraction and keeps the model-facing representation
+ * deliberately limited to sheet names and cell text.
  *
  * Scope is deliberately "what the model needs to read": sheet names, cell text,
  * and dates rendered as dates rather than raw serial numbers. Formatting,

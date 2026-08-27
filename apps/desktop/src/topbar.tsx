@@ -139,14 +139,15 @@ export function Topbar(props: TopbarProps) {
       </div>
 
       <div className="topbar__actions">
-        <TopbarActionButton
-          active={terminalVisible}
-          disabled={!terminalAvailable}
-          icon={<TerminalIcon />}
-          label={t("topbar.toggleTerminal")}
-          shortcut={terminalShortcut}
-          onClick={onToggleTerminal}
-        />
+        {terminalAvailable ? (
+          <TopbarActionButton
+            active={terminalVisible}
+            icon={<TerminalIcon />}
+            label={t("topbar.toggleTerminal")}
+            shortcut={terminalShortcut}
+            onClick={onToggleTerminal}
+          />
+        ) : null}
         <TopbarActionButton
           active={changesVisible}
           disabled={!panelAvailable}

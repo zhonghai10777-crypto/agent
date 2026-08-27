@@ -21,6 +21,7 @@ interface NewThreadViewProps {
   readonly selectedWorkspaceId: string;
   readonly runtime?: RuntimeSnapshot;
   readonly environment: NewThreadEnvironment;
+  readonly allowWorktree: boolean;
   readonly prompt: string;
   readonly attachments: readonly ComposerAttachment[];
   readonly lastError?: string;
@@ -65,6 +66,7 @@ export function NewThreadView({
   selectedWorkspaceId,
   runtime,
   environment,
+  allowWorktree,
   prompt,
   attachments,
   lastError,
@@ -203,6 +205,7 @@ export function NewThreadView({
                 <NewThreadComposerFooter
                   runtime={runtime}
                   environment={environment}
+                  allowWorktree={allowWorktree}
                   provider={provider}
                   modelId={modelId}
                   thinkingLevel={thinkingLevel}
@@ -227,6 +230,7 @@ export function NewThreadView({
 interface NewThreadComposerFooterProps {
   readonly runtime?: RuntimeSnapshot;
   readonly environment: NewThreadEnvironment;
+  readonly allowWorktree: boolean;
   readonly provider: string | undefined;
   readonly modelId: string | undefined;
   readonly thinkingLevel: string | undefined;
@@ -243,6 +247,7 @@ interface NewThreadComposerFooterProps {
 function NewThreadComposerFooter({
   runtime,
   environment,
+  allowWorktree,
   provider,
   modelId,
   thinkingLevel,
@@ -261,7 +266,7 @@ function NewThreadComposerFooter({
       <div className="composer__footer">
         <div className="composer__footer-row">
           <div className="composer__hint new-thread__hint">
-            <div className="new-thread__environment-group">
+            {allowWorktree ? <div className="new-thread__environment-group">
               <button
                 className={`new-thread__environment ${environment === "local" ? "new-thread__environment--active" : ""}`}
                 type="button"
@@ -276,8 +281,8 @@ function NewThreadComposerFooter({
               >
                 <span>{t("common.worktree")}</span>
               </button>
-            </div>
-            <span className="new-thread__hint-separator">·</span>
+            </div> : null}
+            {allowWorktree ? <span className="new-thread__hint-separator">·</span> : null}
             <ModelSelector
               runtime={runtime}
               provider={provider}

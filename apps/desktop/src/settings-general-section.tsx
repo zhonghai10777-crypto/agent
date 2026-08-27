@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { Locale, ModelSettingsScopeMode, RuntimeMode } from "./desktop-state";
+import type { DesktopAppState, Locale, ModelSettingsScopeMode, RuntimeMode } from "./desktop-state";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
 
@@ -8,6 +8,7 @@ interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
   readonly runtimeMode: RuntimeMode;
   readonly activeRuntimeMode: RuntimeMode;
+  readonly capabilities: DesktopAppState["capabilities"];
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly integratedTerminalShell: string;
   readonly locale: Locale;
@@ -22,6 +23,7 @@ export function SettingsGeneralSection({
   runtime,
   runtimeMode,
   activeRuntimeMode,
+  capabilities,
   modelSettingsScopeMode,
   integratedTerminalShell,
   locale,
@@ -100,11 +102,14 @@ export function SettingsGeneralSection({
           label={t("settings.general.connectedProviders")}
           value={connectedCount > 0 ? String(connectedCount) : t("settings.general.none")}
         />
-        <SettingsInfoRow label={t("settings.general.discoveredSkills")} value={String(runtime?.skills.length ?? 0)} />
-        <SettingsRow
-          title={t("settings.general.modelSettingsScope")}
-          description={t("settings.general.modelSettingsScopeDesc")}
-        >
+        {capabilities.extensions ? (
+          <SettingsInfoRow label={t("settings.general.discoveredSkills")} value={String(runtime?.skills.length ?? 0)} />
+        ) : null}
+        {capabilities.extensions ? (
+          <SettingsRow
+            title={t("settings.general.modelSettingsScope")}
+            description={t("settings.general.modelSettingsScopeDesc")}
+          >
           <div className="settings-pill-row">
             <button
               className={settingsPill(modelSettingsScopeMode === "app-global")}
@@ -123,22 +128,26 @@ export function SettingsGeneralSection({
               {t("settings.general.perRepo")}
             </button>
           </div>
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.general.enableSkillCommands")}
-          description={t("settings.general.enableSkillCommandsDesc")}
-        >
+          </SettingsRow>
+        ) : null}
+        {capabilities.terminal ? (
+          <SettingsRow
+            title={t("settings.general.enableSkillCommands")}
+            description={t("settings.general.enableSkillCommandsDesc")}
+          >
           <input
             aria-label={t("settings.general.enableSkillCommands")}
             checked={runtime?.settings.enableSkillCommands ?? true}
             type="checkbox"
             onChange={(event) => onToggleSkillCommands(event.target.checked)}
           />
-        </SettingsRow>
-        <SettingsRow
-          title={t("settings.general.integratedShell")}
-          description={t("settings.general.integratedShellDesc")}
-        >
+          </SettingsRow>
+        ) : null}
+        {capabilities.terminal ? (
+          <SettingsRow
+            title={t("settings.general.integratedShell")}
+            description={t("settings.general.integratedShellDesc")}
+          >
           <input
             aria-label={t("settings.general.integratedShell")}
             className="settings-text-input"
@@ -154,14 +163,19 @@ export function SettingsGeneralSection({
               }
             }}
           />
-        </SettingsRow>
+          </SettingsRow>
+        ) : null}
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.general.shortcuts")}>
         <SettingsInfoRow label={t("settings.general.shortcutNewThread")} value="Cmd+Shift+O" />
         <SettingsInfoRow label={t("settings.general.shortcutOpenSettings")} value="Cmd+," />
-        <SettingsInfoRow label={t("settings.general.shortcutToggleTerminal")} value="Cmd+J" />
-        <SettingsInfoRow label={t("settings.general.shortcutNewTerminalTab")} value="Cmd+T" />
+        {capabilities.terminal ? (
+          <>
+            <SettingsInfoRow label={t("settings.general.shortcutToggleTerminal")} value="Cmd+J" />
+            <SettingsInfoRow label={t("settings.general.shortcutNewTerminalTab")} value="Cmd+T" />
+          </>
+        ) : null}
         <SettingsInfoRow label={t("settings.general.shortcutSendMessage")} value="Enter" />
         <SettingsInfoRow label={t("settings.general.shortcutNewLine")} value="Shift+Enter" />
       </SettingsGroup>

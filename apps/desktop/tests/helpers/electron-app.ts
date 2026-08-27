@@ -1405,6 +1405,23 @@ export async function runReadDocumentTool(
   }, { sessionRef, params });
 }
 
+export async function runOfficeRuntimeTool(
+  harness: DesktopHarness,
+  sessionRef: SessionRef,
+  toolName: string,
+  params: unknown,
+): Promise<unknown> {
+  return harness.electronApp.evaluate((_, { sessionRef, toolName, params }) => {
+    const hooks = (globalThis as typeof globalThis & {
+      __PI_APP_TEST_HOOKS?: {
+        runOfficeTool?: (sessionRef: SessionRef, toolName: string, params: unknown) => Promise<unknown>;
+      };
+    }).__PI_APP_TEST_HOOKS;
+    if (!hooks?.runOfficeTool) throw new Error("runOfficeTool test hook is unavailable");
+    return hooks.runOfficeTool(sessionRef, toolName, params);
+  }, { sessionRef, toolName, params });
+}
+
 export async function emitTestSessionEvent(
   harness: DesktopHarness,
   event: SessionDriverEvent,

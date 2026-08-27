@@ -43,6 +43,7 @@ export interface AppStoreInternals {
   readonly catalogStore: JsonCatalogStore;
   readonly worktreeManager: GitWorktreeManager;
   readonly worktreeRoot: string;
+  readonly personalWorkspacePath: string;
   readonly attachmentStore: JsonFileStore<ComposerAttachment[]>;
 
   /* ── Shared helpers (called by extracted method groups) ── */

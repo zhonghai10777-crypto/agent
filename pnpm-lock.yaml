@@ -158,6 +158,9 @@ importers:
       diff:
         specifier: 8.0.4
         version: 8.0.4
+      exceljs:
+        specifier: ^4.4.0
+        version: 4.4.0
       fflate:
         specifier: ^0.8.3
         version: 0.8.3
@@ -303,9 +306,6 @@ importers:
       electron-vite:
         specifier: ^5.0.0
         version: 5.0.0(vite@6.4.1(@types/node@22.19.15)(jiti@2.7.0)(terser@5.46.1)(yaml@2.9.0))
-      exceljs:
-        specifier: ^4.4.0
-        version: 4.4.0
       playwright:
         specifier: ^1.58.2
         version: 1.58.2

@@ -1,5 +1,5 @@
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { Locale, ModelSettingsScopeMode, NotificationPreferences, RuntimeMode, ThemePresetId, WorkspaceRecord } from "./desktop-state";
+import type { DesktopAppState, Locale, ModelSettingsScopeMode, NotificationPreferences, RuntimeMode, ThemePresetId, WorkspaceRecord } from "./desktop-state";
 import type { CustomProviderConfig, DesktopNotificationPermissionStatus } from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsAppearanceSection } from "./settings-appearance-section";
@@ -22,6 +22,7 @@ interface SettingsViewProps {
   readonly modelSettingsScopeMode: ModelSettingsScopeMode;
   readonly runtimeMode: RuntimeMode;
   readonly activeRuntimeMode: RuntimeMode;
+  readonly capabilities: DesktopAppState["capabilities"];
   readonly integratedTerminalShell: string;
   readonly themeMode: "system" | "light" | "dark";
   readonly themePresetId: ThemePresetId;
@@ -59,6 +60,7 @@ export function SettingsView({
   modelSettingsScopeMode,
   runtimeMode,
   activeRuntimeMode,
+  capabilities,
   integratedTerminalShell,
   themeMode,
   themePresetId,
@@ -136,6 +138,7 @@ export function SettingsView({
               modelSettingsScopeMode={modelSettingsScopeMode}
               runtimeMode={runtimeMode}
               activeRuntimeMode={activeRuntimeMode}
+              capabilities={capabilities}
               integratedTerminalShell={integratedTerminalShell}
               locale={locale}
               onSetLocale={onSetLocale}

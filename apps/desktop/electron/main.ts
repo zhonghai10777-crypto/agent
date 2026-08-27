@@ -18,7 +18,7 @@ import { SecureAuthStorageBackend } from "./secure-auth-backend";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readFile, stat } from "node:fs/promises";
+import { lstat, readFile, stat } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,6 +59,12 @@ import {
   createDocumentRuntimeTools,
   type DocumentAccessScope,
 } from "./document-runtime";
+import {
+  createOfficeRuntimeExtension,
+  createOfficeRuntimeTools,
+  type OfficeFormat,
+  type OfficeWriteResult,
+} from "./office-runtime";
 import { createPermissionModeExtension } from "./permission-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
@@ -127,6 +133,11 @@ let deferredActivationWebContentsId: number | undefined;
 const SUPPORTED_IMAGE_TYPES = SUPPORTED_COMPOSER_IMAGE_TYPES;
 const SUPPORTED_IMAGE_MIME_TYPES = new Set<string>(SUPPORTED_IMAGE_TYPES.map((type) => type.mimeType));
 const NEW_WINDOW_MENU_ITEM_ID = "file.new-window";
+const knownOfficeResultPaths = new Set<string>();
+
+function rememberOfficeResult(result: OfficeWriteResult): void {
+  knownOfficeResultPaths.add(path.resolve(result.outputPath));
+}
 
 function createStoreBackedOrchestrationRuntimeBridge(): OrchestrationRuntimeBridge {
   return {
@@ -192,6 +203,24 @@ function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
   };
 }
 
+function officeAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+  return documentAccessScopeFor(ctx);
+}
+
+async function chooseOfficeOutputPath(format: OfficeFormat): Promise<string | undefined> {
+  const window = resolveDialogWindow(mainWindow);
+  const result = window
+    ? await dialog.showSaveDialog(window, {
+        title: format === "docx" ? "保存 Word 文档" : "保存 Excel 工作簿",
+        filters: [{ name: format === "docx" ? "Word 文档" : "Excel 工作簿", extensions: [format] }],
+      })
+    : await dialog.showSaveDialog({
+        title: format === "docx" ? "保存 Word 文档" : "保存 Excel 工作簿",
+        filters: [{ name: format === "docx" ? "Word 文档" : "Excel 工作簿", extensions: [format] }],
+      });
+  return result.canceled ? undefined : result.filePath;
+}
+
 /**
  * Resolves the calling session's permission mode for the permission extension.
  * Per-call (not registration-time) for the same reason as `documentAccessScopeFor`:
@@ -235,6 +264,20 @@ async function runReadDocumentToolForTest(sessionRef: SessionRef, params: unknow
     throw new Error("read_document tool is not registered");
   }
   return tool.execute("test-read-document", params, undefined, undefined, createTestExtensionContext(sessionRef));
+}
+
+async function runOfficeToolForTest(sessionRef: SessionRef, toolName: string, params: unknown): Promise<AgentToolResult<unknown>> {
+  await store.initialize();
+  const tool = createOfficeRuntimeTools({
+    getScope: officeAccessScopeFor,
+    chooseNewFilePath: async (format) => path.join(configuredUserDataDir, `office-test-${randomUUID()}.${format}`),
+    confirmWrite: async () => true,
+    onWriteComplete: rememberOfficeResult,
+    assertAllowed: () => store.assertCapability("officeMutation"),
+    getPermissionMode: permissionModeFor,
+  }).find((entry) => entry.name === toolName);
+  if (!tool) throw new Error(`Unknown office runtime tool: ${toolName}`);
+  return tool.execute(`test-${toolName}`, params, undefined, undefined, createTestExtensionContext(sessionRef));
 }
 
 function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
@@ -1167,6 +1210,18 @@ app.whenReady().then(async () => {
       // Same lazy read, and scoped per call: extensions are built once per
       // workspace, so the calling session decides what is reachable.
       createDocumentRuntimeExtension(documentAccessScopeFor),
+      createOfficeRuntimeExtension({
+        getScope: officeAccessScopeFor,
+        chooseNewFilePath: chooseOfficeOutputPath,
+        confirmWrite: (ctx, summary, outputPath, changedItems) =>
+          ctx.ui.confirm(
+            "确认办公文件写入",
+            `${summary}\n输出：${outputPath}\n变更项：${changedItems}`,
+          ),
+        onWriteComplete: rememberOfficeResult,
+        assertAllowed: () => store.assertCapability("officeMutation"),
+        getPermissionMode: permissionModeFor,
+      }),
       ...(initialRuntimeMode === "agent" ? [createOrchestrationRuntimeExtension(orchestrationRuntimeBridge)] : []),
       // Blocks mutating tools (write/edit/bash/create_child_thread) when the
       // active session is in `plan` mode. Last so it runs after the other tools
@@ -1182,6 +1237,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Document reading",
         description: "Read attached PDF, Word, Excel and plain-text files as text",
+      },
+      {
+        displayName: "Office documents",
+        description: "Create and edit simple Word and Excel files with confirmation and safe copies",
       },
       ...(initialRuntimeMode === "agent"
         ? [{ displayName: "Thread orchestration", description: "Start child pi-gui threads from transcript tool calls" }]
@@ -1229,6 +1288,8 @@ app.whenReady().then(async () => {
           runOrchestrationRuntimeToolForTest(orchestrationRuntimeBridge, input),
         runReadDocumentTool: (sessionRef: SessionRef, params: unknown) =>
           runReadDocumentToolForTest(sessionRef, params),
+        runOfficeTool: (sessionRef: SessionRef, toolName: string, params: unknown) =>
+          runOfficeToolForTest(sessionRef, toolName, params),
         setDeferredThreadTitleMode: () => {
           generateThreadTitleOverride = () =>
             new Promise<string | null>((resolve, reject) => {
@@ -1555,6 +1616,16 @@ app.whenReady().then(async () => {
     }
     await shell.openPath(path.dirname(resolved));
   });
+  ipcMain.handle(desktopIpc.openOfficeFile, async (_event, filePath: string) => {
+    store.assertCapability("officeMutation");
+    const resolved = await validateOfficeResultPath(filePath);
+    const error = await shell.openPath(resolved);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle(desktopIpc.showOfficeFileInFinder, async (_event, filePath: string) => {
+    store.assertCapability("officeMutation");
+    shell.showItemInFolder(await validateOfficeResultPath(filePath));
+  });
   ipcMain.handle(desktopIpc.cancelCurrentRun, (event) =>
     runWindowScopedForEvent(event, () => store.cancelCurrentRun()),
   );
@@ -1829,6 +1900,29 @@ function mimeTypeForPath(filePath: string): string {
     return supported.mimeType;
   }
   return "application/octet-stream";
+}
+
+async function validateOfficeResultPath(filePath: string): Promise<string> {
+  if (typeof filePath !== "string" || !filePath.trim()) {
+    throw new Error("Office output path is required.");
+  }
+  const resolved = path.resolve(filePath);
+  if (!knownOfficeResultPaths.has(resolved)) {
+    throw new Error("Office output path is not a result created by this app session.");
+  }
+  const extension = path.extname(resolved).toLowerCase();
+  if (extension !== ".docx" && extension !== ".xlsx") {
+    throw new Error("Only Word and Excel output files can be opened from the office result surface.");
+  }
+  const linkInfo = await lstat(resolved);
+  if (linkInfo.isSymbolicLink()) {
+    throw new Error("Office output symlinks cannot be opened from the result surface.");
+  }
+  const info = await stat(resolved);
+  if (!info.isFile() || info.size > 50 * 1024 * 1024) {
+    throw new Error("Office output file does not exist or is too large.");
+  }
+  return resolved;
 }
 
 function validateComposerAttachmentPayload(attachment: ComposerAttachment): ComposerAttachment[] {

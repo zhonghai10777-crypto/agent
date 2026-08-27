@@ -378,6 +378,7 @@ export function SecondarySurfaces({
         modelSettingsScopeMode={snapshot.modelSettingsScopeMode}
         runtimeMode={snapshot.runtimeMode}
         activeRuntimeMode={snapshot.activeRuntimeMode}
+        capabilities={snapshot.capabilities}
         integratedTerminalShell={snapshot.integratedTerminalShell}
         themeMode={snapshot.themeMode}
         themePresetId={snapshot.themePresetId}

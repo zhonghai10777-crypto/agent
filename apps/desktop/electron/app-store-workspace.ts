@@ -81,6 +81,11 @@ export async function renameWorkspace(
 export async function removeWorkspace(store: AppStoreInternals, workspaceId: string): Promise<DesktopAppState> {
   await store.initialize();
 
+  const workspace = store.state.workspaces.find((entry) => entry.id === workspaceId);
+  if (workspace?.managed) {
+    return store.withError("The personal workspace is managed by the app and cannot be removed.");
+  }
+
   return store.withErrorHandling(async () => {
     await store.driver.removeWorkspace(workspaceId);
     return store.refreshState(fallbackSelectionAfterWorkspaceRemoval(store.state, workspaceId));

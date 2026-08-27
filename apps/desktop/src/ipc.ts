@@ -105,6 +105,8 @@ export const desktopIpc = {
   removeWorktree: "pi-gui:remove-worktree",
   openSkillInFinder: "pi-gui:open-skill-in-finder",
   openExtensionInFinder: "pi-gui:open-extension-in-finder",
+  openOfficeFile: "pi-gui:open-office-file",
+  showOfficeFileInFinder: "pi-gui:show-office-file-in-finder",
   syncCurrentWorkspace: "pi-gui:sync-current-workspace",
   selectSession: "pi-gui:select-session",
   renameSession: "pi-gui:rename-session",
@@ -344,6 +346,8 @@ export interface PiDesktopApi {
   removeWorktree(input: RemoveWorktreeInput): Promise<DesktopAppState>;
   openSkillInFinder(workspaceId: string, filePath: string): Promise<void>;
   openExtensionInFinder(workspaceId: string, filePath: string): Promise<void>;
+  openOfficeFile(filePath: string): Promise<void>;
+  showOfficeFileInFinder(filePath: string): Promise<void>;
   syncCurrentWorkspace(): Promise<DesktopAppState>;
   selectSession(target: WorkspaceSessionTarget): Promise<DesktopAppState>;
   renameSession(target: WorkspaceSessionTarget, title: string): Promise<DesktopAppState>;

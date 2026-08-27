@@ -1,21 +1,8 @@
-import type { RuntimeMode } from "../src/desktop-state";
+import type { RuntimeCapability, RuntimeCapabilitySnapshot, RuntimeMode } from "../src/desktop-state";
 
-export type RuntimeCapability =
-  | "terminal"
-  | "worktrees"
-  | "fileMutation"
-  | "shellExecution"
-  | "childAgents"
-  | "extensions";
+export type { RuntimeCapability } from "../src/desktop-state";
 
-export interface RuntimeCapabilityPolicy {
-  readonly terminal: boolean;
-  readonly worktrees: boolean;
-  readonly fileMutation: boolean;
-  readonly shellExecution: boolean;
-  readonly childAgents: boolean;
-  readonly extensions: boolean;
-}
+export type RuntimeCapabilityPolicy = RuntimeCapabilitySnapshot;
 
 export function policyForRuntimeMode(mode: RuntimeMode): RuntimeCapabilityPolicy {
   return mode === "agent"
@@ -23,6 +10,7 @@ export function policyForRuntimeMode(mode: RuntimeMode): RuntimeCapabilityPolicy
         terminal: true,
         worktrees: true,
         fileMutation: true,
+        officeMutation: true,
         shellExecution: true,
         childAgents: true,
         extensions: true,
@@ -31,6 +19,7 @@ export function policyForRuntimeMode(mode: RuntimeMode): RuntimeCapabilityPolicy
         terminal: false,
         worktrees: false,
         fileMutation: false,
+        officeMutation: true,
         shellExecution: false,
         childAgents: false,
         extensions: false,

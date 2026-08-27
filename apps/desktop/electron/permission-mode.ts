@@ -18,6 +18,7 @@
  * provider all read one source of truth for the default.
  */
 import { createChildThreadToolName } from "./orchestration-runtime";
+import { officeToolNames } from "./office-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
 
 /**
@@ -34,6 +35,7 @@ export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   "edit",
   "bash",
   createChildThreadToolName,
+  ...officeToolNames,
 ]);
 
 export interface ToolBlock {
