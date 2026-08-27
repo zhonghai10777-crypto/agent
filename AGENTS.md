@@ -5,6 +5,7 @@ These rules apply for the full session.
 ## Workflow
 - Define success criteria before coding; if unclear, stop and clarify.
 - For non-trivial work, plan verification up front with the `self-test` skill.
+- During development, run only verification targeted to the changed surface. Run the full `core` suite or any cross-lane/full acceptance validation only when the user explicitly requests it.
 - Do not create or switch to new branches to start work unless the user explicitly asks; respect the current branch or worktree as intentional.
 - Commit in small focused checkpoints; don’t batch unrelated changes.
 - Run `simplify` before closing non-trivial implementation work.
