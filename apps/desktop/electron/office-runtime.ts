@@ -20,7 +20,10 @@ export type OfficeOperation =
   | ExcelCreateOperation
   | ExcelUpdateCellsOperation
   | ExcelFillRangeOperation
-  | ExcelAddSheetOperation;
+  | ExcelAddSheetOperation
+  | ExcelFormatCellsOperation
+  | ExcelMergeCellsOperation
+  | ExcelSetColumnWidthOperation;
 
 export interface WordCreateOperation {
   readonly kind: "word_create";
@@ -37,6 +40,7 @@ export interface WordAppendOperation {
   readonly kind: "word_append";
   readonly sourcePath: string;
   readonly contentType: "heading" | "paragraph" | "list" | "table";
+  readonly headingLevel?: 1 | 2 | 3;
   readonly text?: string;
   readonly items?: readonly string[];
   readonly rows?: readonly (readonly string[])[];
@@ -63,6 +67,33 @@ export interface ExcelAddSheetOperation {
   readonly kind: "excel_add_sheet";
   readonly sourcePath: string;
   readonly sheet: string;
+}
+export interface ExcelFormatCellsOperation {
+  readonly kind: "excel_format_cells";
+  readonly sourcePath: string;
+  readonly sheet: string;
+  readonly range: string;
+  readonly numberFormat?: string;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly fontColor?: string;
+  readonly fillColor?: string;
+  readonly horizontalAlignment?: "left" | "center" | "right";
+  readonly verticalAlignment?: "top" | "middle" | "bottom";
+  readonly wrapText?: boolean;
+}
+export interface ExcelMergeCellsOperation {
+  readonly kind: "excel_merge_cells";
+  readonly sourcePath: string;
+  readonly sheet: string;
+  readonly range: string;
+}
+export interface ExcelSetColumnWidthOperation {
+  readonly kind: "excel_set_column_width";
+  readonly sourcePath: string;
+  readonly sheet: string;
+  readonly column: string;
+  readonly width: number;
 }
 
 export interface OfficeWriteResult {
@@ -94,7 +125,15 @@ export interface OfficeRuntimeOptions {
 
 const MAX_OFFICE_BYTES = 50 * 1024 * 1024;
 const WORD_TOOLS = ["word_create", "word_replace", "word_append"] as const;
-const EXCEL_TOOLS = ["excel_create", "excel_update_cells", "excel_fill_range", "excel_add_sheet"] as const;
+const EXCEL_TOOLS = [
+  "excel_create",
+  "excel_update_cells",
+  "excel_fill_range",
+  "excel_add_sheet",
+  "excel_format_cells",
+  "excel_merge_cells",
+  "excel_set_column_width",
+] as const;
 export const officeToolNames = [...WORD_TOOLS, ...EXCEL_TOOLS] as const;
 
 export function isOfficePathInScope(target: string, scope: OfficeAccessScope): boolean {
@@ -160,7 +199,7 @@ export function replaceWordText(buffer: Uint8Array, search: string, replacement:
 
 export function appendWordContent(
   buffer: Uint8Array,
-  operation: Pick<WordAppendOperation, "contentType" | "text" | "items" | "rows">,
+  operation: Pick<WordAppendOperation, "contentType" | "headingLevel" | "text" | "items" | "rows">,
 ): { buffer: Uint8Array; changedItems: number } {
   const files = unzipSync(buffer);
   const document = readZipText(files, "word/document.xml");
@@ -174,6 +213,7 @@ export function appendWordContent(
   }
   const nextDocument = `${document.slice(0, sectionStart)}${insertion}${document.slice(sectionStart)}`;
   files["word/document.xml"] = new TextEncoder().encode(nextDocument);
+  if (operation.contentType === "list") ensureWordNumbering(files);
   const changedItems = operation.contentType === "table" ? operation.rows?.length ?? 0 : operation.items?.length ?? 1;
   return { buffer: zipSync(files), changedItems: Math.max(1, changedItems) };
 }
@@ -236,6 +276,72 @@ export async function addExcelSheet(
   return { buffer: new Uint8Array(await workbook.xlsx.writeBuffer()), changedItems: 1 };
 }
 
+export async function formatExcelCells(
+  buffer: Uint8Array,
+  operation: ExcelFormatCellsOperation,
+): Promise<{ buffer: Uint8Array; changedItems: number }> {
+  const workbook = await loadWorkbook(buffer);
+  const worksheet = workbook.getWorksheet(operation.sheet);
+  if (!worksheet) throw new Error(`Worksheet not found: ${operation.sheet}`);
+  const range = parseRange(operation.range);
+  const fontColor = operation.fontColor ? normalizeExcelColor(operation.fontColor) : undefined;
+  const fillColor = operation.fillColor ? normalizeExcelColor(operation.fillColor) : undefined;
+  for (let row = 0; row < range.height; row += 1) {
+    for (let column = 0; column < range.width; column += 1) {
+      const cell = worksheet.getCell(range.startRow + row, range.startColumn + column);
+      if (operation.numberFormat !== undefined) cell.numFmt = operation.numberFormat;
+      if (operation.bold !== undefined || operation.italic !== undefined || fontColor) {
+        cell.font = {
+          ...cell.font,
+          ...(operation.bold !== undefined ? { bold: operation.bold } : {}),
+          ...(operation.italic !== undefined ? { italic: operation.italic } : {}),
+          ...(fontColor ? { color: { argb: fontColor } } : {}),
+        };
+      }
+      if (fillColor) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: fillColor } };
+      }
+      if (operation.horizontalAlignment || operation.verticalAlignment || operation.wrapText !== undefined) {
+        cell.alignment = {
+          ...cell.alignment,
+          ...(operation.horizontalAlignment ? { horizontal: operation.horizontalAlignment } : {}),
+          ...(operation.verticalAlignment ? { vertical: operation.verticalAlignment } : {}),
+          ...(operation.wrapText !== undefined ? { wrapText: operation.wrapText } : {}),
+        };
+      }
+    }
+  }
+  return { buffer: new Uint8Array(await workbook.xlsx.writeBuffer()), changedItems: range.width * range.height };
+}
+
+export async function mergeExcelCells(
+  buffer: Uint8Array,
+  operation: ExcelMergeCellsOperation,
+): Promise<{ buffer: Uint8Array; changedItems: number }> {
+  const workbook = await loadWorkbook(buffer);
+  const worksheet = workbook.getWorksheet(operation.sheet);
+  if (!worksheet) throw new Error(`Worksheet not found: ${operation.sheet}`);
+  const range = parseRange(operation.range);
+  worksheet.mergeCells(operation.range);
+  return { buffer: new Uint8Array(await workbook.xlsx.writeBuffer()), changedItems: range.width * range.height };
+}
+
+export async function setExcelColumnWidth(
+  buffer: Uint8Array,
+  operation: ExcelSetColumnWidthOperation,
+): Promise<{ buffer: Uint8Array; changedItems: number }> {
+  const workbook = await loadWorkbook(buffer);
+  const worksheet = workbook.getWorksheet(operation.sheet);
+  if (!worksheet) throw new Error(`Worksheet not found: ${operation.sheet}`);
+  const column = operation.column.trim();
+  if (!/^[A-Z]+$/i.test(column)) throw new Error(`非法 Excel 列：${operation.column}`);
+  if (!Number.isFinite(operation.width) || operation.width <= 0 || operation.width > 255) {
+    throw new Error("Excel 列宽必须在 0 到 255 之间。");
+  }
+  worksheet.getColumn(columnNumber(column)).width = operation.width;
+  return { buffer: new Uint8Array(await workbook.xlsx.writeBuffer()), changedItems: 1 };
+}
+
 export function createOfficeRuntimeTools(
   options: OfficeRuntimeOptions,
 ): readonly ToolDefinition<any, OfficeWriteResult | { error: string }>[] {
@@ -247,6 +353,9 @@ export function createOfficeRuntimeTools(
     createExcelUpdateTool(options),
     createExcelFillTool(options),
     createExcelAddSheetTool(options),
+    createExcelFormatTool(options),
+    createExcelMergeTool(options),
+    createExcelSetColumnWidthTool(options),
   ];
 }
 
@@ -321,10 +430,11 @@ function createWordAppendTool(options: OfficeRuntimeOptions): ToolDefinition<any
     promptSnippet: "word_append: append supported content to a Word document.",
     parameters: {
       type: "object",
-      properties: {
-        sourcePath: { type: "string" },
-        contentType: { type: "string", enum: ["heading", "paragraph", "list", "table"] },
-        text: { type: "string" },
+        properties: {
+          sourcePath: { type: "string" },
+          contentType: { type: "string", enum: ["heading", "paragraph", "list", "table"] },
+          headingLevel: { type: "integer", minimum: 1, maximum: 3 },
+          text: { type: "string" },
         items: { type: "array", items: { type: "string" } },
         rows: { type: "array", items: { type: "array", items: { type: "string" } } },
       },
@@ -339,6 +449,9 @@ function createWordAppendTool(options: OfficeRuntimeOptions): ToolDefinition<any
       return runOfficeWrite(options, ctx, "docx", sourcePath, async (outputPath, source) => {
         const op = {
           contentType,
+          headingLevel: typeof (params as Record<string, unknown>).headingLevel === "number"
+            ? Math.min(3, Math.max(1, Math.trunc((params as Record<string, unknown>).headingLevel as number))) as 1 | 2 | 3
+            : undefined,
           text: stringParam(params, "text"),
           items: stringArrayParam(params, "items"),
           rows: arrayRowsParam(params, "rows").map((row) => row.map((value) => String(value))),
@@ -461,6 +574,118 @@ function createExcelAddSheetTool(options: OfficeRuntimeOptions): ToolDefinition<
       return runOfficeWrite(options, ctx, "xlsx", sourcePath, async (outputPath, source) => {
         const result = await addExcelSheet(source ?? new Uint8Array(), sheet);
         return { buffer: result.buffer, changedItems: 1, summary: `新增 Excel 工作表 ${sheet}`, outputPath };
+      });
+    },
+  };
+}
+
+function createExcelFormatTool(options: OfficeRuntimeOptions): ToolDefinition<any, OfficeWriteResult | { error: string }> {
+  return {
+    name: "excel_format_cells",
+    label: "Format Excel cells",
+    description: "Apply basic number, font, fill, alignment, and wrapping styles to an Excel range.",
+    promptSnippet: "excel_format_cells: format an Excel range.",
+    parameters: {
+      type: "object",
+      properties: {
+        sourcePath: { type: "string" },
+        sheet: { type: "string" },
+        range: { type: "string" },
+        numberFormat: { type: "string" },
+        bold: { type: "boolean" },
+        italic: { type: "boolean" },
+        fontColor: { type: "string" },
+        fillColor: { type: "string" },
+        horizontalAlignment: { type: "string", enum: ["left", "center", "right"] },
+        verticalAlignment: { type: "string", enum: ["top", "middle", "bottom"] },
+        wrapText: { type: "boolean" },
+      },
+      required: ["sourcePath", "sheet", "range"],
+    },
+    async execute(_id, params, _signal, _update, ctx) {
+      const rawParams = params as Record<string, unknown>;
+      const sourcePath = stringParam(params, "sourcePath");
+      const sheet = stringParam(params, "sheet");
+      const range = stringParam(params, "range");
+      if (!sourcePath || !sheet || !range) return officeError("excel_format_cells requires sourcePath, sheet and range.");
+      return runOfficeWrite(options, ctx, "xlsx", sourcePath, async (outputPath, source) => {
+        const operation: ExcelFormatCellsOperation = {
+          kind: "excel_format_cells",
+          sourcePath,
+          sheet,
+          range,
+          ...(stringParam(params, "numberFormat") ? { numberFormat: stringParam(params, "numberFormat") } : {}),
+          ...(typeof rawParams.bold === "boolean" ? { bold: rawParams.bold } : {}),
+          ...(typeof rawParams.italic === "boolean" ? { italic: rawParams.italic } : {}),
+          ...(stringParam(params, "fontColor") ? { fontColor: stringParam(params, "fontColor") } : {}),
+          ...(stringParam(params, "fillColor") ? { fillColor: stringParam(params, "fillColor") } : {}),
+          ...(stringParam(params, "horizontalAlignment") ? { horizontalAlignment: stringParam(params, "horizontalAlignment") as ExcelFormatCellsOperation["horizontalAlignment"] } : {}),
+          ...(stringParam(params, "verticalAlignment") ? { verticalAlignment: stringParam(params, "verticalAlignment") as ExcelFormatCellsOperation["verticalAlignment"] } : {}),
+          ...(typeof rawParams.wrapText === "boolean" ? { wrapText: rawParams.wrapText } : {}),
+        };
+        const result = await formatExcelCells(source ?? new Uint8Array(), operation);
+        return { buffer: result.buffer, changedItems: result.changedItems, summary: `格式化 Excel ${sheet}!${range}（${result.changedItems} 个单元格）`, outputPath };
+      });
+    },
+  };
+}
+
+function createExcelMergeTool(options: OfficeRuntimeOptions): ToolDefinition<any, OfficeWriteResult | { error: string }> {
+  return {
+    name: "excel_merge_cells",
+    label: "Merge Excel cells",
+    description: "Merge a rectangular Excel range and save an edited copy.",
+    promptSnippet: "excel_merge_cells: merge an Excel range.",
+    parameters: {
+      type: "object",
+      properties: {
+        sourcePath: { type: "string" },
+        sheet: { type: "string" },
+        range: { type: "string" },
+      },
+      required: ["sourcePath", "sheet", "range"],
+    },
+    async execute(_id, params, _signal, _update, ctx) {
+      const sourcePath = stringParam(params, "sourcePath");
+      const sheet = stringParam(params, "sheet");
+      const range = stringParam(params, "range");
+      if (!sourcePath || !sheet || !range) return officeError("excel_merge_cells requires sourcePath, sheet and range.");
+      return runOfficeWrite(options, ctx, "xlsx", sourcePath, async (outputPath, source) => {
+        const result = await mergeExcelCells(source ?? new Uint8Array(), { kind: "excel_merge_cells", sourcePath, sheet, range });
+        return { buffer: result.buffer, changedItems: result.changedItems, summary: `合并 Excel ${sheet}!${range}`, outputPath };
+      });
+    },
+  };
+}
+
+function createExcelSetColumnWidthTool(options: OfficeRuntimeOptions): ToolDefinition<any, OfficeWriteResult | { error: string }> {
+  return {
+    name: "excel_set_column_width",
+    label: "Set Excel column width",
+    description: "Set an Excel column width between 0 and 255 and save an edited copy.",
+    promptSnippet: "excel_set_column_width: set an Excel column width.",
+    parameters: {
+      type: "object",
+      properties: {
+        sourcePath: { type: "string" },
+        sheet: { type: "string" },
+        column: { type: "string" },
+        width: { type: "number" },
+      },
+      required: ["sourcePath", "sheet", "column", "width"],
+    },
+    async execute(_id, params, _signal, _update, ctx) {
+      const rawParams = params as Record<string, unknown>;
+      const sourcePath = stringParam(params, "sourcePath");
+      const sheet = stringParam(params, "sheet");
+      const column = stringParam(params, "column");
+      const width = typeof rawParams.width === "number" ? rawParams.width : Number.NaN;
+      if (!sourcePath || !sheet || !column || !Number.isFinite(width)) {
+        return officeError("excel_set_column_width requires sourcePath, sheet, column and numeric width.");
+      }
+      return runOfficeWrite(options, ctx, "xlsx", sourcePath, async (outputPath, source) => {
+        const result = await setExcelColumnWidth(source ?? new Uint8Array(), { kind: "excel_set_column_width", sourcePath, sheet, column, width });
+        return { buffer: result.buffer, changedItems: result.changedItems, summary: `设置 Excel ${sheet}!${column} 列宽为 ${width}`, outputPath };
       });
     },
   };
@@ -596,6 +821,14 @@ function normalizeExcelValue(value: unknown): ExcelJS.CellValue {
   return String(value);
 }
 
+function normalizeExcelColor(value: string): string {
+  const normalized = value.trim().replace(/^#/, "").toUpperCase();
+  if (!/^[0-9A-F]{6}([0-9A-F]{2})?$/.test(normalized)) {
+    throw new Error(`非法 Excel 颜色：${value}`);
+  }
+  return normalized.length === 6 ? `FF${normalized}` : normalized;
+}
+
 function parseRange(value: string): { startRow: number; startColumn: number; width: number; height: number } {
   const match = /^([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?$/i.exec(value.trim());
   if (!match) throw new Error(`非法 Excel 范围：${value}`);
@@ -637,10 +870,10 @@ function officeError(error: string): AgentToolResult<{ error: string }> {
   return { content: [{ type: "text", text: error }], details: { error } };
 }
 
-function wordAppendXml(operation: Pick<WordAppendOperation, "contentType" | "text" | "items" | "rows">): string {
-  if (operation.contentType === "heading") return wordParagraph(operation.text ?? "", "Heading1");
+function wordAppendXml(operation: Pick<WordAppendOperation, "contentType" | "headingLevel" | "text" | "items" | "rows">): string {
+  if (operation.contentType === "heading") return wordParagraph(operation.text ?? "", `Heading${operation.headingLevel ?? 1}`);
   if (operation.contentType === "paragraph") return wordParagraph(operation.text ?? "");
-  if (operation.contentType === "list") return (operation.items ?? []).map((item) => wordParagraph(item, "ListParagraph")).join("");
+  if (operation.contentType === "list") return (operation.items ?? []).map((item) => wordListParagraph(item)).join("");
   if (operation.contentType === "table") {
     const rows = operation.rows ?? [];
     if (rows.length === 0) return "";
@@ -654,6 +887,10 @@ function wordParagraph(text: string, style?: string): string {
   return `<w:p>${property}<w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
 }
 
+function wordListParagraph(text: string): string {
+  return `<w:p><w:pPr><w:pStyle w:val="ListParagraph"/><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r></w:p>`;
+}
+
 function documentXml(body: string): string {
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`;
 }
@@ -661,10 +898,46 @@ function documentXml(body: string): string {
 function wordPackage(document: string): Record<string, Uint8Array> {
   const encoder = new TextEncoder();
   return {
-    "[Content_Types].xml": encoder.encode(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>`),
+    "[Content_Types].xml": encoder.encode(`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>`),
     "_rels/.rels": encoder.encode(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`),
+    "word/_rels/document.xml.rels": encoder.encode(`<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/></Relationships>`),
     "word/document.xml": encoder.encode(document),
+    "word/numbering.xml": encoder.encode(numberingXml()),
   };
+}
+
+function ensureWordNumbering(files: Record<string, Uint8Array>): void {
+  const encoder = new TextEncoder();
+  if (!files["word/numbering.xml"]) files["word/numbering.xml"] = encoder.encode(numberingXml());
+  const relationshipPath = "word/_rels/document.xml.rels";
+  const numberingRelationship = "Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering\"";
+  if (!files[relationshipPath]) {
+    files[relationshipPath] = encoder.encode(
+      `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" ${numberingRelationship} Target="numbering.xml"/></Relationships>`,
+    );
+  } else {
+    const relationships = readZipText(files, relationshipPath);
+    if (!relationships.includes(numberingRelationship)) {
+      const ids = [...relationships.matchAll(/\bId="rId(\d+)"/g)].map((match) => Number(match[1]));
+      const nextId = Math.max(0, ...ids) + 1;
+      files[relationshipPath] = encoder.encode(
+        relationships.replace(
+          "</Relationships>",
+          `<Relationship Id="rId${nextId}" ${numberingRelationship} Target="numbering.xml"/></Relationships>`,
+        ),
+      );
+    }
+  }
+  const contentTypes = readZipText(files, "[Content_Types].xml");
+  if (!contentTypes.includes("/word/numbering.xml")) {
+    files["[Content_Types].xml"] = encoder.encode(
+      contentTypes.replace("</Types>", '<Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>'),
+    );
+  }
+}
+
+function numberingXml(): string {
+  return `<?xml version="1.0" encoding="UTF-8"?><w:numbering xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:abstractNum w:abstractNumId="0"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/><w:lvlText w:val="-"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl></w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="0"/></w:num></w:numbering>`;
 }
 
 function readZipText(files: Record<string, Uint8Array>, file: string): string {

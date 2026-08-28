@@ -128,7 +128,7 @@ test("DeepSeek-compatible endpoint handles simple office schemas, Chinese argume
       const name = ((tool as { function?: { name?: unknown } }).function?.name);
       return typeof name === "string" && (name.startsWith("word_") || name.startsWith("excel_"));
     });
-    expect(officeTools).toHaveLength(7);
+    expect(officeTools).toHaveLength(10);
     expect(JSON.stringify(officeTools)).not.toContain("oneOf");
     expect(JSON.stringify(server.requests[1]?.messages)).toContain("源文件不在当前工作区或会话附件范围内");
 

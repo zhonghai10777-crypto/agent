@@ -8,8 +8,11 @@ import {
   createOfficeRuntimeTools,
   createWordDocument,
   fillExcelRange,
+  formatExcelCells,
   isOfficePathInScope,
+  mergeExcelCells,
   replaceWordText,
+  setExcelColumnWidth,
   updateExcelCells,
 } from "../../electron/office-runtime";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -91,12 +94,14 @@ test("Word create, replacement, and append preserve a valid OOXML package", () =
   const created = createWordDocument("标题", ["原始内容"]);
   const replaced = replaceWordText(created, "原始内容", "替换内容");
   expect(replaced.changedItems).toBe(1);
-  const appended = appendWordContent(replaced.buffer, { contentType: "paragraph", text: "追加内容" });
+  const appendedParagraph = appendWordContent(replaced.buffer, { contentType: "paragraph", text: "追加内容" });
+  const appended = appendWordContent(appendedParagraph.buffer, { contentType: "list", items: ["列表项"] });
   expect(appended.changedItems).toBe(1);
   const { unzipSync } = require("fflate") as typeof import("fflate");
   const xml = new TextDecoder().decode(unzipSync(appended.buffer)["word/document.xml"]);
   expect(xml).toContain("替换内容");
   expect(xml).toContain("追加内容");
+  expect(xml).toContain("w:numId w:val=\"1\"");
 });
 
 test("Excel cell and range mutations preserve workbook structure", async () => {
@@ -108,6 +113,42 @@ test("Excel cell and range mutations preserve workbook structure", async () => {
   expect(workbook.getWorksheet("数据")?.getCell("A2").value).toBe(9);
   expect(workbook.getWorksheet("数据")?.getCell("B2").value).toMatchObject({ formula: "=A2*2" });
   expect(workbook.getWorksheet("数据")?.getCell("B4").value).toBe(6);
+});
+
+test("Excel formatting, merge, and column width operations preserve requested layout", async () => {
+  const source = await createExcelDocument("数据", [["标题", "金额"], ["项目", 10]]);
+  const formatted = await formatExcelCells(source, {
+    kind: "excel_format_cells",
+    sourcePath: "x.xlsx",
+    sheet: "数据",
+    range: "A1:B1",
+    bold: true,
+    fillColor: "#DDEEFF",
+    horizontalAlignment: "center",
+    numberFormat: "#,##0.00",
+  });
+  const merged = await mergeExcelCells(formatted.buffer, {
+    kind: "excel_merge_cells",
+    sourcePath: "x.xlsx",
+    sheet: "数据",
+    range: "A3:B3",
+  });
+  const resized = await setExcelColumnWidth(merged.buffer, {
+    kind: "excel_set_column_width",
+    sourcePath: "x.xlsx",
+    sheet: "数据",
+    column: "A",
+    width: 24,
+  });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(resized.buffer as never);
+  const worksheet = workbook.getWorksheet("数据");
+  expect(worksheet?.getCell("A1").font.bold).toBe(true);
+  expect(worksheet?.getCell("A1").fill).toMatchObject({ fgColor: { argb: "FFDDEEFF" } });
+  expect(worksheet?.getCell("A1").alignment.horizontal).toBe("center");
+  expect(worksheet?.getCell("A1").numFmt).toBe("#,##0.00");
+  expect(worksheet?.getCell("A3").isMerged).toBe(true);
+  expect(worksheet?.getColumn(1).width).toBe(24);
 });
 
 function wordReplaceTool(overrides: {
