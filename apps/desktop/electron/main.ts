@@ -12,6 +12,7 @@ import {
   type IpcMainInvokeEvent,
   type MenuItemConstructorOptions,
   type MessageBoxOptions,
+  type OpenDialogOptions,
 } from "electron";
 import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
@@ -48,6 +49,7 @@ import {
   type CustomProviderConfig,
   type CustomProviderProbeInput,
   type CustomProviderProbeResult,
+  type LibraryIndexStatusView,
   type WebSearchTestResult,
   type WebToolsSettingsView,
 } from "../src/ipc";
@@ -62,6 +64,7 @@ import {
 import {
   createOfficeRuntimeExtension,
   createOfficeRuntimeTools,
+  type OfficeAccessScope,
   type OfficeFormat,
   type OfficeWriteResult,
 } from "./office-runtime";
@@ -69,6 +72,9 @@ import { createPermissionModeExtension } from "./permission-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
+import { LibraryStore, normalizeLibrarySettings } from "./library-store";
+import { LibraryIndex } from "./library-index";
+import { createLibraryRuntimeExtension, createLibraryRuntimeTools } from "./library-runtime";
 import type {
   ComposerAttachment,
   ComposerFileAttachment,
@@ -99,6 +105,8 @@ let notificationPermissionService: NotificationPermissionService | undefined;
 let terminalService: TerminalService | undefined;
 let terminalServicePromise: Promise<TerminalService> | undefined;
 let integratedTerminalShell = "";
+let libraryStore: LibraryStore;
+let libraryIndex: LibraryIndex;
 
 interface WindowViewState {
   readonly selectedWorkspaceId: string;
@@ -195,7 +203,7 @@ function tryResolveSessionRefFromExtensionContext(ctx: ExtensionContext): Sessio
  * reach into another workspace, nor into a document a different thread was
  * given — an unresolvable session simply gets nothing.
  */
-function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+function baseDocumentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
   const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
   return {
     workspaceRoots: [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)],
@@ -203,8 +211,24 @@ function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
   };
 }
 
-function officeAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
-  return documentAccessScopeFor(ctx);
+function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+  const base = baseDocumentAccessScopeFor(ctx);
+  const settings = libraryStore.read();
+  return {
+    ...base,
+    workspaceRoots: settings.enabled ? [...base.workspaceRoots, ...settings.roots] : base.workspaceRoots,
+  };
+}
+
+function officeAccessScopeFor(ctx: ExtensionContext): OfficeAccessScope {
+  // Keep library folders out of the mutation scope. They are readable reference
+  // material, never source files that Word/Excel tools may edit or copy from.
+  const base = baseDocumentAccessScopeFor(ctx);
+  const settings = libraryStore.read();
+  return {
+    ...base,
+    readOnlyRoots: settings.roots,
+  };
 }
 
 async function chooseOfficeOutputPath(format: OfficeFormat): Promise<string | undefined> {
@@ -278,6 +302,20 @@ async function runOfficeToolForTest(sessionRef: SessionRef, toolName: string, pa
   }).find((entry) => entry.name === toolName);
   if (!tool) throw new Error(`Unknown office runtime tool: ${toolName}`);
   return tool.execute(`test-${toolName}`, params, undefined, undefined, createTestExtensionContext(sessionRef));
+}
+
+async function runLibraryRuntimeToolForTest(toolName: string, params: unknown): Promise<AgentToolResult<unknown>> {
+  const tool = createLibraryRuntimeTools(() => libraryStore.read(), libraryIndex).find((entry) => entry.name === toolName);
+  if (!tool) {
+    throw new Error(`Unknown library runtime tool: ${toolName}`);
+  }
+  return tool.execute(`test-${toolName}`, params, undefined, undefined, {} as ExtensionContext);
+}
+
+function startLibraryRebuild(roots: readonly string[]): void {
+  void libraryIndex.rebuild(roots).catch((error) => {
+    console.error("[library-index] rebuild failed:", error);
+  });
 }
 
 function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
@@ -1194,6 +1232,12 @@ app.whenReady().then(async () => {
   );
   const secureAuthStorage = AuthStorage.fromStorage(secureAuthStorageBackend);
   const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
+  libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
+  libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"));
+  const initialLibrarySettings = libraryStore.read();
+  if (initialLibrarySettings.enabled && initialLibrarySettings.roots.length > 0) {
+    startLibraryRebuild(initialLibrarySettings.roots);
+  }
   // One-time migration: absorb any plaintext API keys a prior pi CLI run left
   // in auth.json (and custom-endpoint keys a pre-encryption build left in
   // models.json) into the encrypted store and scrub the plaintext. Safe no-op
@@ -1207,6 +1251,7 @@ app.whenReady().then(async () => {
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(() => webToolsStore.read()),
+      createLibraryRuntimeExtension(() => libraryStore.read(), libraryIndex),
       // Same lazy read, and scoped per call: extensions are built once per
       // workspace, so the calling session decides what is reachable.
       createDocumentRuntimeExtension(documentAccessScopeFor),
@@ -1237,6 +1282,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Document reading",
         description: "Read attached PDF, Word, Excel and plain-text files as text",
+      },
+      {
+        displayName: "Local library",
+        description: "Search locally indexed standards and reference documents before using public sources",
       },
       {
         displayName: "Office documents",
@@ -1290,6 +1339,8 @@ app.whenReady().then(async () => {
           runReadDocumentToolForTest(sessionRef, params),
         runOfficeTool: (sessionRef: SessionRef, toolName: string, params: unknown) =>
           runOfficeToolForTest(sessionRef, toolName, params),
+        runLibraryRuntimeTool: (toolName: string, params: unknown) =>
+          runLibraryRuntimeToolForTest(toolName, params),
         setDeferredThreadTitleMode: () => {
           generateThreadTitleOverride = () =>
             new Promise<string | null>((resolve, reject) => {
@@ -1503,6 +1554,34 @@ app.whenReady().then(async () => {
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
+  });
+  ipcMain.handle(desktopIpc.getLibrarySettings, () => libraryStore.read());
+  ipcMain.handle(desktopIpc.setLibrarySettings, (_event, update: unknown) => {
+    const current = libraryStore.read();
+    const next = libraryStore.write(normalizeLibrarySettings(update));
+    const rootsChanged = current.roots.join("\0") !== next.roots.join("\0");
+    if (next.enabled) {
+      startLibraryRebuild(next.roots);
+    } else if (rootsChanged) {
+      startLibraryRebuild([]);
+    }
+    return next;
+  });
+  ipcMain.handle(desktopIpc.pickLibraryRoot, async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender) ?? mainWindow;
+    const options: OpenDialogOptions = {
+      title: tGlobal("library.pickFolderTitle"),
+      properties: ["openDirectory"],
+    };
+    const result = window
+      ? await dialog.showOpenDialog(window, options)
+      : await dialog.showOpenDialog(options);
+    return result.canceled ? undefined : result.filePaths[0];
+  });
+  ipcMain.handle(desktopIpc.getLibraryIndexStatus, (): LibraryIndexStatusView => libraryIndex.status());
+  ipcMain.handle(desktopIpc.rebuildLibraryIndex, (): LibraryIndexStatusView => {
+    startLibraryRebuild(libraryStore.read().roots);
+    return libraryIndex.status();
   });
   ipcMain.handle(desktopIpc.setScopedModelPatterns, (event, workspaceId: string, patterns: readonly string[]) =>
     runWindowScopedForEvent(event, () => store.setScopedModelPatterns(workspaceId, patterns)),

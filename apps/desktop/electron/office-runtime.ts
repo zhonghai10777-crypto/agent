@@ -107,6 +107,8 @@ export interface OfficeWriteResult {
 export interface OfficeAccessScope {
   readonly workspaceRoots: readonly string[];
   readonly allowedFiles: readonly string[];
+  /** Paths under these roots stay immutable even if also covered by a workspace or attachment grant. */
+  readonly readOnlyRoots?: readonly string[];
 }
 
 export interface OfficeRuntimeOptions {
@@ -138,6 +140,9 @@ export const officeToolNames = [...WORD_TOOLS, ...EXCEL_TOOLS] as const;
 
 export function isOfficePathInScope(target: string, scope: OfficeAccessScope): boolean {
   const resolved = path.resolve(target);
+  if (scope.readOnlyRoots?.some((root) => isPathAtOrBelow(resolved, root))) {
+    return false;
+  }
   if (scope.allowedFiles.some((file) => path.resolve(file) === resolved)) {
     return true;
   }
@@ -145,6 +150,11 @@ export function isOfficePathInScope(target: string, scope: OfficeAccessScope): b
     const relative = path.relative(path.resolve(root), resolved);
     return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
   });
+}
+
+function isPathAtOrBelow(target: string, root: string): boolean {
+  const relative = path.relative(path.resolve(root), target);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
 }
 
 export function nextEditedPath(sourcePath: string): string {
@@ -791,7 +801,14 @@ async function validateSourcePath(sourcePath: string, format: OfficeFormat, scop
   const real = await realpath(sourcePath);
   const realRoots = await Promise.all(scope.workspaceRoots.map((root) => realpath(root).catch(() => path.resolve(root))));
   const realAllowedFiles = await Promise.all(scope.allowedFiles.map((file) => realpath(file).catch(() => path.resolve(file))));
-  if (!isOfficePathInScope(real, { workspaceRoots: realRoots, allowedFiles: realAllowedFiles })) {
+  const realReadOnlyRoots = await Promise.all(
+    (scope.readOnlyRoots ?? []).map((root) => realpath(root).catch(() => path.resolve(root))),
+  );
+  if (!isOfficePathInScope(real, {
+    workspaceRoots: realRoots,
+    allowedFiles: realAllowedFiles,
+    readOnlyRoots: realReadOnlyRoots,
+  })) {
     throw new Error("源文件真实路径不在当前工作区或会话附件范围内。");
   }
 }

@@ -7,6 +7,8 @@ import {
   type CustomProviderProbeResult,
   type ChangedFilesResult,
   type DesktopNotificationPermissionStatus,
+  type LibraryIndexStatusView,
+  type LibrarySettingsView,
   type WorkspaceFilePreview,
   type PiDesktopCommand,
   type TerminalDataEvent,
@@ -216,6 +218,16 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.setWebToolsSettings, settings) as Promise<WebToolsSettingsView>,
   testWebSearch: (query: string) =>
     ipcRenderer.invoke(desktopIpc.testWebSearch, query) as Promise<WebSearchTestResult>,
+  getLibrarySettings: () =>
+    ipcRenderer.invoke(desktopIpc.getLibrarySettings) as Promise<LibrarySettingsView>,
+  setLibrarySettings: (settings: LibrarySettingsView) =>
+    ipcRenderer.invoke(desktopIpc.setLibrarySettings, settings) as Promise<LibrarySettingsView>,
+  pickLibraryRoot: () =>
+    ipcRenderer.invoke(desktopIpc.pickLibraryRoot) as Promise<string | undefined>,
+  getLibraryIndexStatus: () =>
+    ipcRenderer.invoke(desktopIpc.getLibraryIndexStatus) as Promise<LibraryIndexStatusView>,
+  rebuildLibraryIndex: () =>
+    ipcRenderer.invoke(desktopIpc.rebuildLibraryIndex) as Promise<LibraryIndexStatusView>,
   setEnableSkillCommands: (workspaceId: string, enabled: boolean) =>
     ipcRenderer.invoke(desktopIpc.setEnableSkillCommands, workspaceId, enabled) as Promise<DesktopAppState>,
   setScopedModelPatterns: (workspaceId: string, patterns: readonly string[]) =>

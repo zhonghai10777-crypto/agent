@@ -18,6 +18,7 @@ const settingsNav = [
   { id: "general", labelKey: "settings.section.general" },
   { id: "providers", labelKey: "settings.section.providers" },
   { id: "models", labelKey: "settings.section.models" },
+  { id: "library", labelKey: "settings.section.library" },
   { id: "web", labelKey: "settings.section.web" },
   { id: "notifications", labelKey: "settings.section.notifications" },
 ] as const;

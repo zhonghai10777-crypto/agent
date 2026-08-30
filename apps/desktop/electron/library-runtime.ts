@@ -1,0 +1,300 @@
+import type {
+  AgentToolResult,
+  ExtensionAPI,
+  ExtensionFactory,
+  ToolDefinition,
+} from "@earendil-works/pi-coding-agent";
+import { numberParam, stringParam, toolErrorMessage } from "./tool-params";
+import type { LibraryDocument, LibraryIndexReader, LibraryIndexStatus } from "./library-index";
+import type { LibrarySettings } from "./library-store";
+
+export const librarySearchToolName = "library_search";
+export const libraryListToolName = "library_list";
+
+export interface LibrarySearchMatch {
+  readonly path: string;
+  readonly title: string;
+  readonly part: number;
+  readonly unit: "page" | "section";
+  readonly snippet: string;
+  readonly matchedTerms: number;
+  readonly frequency: number;
+}
+
+export interface LibrarySearchToolDetails {
+  readonly action: "library_search";
+  readonly query: string;
+  readonly results: readonly LibrarySearchMatch[];
+  readonly error?: string;
+}
+
+export interface LibraryListToolDetails {
+  readonly action: "library_list";
+  readonly filter: string;
+  readonly documents: readonly LibraryListEntry[];
+  readonly error?: string;
+}
+
+export interface LibraryListEntry {
+  readonly path: string;
+  readonly title: string;
+  readonly unit: "page" | "section";
+  readonly parts: number;
+}
+
+type LibraryToolDetails = LibrarySearchToolDetails | LibraryListToolDetails;
+export type LibrarySettingsProvider = () => LibrarySettings;
+
+export function describeLibraryMisconfiguration(settings: LibrarySettings): string | undefined {
+  if (!settings.enabled) {
+    return "The local library is turned off. Enable it under Settings → Local library.";
+  }
+  if (settings.roots.length === 0) {
+    return "No local library folders are configured. Add one under Settings → Local library.";
+  }
+  return undefined;
+}
+
+export function searchLibraryDocuments(
+  documents: readonly LibraryDocument[],
+  query: string,
+  limit = 8,
+): readonly LibrarySearchMatch[] {
+  const terms = [...new Set(query.trim().toLowerCase().split(/\s+/).filter(Boolean))];
+  if (terms.length === 0) {
+    return [];
+  }
+
+  const matches: LibrarySearchMatch[] = [];
+  for (const document of documents) {
+    for (const [partIndex, part] of document.parts.entries()) {
+      const normalized = part.toLowerCase();
+      if (!terms.every((term) => normalized.includes(term))) {
+        continue;
+      }
+      const frequency = terms.reduce((total, term) => total + countOccurrences(normalized, term), 0);
+      const firstTerm = terms.reduce((best, term) =>
+        normalized.indexOf(term) < normalized.indexOf(best) ? term : best,
+      );
+      const firstMatch = normalized.indexOf(firstTerm);
+      matches.push({
+        path: document.path,
+        title: document.title,
+        part: partIndex + 1,
+        unit: document.unit,
+        snippet: snippetAround(part, firstMatch, firstTerm.length, 200),
+        matchedTerms: terms.length,
+        frequency,
+      });
+    }
+  }
+
+  return matches
+    .sort(
+      (left, right) =>
+        right.matchedTerms - left.matchedTerms ||
+        right.frequency - left.frequency ||
+        left.title.localeCompare(right.title) ||
+        left.part - right.part,
+    )
+    .slice(0, Math.min(Math.max(Math.trunc(limit), 1), 20));
+}
+
+function createLibrarySearchTool(
+  getSettings: LibrarySettingsProvider,
+  index: LibraryIndexReader,
+): ToolDefinition<any, LibraryToolDetails> {
+  return {
+    name: librarySearchToolName,
+    label: "Search the local library",
+    description:
+      "Search locally indexed standards, procedures, settings, and reference documents by exact keywords. Returns matching snippets, page or section numbers, and full paths for read_document.",
+    promptSnippet: "library_search: search the user's local standards and reference library.",
+    promptGuidelines: libraryPromptGuidelines,
+    parameters: {
+      type: "object",
+      properties: {
+        query: {
+          type: "string",
+          description: "Exact keywords to find. Multiple whitespace-separated terms use AND matching within one page or section.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum results to return. Defaults to 8 and is capped at 20.",
+        },
+      },
+      required: ["query"],
+    },
+    async execute(_toolCallId, params): Promise<AgentToolResult<LibraryToolDetails>> {
+      const query = stringParam(params, "query");
+      if (!query) {
+        return errorResult({ action: "library_search", query: "", results: [], error: "library_search requires a query." });
+      }
+      const settings = getSettings();
+      const configurationError = describeLibraryMisconfiguration(settings);
+      if (configurationError) {
+        return errorResult({ action: "library_search", query, results: [], error: configurationError });
+      }
+
+      const readinessError = await refreshReadyIndex(index, settings.roots);
+      if (readinessError) {
+        return errorResult({ action: "library_search", query, results: [], error: readinessError });
+      }
+
+      const results = searchLibraryDocuments(index.documents(), query, numberParam(params, "limit") ?? 8);
+      if (results.length === 0) {
+        return {
+          content: [{ type: "text", text: `No local library results found for "${query}". Try a synonym or a more exact standard number.` }],
+          details: { action: "library_search", query, results },
+        };
+      }
+
+      const text = results
+        .map((result, resultIndex) => {
+          const citation = result.unit === "page" ? `第 ${result.part} 页` : `第 ${result.part} 节`;
+          return `${resultIndex + 1}. 《${result.title}》 ${citation}\nPath: ${result.path}\n${result.snippet}`;
+        })
+        .join("\n\n");
+      return {
+        content: [{ type: "text", text }],
+        details: { action: "library_search", query, results },
+      };
+    },
+  };
+}
+
+function createLibraryListTool(
+  getSettings: LibrarySettingsProvider,
+  index: LibraryIndexReader,
+): ToolDefinition<any, LibraryToolDetails> {
+  return {
+    name: libraryListToolName,
+    label: "List the local library",
+    description: "List documents in the user's local standards and reference library, optionally filtered by file name.",
+    promptSnippet: "library_list: list documents available in the user's local library.",
+    promptGuidelines: libraryPromptGuidelines,
+    parameters: {
+      type: "object",
+      properties: {
+        filter: {
+          type: "string",
+          description: "Optional case-insensitive file-name filter.",
+        },
+      },
+    },
+    async execute(_toolCallId, params): Promise<AgentToolResult<LibraryToolDetails>> {
+      const filter = stringParam(params, "filter") ?? "";
+      const settings = getSettings();
+      const configurationError = describeLibraryMisconfiguration(settings);
+      if (configurationError) {
+        return errorResult({ action: "library_list", filter, documents: [], error: configurationError });
+      }
+
+      const readinessError = await refreshReadyIndex(index, settings.roots);
+      if (readinessError) {
+        return errorResult({ action: "library_list", filter, documents: [], error: readinessError });
+      }
+
+      const normalizedFilter = filter.toLowerCase();
+      const documents = index
+        .documents()
+        .filter((document) => !normalizedFilter || document.title.toLowerCase().includes(normalizedFilter))
+        .map((document) => ({
+          path: document.path,
+          title: document.title,
+          unit: document.unit,
+          parts: document.parts.length,
+        }));
+      const text = documents.length
+        ? documents
+            .map((document, documentIndex) => {
+              const unit = document.unit === "page" ? "page(s)" : "section(s)";
+              return `${documentIndex + 1}. 《${document.title}》 — ${document.parts} ${unit}\nPath: ${document.path}`;
+            })
+            .join("\n\n")
+        : filter
+          ? `No local library documents match "${filter}".`
+          : "The local library contains no readable documents.";
+      return {
+        content: [{ type: "text", text }],
+        details: { action: "library_list", filter, documents },
+      };
+    },
+  };
+}
+
+const libraryPromptGuidelines: string[] = [
+  "For questions about procedures, standards, protection settings, equipment parameters, or plant rules, search the local library before considering web_search; site documents take precedence over public information.",
+  "If the first search misses, retry with synonyms or exact standard numbers (for example: 厂用电切换 / 厂用电源切换 / 厂用电源快切). Do not give up after one query.",
+  "After a match, call read_document with the returned full path and part number before answering. Never answer from the search snippet alone.",
+  "Cite the source as 《file name》 page N (or section N for non-paginated files).",
+  "If the local library has no relevant content, say so explicitly. Never invent a clause from training memory.",
+];
+
+export function createLibraryRuntimeTools(
+  getSettings: LibrarySettingsProvider,
+  index: LibraryIndexReader,
+): readonly ToolDefinition<any, LibraryToolDetails>[] {
+  return [createLibrarySearchTool(getSettings, index), createLibraryListTool(getSettings, index)];
+}
+
+export function createLibraryRuntimeExtension(
+  getSettings: LibrarySettingsProvider,
+  index: LibraryIndexReader,
+): ExtensionFactory {
+  return (pi: ExtensionAPI) => {
+    for (const tool of createLibraryRuntimeTools(getSettings, index)) {
+      pi.registerTool(tool);
+    }
+  };
+}
+
+async function refreshReadyIndex(index: LibraryIndexReader, roots: readonly string[]): Promise<string | undefined> {
+  const status = index.status();
+  if (status.state === "idle") {
+    void index.rebuild(roots).catch((error) => {
+      console.error("[library-runtime] background index build failed:", error);
+    });
+    return "The local library is not ready yet. Its documents are being prepared; try again shortly.";
+  }
+  if (status.state === "indexing") {
+    return indexingMessage(status);
+  }
+  try {
+    await index.rebuild(roots);
+    return undefined;
+  } catch (error) {
+    return `The local library could not be refreshed (${toolErrorMessage(error)}).`;
+  }
+}
+
+function indexingMessage(status: LibraryIndexStatus): string {
+  return `The local library is still being prepared (${status.done}/${status.total}). Try again shortly.`;
+}
+
+function countOccurrences(text: string, term: string): number {
+  let count = 0;
+  let offset = 0;
+  while (offset < text.length) {
+    const found = text.indexOf(term, offset);
+    if (found < 0) {
+      return count;
+    }
+    count += 1;
+    offset = found + Math.max(term.length, 1);
+  }
+  return count;
+}
+
+function snippetAround(text: string, matchIndex: number, matchLength: number, radius: number): string {
+  const start = Math.max(0, matchIndex - radius);
+  const end = Math.min(text.length, matchIndex + matchLength + radius);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
+}
+
+function errorResult(details: LibraryToolDetails): AgentToolResult<LibraryToolDetails> {
+  return {
+    content: [{ type: "text", text: details.error ?? "The local library request failed." }],
+    details,
+  };
+}

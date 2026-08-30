@@ -8,6 +8,7 @@ import { SettingsModelsSection } from "./settings-models-section";
 import { SettingsNotificationsSection } from "./settings-notifications-section";
 import { SettingsProvidersSection } from "./settings-providers-section";
 import { SettingsWebSection } from "./settings-web-section";
+import { SettingsLibrarySection } from "./settings-library-section";
 import { type SettingsSection, sectionTitle, sectionDescription } from "./settings-utils";
 
 export type { SettingsSection } from "./settings-utils";
@@ -95,6 +96,7 @@ export function SettingsView({
     // Web access is an app-wide setting, so it stays reachable before any
     // folder has been opened.
     section !== "web" &&
+    section !== "library" &&
     section !== "appearance"
   ) {
     return (
@@ -171,6 +173,8 @@ export function SettingsView({
           ) : null}
 
           {section === "web" ? <SettingsWebSection /> : null}
+
+          {section === "library" ? <SettingsLibrarySection /> : null}
 
           {section === "notifications" ? (
             <SettingsNotificationsSection
