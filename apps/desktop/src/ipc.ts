@@ -85,6 +85,36 @@ export type WebSearchTestResult =
   | { readonly ok: true; readonly resultCount: number; readonly topResultTitle?: string }
   | { readonly ok: false; readonly error: string };
 
+export interface LibrarySettingsView {
+  readonly enabled: boolean;
+  readonly roots: readonly string[];
+}
+
+export type LibrarySkipReasonView =
+  | "scanned-pdf"
+  | "password-protected"
+  | "corrupt"
+  | "too-large"
+  | "empty"
+  | "unsupported"
+  | "unavailable"
+  | "capacity";
+
+export interface LibrarySkippedFileView {
+  readonly path: string;
+  readonly reason: string;
+  readonly reasonCode: LibrarySkipReasonView;
+}
+
+export interface LibraryIndexStatusView {
+  readonly state: "idle" | "indexing" | "ready";
+  readonly total: number;
+  readonly done: number;
+  readonly documents: number;
+  readonly parts: number;
+  readonly skipped: readonly LibrarySkippedFileView[];
+}
+
 export const desktopIpc = {
   stateRequest: "pi-gui:state-request",
   stateChanged: "pi-gui:state-changed",
@@ -139,6 +169,11 @@ export const desktopIpc = {
   getWebToolsSettings: "pi-gui:get-web-tools-settings",
   setWebToolsSettings: "pi-gui:set-web-tools-settings",
   testWebSearch: "pi-gui:test-web-search",
+  getLibrarySettings: "pi-gui:get-library-settings",
+  setLibrarySettings: "pi-gui:set-library-settings",
+  pickLibraryRoot: "pi-gui:pick-library-root",
+  getLibraryIndexStatus: "pi-gui:get-library-index-status",
+  rebuildLibraryIndex: "pi-gui:rebuild-library-index",
   setEnableSkillCommands: "pi-gui:set-enable-skill-commands",
   setScopedModelPatterns: "pi-gui:set-scoped-model-patterns",
   setSkillEnabled: "pi-gui:set-skill-enabled",
@@ -396,6 +431,11 @@ export interface PiDesktopApi {
   getWebToolsSettings(): Promise<WebToolsSettingsView>;
   setWebToolsSettings(settings: WebToolsSettingsUpdate): Promise<WebToolsSettingsView>;
   testWebSearch(query: string): Promise<WebSearchTestResult>;
+  getLibrarySettings(): Promise<LibrarySettingsView>;
+  setLibrarySettings(settings: LibrarySettingsView): Promise<LibrarySettingsView>;
+  pickLibraryRoot(): Promise<string | undefined>;
+  getLibraryIndexStatus(): Promise<LibraryIndexStatusView>;
+  rebuildLibraryIndex(): Promise<LibraryIndexStatusView>;
   setEnableSkillCommands(workspaceId: string, enabled: boolean): Promise<DesktopAppState>;
   setScopedModelPatterns(workspaceId: string, patterns: readonly string[]): Promise<DesktopAppState>;
   setSkillEnabled(workspaceId: string, filePath: string, enabled: boolean): Promise<DesktopAppState>;

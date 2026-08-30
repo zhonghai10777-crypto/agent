@@ -2129,6 +2129,49 @@
   font-size: 12px;
 }
 
+.library-list,
+.library-skipped {
+  display: grid;
+  gap: 10px;
+  padding: 14px 18px;
+}
+
+.library-empty {
+  padding: 14px 18px;
+  color: var(--muted-soft);
+  font-size: 13px;
+}
+
+.library-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.library-action svg,
+.library-remove svg {
+  width: 16px;
+  height: 16px;
+}
+
+.library-remove {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+}
+
+.library-skipped__heading {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 590;
+}
+
+.library-skipped__reason {
+  color: var(--warning, #d97706);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .settings-option {
   padding: 11px 12px;
   border-radius: var(--radius-xl);

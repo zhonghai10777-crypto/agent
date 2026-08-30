@@ -31,6 +31,16 @@ test("office paths only include workspace roots or explicit attachments", async 
   expect(isOfficePathInScope(join(root, "report.docx"), { workspaceRoots: [root], allowedFiles: [] })).toBe(true);
   expect(isOfficePathInScope(join(root, "..", "report.docx"), { workspaceRoots: [root], allowedFiles: [] })).toBe(false);
   expect(isOfficePathInScope("/tmp/shared.xlsx", { workspaceRoots: [root], allowedFiles: ["/tmp/shared.xlsx"] })).toBe(true);
+
+  const libraryRoot = join(root, "library");
+  const libraryFile = join(libraryRoot, "standard.docx");
+  expect(
+    isOfficePathInScope(libraryFile, {
+      workspaceRoots: [root],
+      allowedFiles: [libraryFile],
+      readOnlyRoots: [libraryRoot],
+    }),
+  ).toBe(false);
 });
 
 test("office writes require confirmation, reject plan mode, and never overwrite a conflicting target", async () => {
