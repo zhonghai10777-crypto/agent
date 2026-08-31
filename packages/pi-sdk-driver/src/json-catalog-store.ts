@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rename } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 import { writeJsonFileAtomic } from "./atomic-write.js";
@@ -258,9 +258,30 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
       return parseState(raw, this.filePath);
     } catch (error) {
       if (isMissingFileError(error)) {
-        return createEmptyState();
+        return (await this.loadBackupOrEmpty(false)) ?? createEmptyState();
+      }
+      const recovered = await this.loadBackupOrEmpty(true);
+      if (recovered) {
+        return recovered;
       }
       throw error;
+    }
+  }
+
+  private async loadBackupOrEmpty(primaryCorrupt: boolean): Promise<CatalogFileState | undefined> {
+    const backupPath = `${this.filePath}.bak`;
+    try {
+      const raw = await readFile(backupPath, "utf8");
+      const state = parseState(raw, backupPath);
+      if (primaryCorrupt) {
+        await quarantineCorruptCatalog(this.filePath);
+      }
+      return state;
+    } catch (error) {
+      if (!isMissingFileError(error) && primaryCorrupt) {
+        await quarantineCorruptCatalog(this.filePath);
+      }
+      return primaryCorrupt ? undefined : createEmptyState();
     }
   }
 
@@ -272,7 +293,7 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
         this.cacheState(nextState, this.coordinator.generation);
         return;
       }
-      await writeJsonFileAtomic(this.filePath, nextState);
+      await writeJsonFileAtomic(this.filePath, nextState, { backup: true, retries: 6 });
       this.coordinator.generation += 1;
       this.cacheState(nextState, this.coordinator.generation);
     });
@@ -333,13 +354,42 @@ function parseState(raw: string, filePath: string): CatalogFileState {
     throw new Error(`Unsupported catalog file format in ${filePath}.`);
   }
 
+  const workspaces = Array.isArray(parsed.workspaces) ? parsed.workspaces.filter(isWorkspaceEntry).map(cloneWorkspaceEntry) : [];
+  const sessions = Array.isArray(parsed.sessions) ? parsed.sessions.filter(isSessionEntry).map(cloneSessionEntry) : [];
+  const worktrees = Array.isArray(parsed.worktrees) ? parsed.worktrees.filter(isWorktreeEntry).map(cloneWorktreeEntry) : [];
   return {
     version: 2,
-    workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces.map(cloneWorkspaceEntry) : [],
-    sessions: Array.isArray(parsed.sessions) ? parsed.sessions.map(cloneSessionEntry) : [],
-    worktrees: Array.isArray(parsed.worktrees) ? parsed.worktrees.map(cloneWorktreeEntry) : [],
+    workspaces,
+    sessions,
+    worktrees,
     sessionFiles: isRecord(parsed.sessionFiles) ? { ...parsed.sessionFiles } : {},
   };
+}
+
+function isWorkspaceEntry(value: unknown): value is WorkspaceCatalogEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<WorkspaceCatalogEntry>;
+  return typeof entry.workspaceId === "string" && typeof entry.path === "string" && typeof entry.displayName === "string" && typeof entry.lastOpenedAt === "string" && typeof entry.sortOrder === "number";
+}
+
+function isSessionEntry(value: unknown): value is SessionCatalogEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<SessionCatalogEntry>;
+  return !!entry.sessionRef && typeof entry.sessionRef === "object" && typeof entry.workspaceId === "string" && typeof entry.title === "string" && typeof entry.updatedAt === "string" && (entry.status === "idle" || entry.status === "running" || entry.status === "failed");
+}
+
+function isWorktreeEntry(value: unknown): value is WorktreeCatalogEntry {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<WorktreeCatalogEntry>;
+  return typeof entry.worktreeId === "string" && typeof entry.workspaceId === "string" && typeof entry.path === "string" && typeof entry.displayName === "string" && (entry.kind === "primary" || entry.kind === "linked") && (entry.status === "ready" || entry.status === "missing" || entry.status === "error") && typeof entry.createdAt === "string" && typeof entry.updatedAt === "string";
+}
+
+async function quarantineCorruptCatalog(filePath: string): Promise<void> {
+  try {
+    await rename(filePath, `${filePath}.corrupt-${Date.now()}`);
+  } catch {
+    // A scanner may still hold the file. Recovery from the backup remains safe.
+  }
 }
 
 function compareWorkspaceEntries(left: WorkspaceCatalogEntry, right: WorkspaceCatalogEntry): number {
