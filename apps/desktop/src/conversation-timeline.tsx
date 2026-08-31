@@ -188,7 +188,10 @@ export function ConversationTimeline({
       const paneRect = pane.getBoundingClientRect();
       const targetRect = target.getBoundingClientRect();
       const nextTop = Math.max(0, pane.scrollTop + (targetRect.top - paneRect.top) - SCROLL_TO_PADDING_PX);
-      pane.scrollTo({ top: nextTop, behavior: "smooth" });
+      // Jumping from a virtualized region must be synchronous. A smooth
+      // animation can be interrupted by the virtualization/layout pass and
+      // leave the pane at its previous (often bottom) position.
+      pane.scrollTo({ top: nextTop, behavior: "auto" });
       return true;
     };
 
@@ -207,9 +210,13 @@ export function ConversationTimeline({
       offset += ROW_GAP_PX;
     }
     pane.scrollTop = Math.max(0, offset - SCROLL_TO_PADDING_PX);
-    window.requestAnimationFrame(() => {
-      scrollToExisting();
-    });
+    const fineTune = (remainingFrames: number) => {
+      if (scrollToExisting() || remainingFrames <= 0) {
+        return;
+      }
+      window.requestAnimationFrame(() => fineTune(remainingFrames - 1));
+    };
+    window.requestAnimationFrame(() => fineTune(8));
   }, [displayItems, onTimelineScrollIntent, timelinePaneRef]);
 
   useLayoutEffect(() => {

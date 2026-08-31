@@ -134,7 +134,10 @@ export function useTimelineScroll({
       protectedTimelineScrollSessionKeysRef.current.delete(sessionKey);
       return;
     }
-    const pinned = isNearBottom(pane);
+    // During a session switch the pane may already contain the next session's
+    // (or an empty) transcript when cleanup runs. Use the tracked pin state
+    // from the session being left instead of that transient geometry.
+    const pinned = pinnedToBottomRef.current && isNearBottom(pane);
     lastTimelineScrollTopBySessionRef.current.set(sessionKey, pane.scrollTop);
     lastTimelinePinnedBySessionRef.current.set(sessionKey, pinned);
     if (pinned) {

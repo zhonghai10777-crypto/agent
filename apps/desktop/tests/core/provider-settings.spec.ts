@@ -83,13 +83,12 @@ test("opening the first workspace from the empty state hydrates provider and mod
 
   try {
     const window = await harness.firstWindow();
-    const emptyState = window.getByTestId("empty-state");
-    await expect(emptyState).toBeVisible();
-
     await stubNextOpenDialog(harness, [workspacePath]);
-    await emptyState.getByRole("button", { name: "Open first folder" }).click();
+    // The app now always exposes the personal workspace, so the folder picker
+    // is opened from the sidebar action instead of a global empty state.
+    await window.getByLabel("Open folder", { exact: true }).click();
 
-    await expect(emptyState).toHaveCount(0);
+    await expect(window.getByTestId("empty-state")).toHaveCount(0);
     await expect(window.getByTestId("workspace-list")).toContainText("provider-settings-first-workspace");
     await expect(window.getByTestId("new-thread-composer")).toBeVisible();
 

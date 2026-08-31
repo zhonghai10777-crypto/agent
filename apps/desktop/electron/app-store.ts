@@ -1368,7 +1368,7 @@ export class DesktopAppStore implements AppStoreInternals {
       // Startup GC of leaked pi/* worktrees and branches; self-contained and
       // error-swallowing, so fire-and-forget without blocking initialization.
       if (this.activeRuntimeMode === "agent") {
-        void worktree.reconcileWorktrees(this);
+        await worktree.reconcileWorktrees(this);
       }
       const restoredSessionRef = this.selectedSessionRef();
       if (restoredSessionRef && persisted.selectedWorkspaceId && persisted.selectedSessionId) {

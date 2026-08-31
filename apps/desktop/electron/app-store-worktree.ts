@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
@@ -402,6 +402,12 @@ export async function reconcileWorktrees(store: AppStoreInternals): Promise<void
       }
     }
     for (const workspace of store.state.workspaces) {
+      // A driver workspace entry can survive independently of the app catalog.
+      // Do not let that stale derived entry protect an orphan under this
+      // profile's managed worktree root from startup collection.
+      if (isPathWithinRoot(store.worktreeRoot, workspace.path)) {
+        continue;
+      }
       referencedPaths.add(await canonicalWorktreePath(workspace.path));
     }
     await store.worktreeManager.pruneOrphanedWorktrees({
@@ -411,6 +417,12 @@ export async function reconcileWorktrees(store: AppStoreInternals): Promise<void
   } catch (error) {
     console.warn(`pi-gui: worktree reconcile skipped: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
+  const root = resolve(rootPath);
+  const candidate = resolve(candidatePath);
+  return candidate !== root && candidate.startsWith(`${root}${sep}`);
 }
 
 async function canonicalWorktreePath(pathValue: string): Promise<string> {

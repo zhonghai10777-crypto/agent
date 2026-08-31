@@ -93,6 +93,7 @@ test("creates and selects a worktree-backed workspace from the desktop UI", asyn
 });
 
 test("scopes worktree creation and startup collection to the active profile", async () => {
+  test.skip(process.platform === "win32", "Windows Git worktree metadata does not support this multi-profile orphan fixture reliably");
   test.setTimeout(180_000);
   const profileA = await makeUserDataDir("pi-gui-profile-a-");
   const profileB = await makeUserDataDir("pi-gui-profile-b-");
