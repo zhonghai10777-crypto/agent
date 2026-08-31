@@ -40,6 +40,7 @@ export function readXlsx(buffer: Uint8Array): XlsxWorkbook {
   const relationships = readRelationships(textPart(files, "xl/_rels/workbook.xml.rels") ?? "");
   const sharedStrings = readSharedStrings(textPart(files, "xl/sharedStrings.xml") ?? "");
   const dateStyles = readDateStyles(textPart(files, "xl/styles.xml") ?? "");
+  const uses1904DateSystem = /<workbookPr\b[^>]*\bdate1904="(?:1|true)"/i.test(workbookXml);
 
   const sheets: XlsxSheet[] = [];
   for (const [index, element] of [...workbookXml.matchAll(/<sheet\b[^>]*\/?>/g)].entries()) {
@@ -53,7 +54,7 @@ export function readXlsx(buffer: Uint8Array): XlsxWorkbook {
     if (sheetXml === undefined) {
       continue;
     }
-    sheets.push({ name, rows: readSheetRows(sheetXml, sharedStrings, dateStyles) });
+    sheets.push({ name, rows: readSheetRows(sheetXml, sharedStrings, dateStyles, uses1904DateSystem) });
   }
 
   if (sheets.length === 0) {
@@ -66,6 +67,7 @@ function readSheetRows(
   sheetXml: string,
   sharedStrings: readonly string[],
   dateStyles: ReadonlySet<number>,
+  uses1904DateSystem: boolean,
 ): readonly (readonly string[])[] {
   const rows: string[][] = [];
   for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>|<row\b[^>]*\/>/g)) {
@@ -81,7 +83,7 @@ function readSheetRows(
       while (cells.length < column) {
         cells.push("");
       }
-      cells[column] = cellValue(attributes, content, sharedStrings, dateStyles);
+      cells[column] = cellValue(attributes, content, sharedStrings, dateStyles, uses1904DateSystem);
     }
     while (cells.length > 0 && cells[cells.length - 1] === "") {
       cells.pop();
@@ -98,6 +100,7 @@ function cellValue(
   content: string,
   sharedStrings: readonly string[],
   dateStyles: ReadonlySet<number>,
+  uses1904DateSystem: boolean,
 ): string {
   const tag = `<c ${attributes}>`;
   const type = attribute(tag, "t");
@@ -123,7 +126,7 @@ function cellValue(
 
   const styleIndex = Number.parseInt(attribute(tag, "s") ?? "", 10);
   if (Number.isInteger(styleIndex) && dateStyles.has(styleIndex)) {
-    const formatted = excelSerialToDate(Number(raw));
+    const formatted = excelSerialToDate(Number(raw), uses1904DateSystem);
     if (formatted) {
       return formatted;
     }
@@ -137,11 +140,11 @@ function cellValue(
  * reach the model as five-digit numbers it will happily reason about as
  * quantities.
  */
-function excelSerialToDate(serial: number): string | undefined {
+function excelSerialToDate(serial: number, uses1904DateSystem: boolean): string | undefined {
   if (!Number.isFinite(serial) || serial <= 0) {
     return undefined;
   }
-  const epoch = Date.UTC(1899, 11, 30);
+  const epoch = uses1904DateSystem ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30);
   const date = new Date(epoch + Math.round(serial * 86_400_000));
   if (Number.isNaN(date.getTime())) {
     return undefined;

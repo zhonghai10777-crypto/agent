@@ -224,6 +224,16 @@ export interface SelectedTranscriptRecord {
   readonly schemaInfo?: SessionSchemaInfo;
 }
 
+export interface AssistantDeltaEvent {
+  readonly type: "assistant-delta";
+  readonly workspaceId: string;
+  readonly sessionId: string;
+  readonly messageId: string;
+  readonly sequence: number;
+  readonly delta: string;
+  readonly createdAt: string;
+}
+
 export interface WorktreeRecord {
   readonly id: string;
   readonly rootWorkspaceId: string;

@@ -61,3 +61,27 @@ test("LibraryIndex degrades gracefully when a configured directory is unavailabl
   expect(index.status()).toMatchObject({ state: "ready", total: 0, documents: 0 });
   expect(index.status().skipped).toMatchObject([{ path: missing, reasonCode: "unavailable" }]);
 });
+
+test("LibraryIndex enforces a configurable character budget and clears memory plus disk", async ({}, testInfo) => {
+  const root = testInfo.outputPath("budget-root");
+  const indexDir = testInfo.outputPath("budget-index");
+  const indexPath = join(indexDir, "index.json");
+  await mkdir(root, { recursive: true });
+  await writeFile(join(root, "a.txt"), "123456", "utf8");
+  await writeFile(join(root, "b.txt"), "abcdef", "utf8");
+
+  const index = new LibraryIndex(indexDir, {
+    maxIndexedChars: 10,
+    getParts: async (filePath) => ({ unit: "section", parts: [await readFile(filePath, "utf8")] }),
+  });
+  await index.rebuild([root]);
+
+  expect(index.documents()).toHaveLength(1);
+  expect(index.status().skipped).toContainEqual(expect.objectContaining({ reasonCode: "capacity" }));
+  await expect(readFile(indexPath, "utf8")).resolves.toContain('"version":1');
+
+  await index.clear({ deleteDisk: true });
+  expect(index.documents()).toEqual([]);
+  expect(index.status()).toMatchObject({ state: "idle", documents: 0, parts: 0 });
+  await expect(readFile(indexPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+});

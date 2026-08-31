@@ -116,6 +116,16 @@ export function decodeTextBuffer(buffer: Uint8Array): { readonly text: string; r
   if (hasUtf8Bom(buffer)) {
     return { text: new TextDecoder("utf-8").decode(buffer.subarray(3)), encoding: "utf-8" };
   }
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return { text: new TextDecoder("utf-16le").decode(buffer.subarray(2)), encoding: "utf-16le" };
+  }
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return { text: new TextDecoder("utf-16be").decode(buffer.subarray(2)), encoding: "utf-16be" };
+  }
+  const inferredUtf16 = inferUtf16Encoding(buffer);
+  if (inferredUtf16) {
+    return { text: new TextDecoder(inferredUtf16).decode(buffer), encoding: inferredUtf16 };
+  }
   try {
     return { text: new TextDecoder("utf-8", { fatal: true }).decode(buffer), encoding: "utf-8" };
   } catch {
@@ -123,6 +133,27 @@ export function decodeTextBuffer(buffer: Uint8Array): { readonly text: string; r
     // three of the encodings this content realistically arrives in.
     return { text: new TextDecoder("gb18030").decode(buffer), encoding: "gb18030" };
   }
+}
+
+function inferUtf16Encoding(buffer: Uint8Array): "utf-16le" | "utf-16be" | undefined {
+  const sampleLength = Math.min(buffer.length - (buffer.length % 2), 4096);
+  if (sampleLength < 8) {
+    return undefined;
+  }
+  let evenNuls = 0;
+  let oddNuls = 0;
+  for (let index = 0; index < sampleLength; index += 2) {
+    if (buffer[index] === 0) evenNuls += 1;
+    if (buffer[index + 1] === 0) oddNuls += 1;
+  }
+  const pairs = sampleLength / 2;
+  if (oddNuls / pairs >= 0.3 && oddNuls >= evenNuls * 2) {
+    return "utf-16le";
+  }
+  if (evenNuls / pairs >= 0.3 && evenNuls >= oddNuls * 2) {
+    return "utf-16be";
+  }
+  return undefined;
 }
 
 /**

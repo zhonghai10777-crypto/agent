@@ -56,7 +56,7 @@ test("library tools explain disabled state and return paths for read_document", 
   const result = await searchTool?.execute("search", { query: "保护定值", limit: 2 });
   expect(result?.content[0]?.text).toContain("《保护规程》 第 1 节");
   expect(result?.content[0]?.text).toContain("Path: /library/保护规程.docx");
-  expect(enabledIndex.rebuildCalls).toBe(1);
+  expect(enabledIndex.rebuildCalls).toBe(0);
 
   const listTool = createLibraryRuntimeTools(
     () => ({ enabled: true, roots: ["/library"] }),
@@ -65,6 +65,9 @@ test("library tools explain disabled state and return paths for read_document", 
   const listed = await listTool?.execute("list", { filter: "保护" });
   expect(listed?.content[0]?.text).toContain("《保护规程》 — 1 section(s)");
   expect(listed?.details).toMatchObject({
+    offset: 0,
+    limit: 50,
+    total: 1,
     documents: [{ path: "/library/保护规程.docx", title: "保护规程", parts: 1 }],
   });
   expect((listed?.details as { documents?: readonly unknown[] } | undefined)?.documents).not.toEqual(documents);
@@ -84,6 +87,9 @@ function fakeIndex(indexedDocuments: typeof documents): LibraryIndexReader & { r
     async rebuild() {
       this.rebuildCalls += 1;
       status = { ...status, state: "ready" };
+    },
+    async clear() {
+      status = { state: "idle", total: 0, done: 0, documents: 0, parts: 0, skipped: [] };
     },
     status: () => status,
     documents: () => indexedDocuments,

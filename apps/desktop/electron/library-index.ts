@@ -1,4 +1,4 @@
-import { readdir, stat } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import type { DocumentFailureReason } from "./document-extract";
 import { getDocumentParts, type DocumentParts } from "./document-cache";
@@ -6,7 +6,7 @@ import { describeFailure } from "./document-runtime";
 import { readJsonWithBackup, writeFileAtomicQueued } from "./atomic-file-write";
 
 const INDEX_VERSION = 1;
-const MAX_INDEXED_CHARS = 100_000_000;
+const DEFAULT_MAX_INDEXED_CHARS = 100_000_000;
 const SUPPORTED_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv"]);
 
 export interface LibraryDocument {
@@ -51,11 +51,13 @@ interface LibraryCandidate {
 
 export interface LibraryIndexReader {
   rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void): Promise<void>;
+  clear(options?: { readonly deleteDisk?: boolean }): Promise<void>;
   status(): LibraryIndexStatus;
   documents(): readonly LibraryDocument[];
 }
 
 export interface LibraryIndexDependencies {
+  readonly maxIndexedChars?: number;
   readonly getParts?: (
     filePath: string,
   ) => Promise<
@@ -66,16 +68,19 @@ export interface LibraryIndexDependencies {
 export class LibraryIndex implements LibraryIndexReader {
   private readonly indexPath: string;
   private readonly getParts: NonNullable<LibraryIndexDependencies["getParts"]>;
+  private readonly maxIndexedChars: number;
   private indexedDocuments: readonly LibraryDocument[] = [];
   private indexedFailures: readonly PersistedLibraryFailure[] = [];
   private currentStatus: LibraryIndexStatus = emptyStatus("idle");
   private loaded = false;
   private rebuildPromise: Promise<void> | undefined;
   private activeRootsSignature = "";
+  private generation = 0;
 
   constructor(indexDir: string, dependencies: LibraryIndexDependencies = {}) {
     this.indexPath = path.join(indexDir, "index.json");
     this.getParts = dependencies.getParts ?? getDocumentParts;
+    this.maxIndexedChars = Math.max(1, Math.trunc(dependencies.maxIndexedChars ?? DEFAULT_MAX_INDEXED_CHARS));
   }
 
   async rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void): Promise<void> {
@@ -94,7 +99,8 @@ export class LibraryIndex implements LibraryIndexReader {
     }
 
     this.activeRootsSignature = signature;
-    const task = this.performRebuild(normalizedRoots, onProgress);
+    const generation = ++this.generation;
+    const task = this.performRebuild(normalizedRoots, generation, onProgress);
     this.rebuildPromise = task;
     try {
       await task;
@@ -121,6 +127,21 @@ export class LibraryIndex implements LibraryIndexReader {
     }
   }
 
+  async clear(options: { readonly deleteDisk?: boolean } = {}): Promise<void> {
+    this.generation += 1;
+    const inFlight = this.rebuildPromise;
+    this.indexedDocuments = [];
+    this.indexedFailures = [];
+    this.currentStatus = emptyStatus("idle");
+    this.loaded = false;
+    if (inFlight) {
+      await inFlight.catch(() => undefined);
+    }
+    if (options.deleteDisk) {
+      await rm(this.indexPath, { force: true });
+    }
+  }
+
   status(): LibraryIndexStatus {
     return {
       ...this.currentStatus,
@@ -134,12 +155,19 @@ export class LibraryIndex implements LibraryIndexReader {
 
   private async performRebuild(
     roots: readonly string[],
+    generation: number,
     onProgress?: (status: LibraryIndexStatus) => void,
   ): Promise<void> {
     await this.loadPersistedIndex();
+    if (generation !== this.generation) {
+      return;
+    }
     this.publish({ ...emptyStatus("indexing") }, onProgress);
 
     const scan = await scanLibraryRoots(roots);
+    if (generation !== this.generation) {
+      return;
+    }
     const previousByPath = new Map(this.indexedDocuments.map((document) => [document.path, document]));
     const previousFailureByPath = new Map(this.indexedFailures.map((failure) => [failure.path, failure]));
     const nextDocuments: LibraryDocument[] = [];
@@ -161,6 +189,9 @@ export class LibraryIndex implements LibraryIndexReader {
     );
 
     for (const [index, candidate] of scan.candidates.entries()) {
+      if (generation !== this.generation) {
+        return;
+      }
       const previous = previousByPath.get(candidate.path);
       let document: LibraryDocument | undefined;
 
@@ -196,7 +227,7 @@ export class LibraryIndex implements LibraryIndexReader {
 
       if (document) {
         const documentChars = document.parts.reduce((total, part) => total + part.length, 0);
-        if (indexedChars + documentChars > MAX_INDEXED_CHARS) {
+        if (indexedChars + documentChars > this.maxIndexedChars) {
           console.warn(`[library-index] character budget reached; omitted ${candidate.path}`);
           const failure: PersistedLibraryFailure = {
             path: candidate.path,
@@ -228,6 +259,9 @@ export class LibraryIndex implements LibraryIndexReader {
 
     nextDocuments.sort((left, right) => left.path.localeCompare(right.path));
     nextFailures.sort((left, right) => left.path.localeCompare(right.path));
+    if (generation !== this.generation) {
+      return;
+    }
     if (
       !sameVersionedEntries(this.indexedDocuments, nextDocuments) ||
       !sameVersionedEntries(this.indexedFailures, nextFailures)

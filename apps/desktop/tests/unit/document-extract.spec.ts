@@ -95,6 +95,20 @@ test("decodes GBK technical exports without mojibake", async () => {
   expect(result.text).not.toContain("�");
 });
 
+test("decodes Windows UTF-16LE and UTF-16BE text with or without a BOM", () => {
+  const text = "机组,负荷,效率\r\n1号机,300MW,92.4%";
+  const utf16leBody = Buffer.from(text, "utf16le");
+  const utf16le = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), utf16leBody]));
+  const utf16beBody = new Uint8Array(utf16leBody.length);
+  for (let index = 0; index < utf16leBody.length; index += 2) {
+    utf16beBody[index] = utf16leBody[index + 1] ?? 0;
+    utf16beBody[index + 1] = utf16leBody[index] ?? 0;
+  }
+
+  expect(decodeTextBuffer(utf16le)).toEqual({ text, encoding: "utf-16le" });
+  expect(decodeTextBuffer(utf16beBody)).toEqual({ text, encoding: "utf-16be" });
+});
+
 test("folds duplicate CJK radicals but preserves engineering notation", () => {
   // PDF producers emit Kangxi radicals that look identical to the real
   // ideographs, so a search for 火力 silently misses ⽕⼒.

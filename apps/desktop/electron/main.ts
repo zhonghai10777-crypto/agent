@@ -41,7 +41,15 @@ import {
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-checker";
 import { ThemeManager } from "./theme-manager";
 import type { TerminalService } from "./terminal-service";
-import type { AppView, DesktopAppState, Locale, RuntimeMode, ThemeMode, ThemePresetId } from "../src/desktop-state";
+import type {
+  AppView,
+  AssistantDeltaEvent,
+  DesktopAppState,
+  Locale,
+  RuntimeMode,
+  ThemeMode,
+  ThemePresetId,
+} from "../src/desktop-state";
 import {
   desktopIpc,
   getDesktopCommandFromShortcut,
@@ -126,6 +134,7 @@ const appWindows = new Set<BrowserWindow>();
 const windowViews = new Map<number, WindowViewState>();
 const stopPublishingStateByWebContentsId = new Map<number, () => void>();
 const stopPublishingSelectedTranscriptByWebContentsId = new Map<number, () => void>();
+const stopPublishingAssistantDeltaByWebContentsId = new Map<number, () => void>();
 const stopTrackingWindowActivationByWebContentsId = new Map<number, () => void>();
 let stopNotifications: (() => void) | undefined;
 let stopUpdateChecker: (() => void) | undefined;
@@ -622,6 +631,17 @@ async function publishSelectedTranscriptToWindow(window: BrowserWindow): Promise
   }
 }
 
+function publishAssistantDeltaToWindow(window: BrowserWindow, event: AssistantDeltaEvent): void {
+  if (!canPublishToWindow(window)) {
+    return;
+  }
+  const view = viewForWebContents(window.webContents.id);
+  if (view.selectedWorkspaceId !== event.workspaceId || view.selectedSessionId !== event.sessionId) {
+    return;
+  }
+  window.webContents.send(desktopIpc.assistantDelta, event);
+}
+
 function setActiveWindow(window: BrowserWindow): void {
   if (window.isDestroyed()) {
     return;
@@ -894,6 +914,7 @@ function attachStatePublisher(window: BrowserWindow): void {
   const startPublishing = () => {
     stopPublishingStateByWebContentsId.get(webContentsId)?.();
     stopPublishingSelectedTranscriptByWebContentsId.get(webContentsId)?.();
+    stopPublishingAssistantDeltaByWebContentsId.get(webContentsId)?.();
     const stopPublishingState = store.subscribe((state) => {
       publishStateToWindow(window, state);
       void publishSelectedTranscriptToWindow(window);
@@ -901,14 +922,20 @@ function attachStatePublisher(window: BrowserWindow): void {
     const stopPublishingSelectedTranscript = store.subscribeToSelectedTranscript(() => {
       void publishSelectedTranscriptToWindow(window);
     });
+    const stopPublishingAssistantDelta = store.subscribeToAssistantDeltas((event) => {
+      publishAssistantDeltaToWindow(window, event);
+    });
     stopPublishingStateByWebContentsId.set(webContentsId, stopPublishingState);
     stopPublishingSelectedTranscriptByWebContentsId.set(webContentsId, stopPublishingSelectedTranscript);
+    stopPublishingAssistantDeltaByWebContentsId.set(webContentsId, stopPublishingAssistantDelta);
   };
   const stopPublishing = () => {
     stopPublishingStateByWebContentsId.get(webContentsId)?.();
     stopPublishingStateByWebContentsId.delete(webContentsId);
     stopPublishingSelectedTranscriptByWebContentsId.get(webContentsId)?.();
     stopPublishingSelectedTranscriptByWebContentsId.delete(webContentsId);
+    stopPublishingAssistantDeltaByWebContentsId.get(webContentsId)?.();
+    stopPublishingAssistantDeltaByWebContentsId.delete(webContentsId);
   };
 
   startPublishing();
@@ -1233,7 +1260,9 @@ app.whenReady().then(async () => {
   const secureAuthStorage = AuthStorage.fromStorage(secureAuthStorageBackend);
   const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
-  libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"));
+  libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
+    maxIndexedChars: initialRuntimeMode === "light" ? 10_000_000 : 100_000_000,
+  });
   const initialLibrarySettings = libraryStore.read();
   if (initialLibrarySettings.enabled && initialLibrarySettings.roots.length > 0) {
     startLibraryRebuild(initialLibrarySettings.roots);
@@ -1556,14 +1585,14 @@ app.whenReady().then(async () => {
     }
   });
   ipcMain.handle(desktopIpc.getLibrarySettings, () => libraryStore.read());
-  ipcMain.handle(desktopIpc.setLibrarySettings, (_event, update: unknown) => {
+  ipcMain.handle(desktopIpc.setLibrarySettings, async (_event, update: unknown) => {
     const current = libraryStore.read();
     const next = libraryStore.write(normalizeLibrarySettings(update));
     const rootsChanged = current.roots.join("\0") !== next.roots.join("\0");
     if (next.enabled) {
       startLibraryRebuild(next.roots);
-    } else if (rootsChanged) {
-      startLibraryRebuild([]);
+    } else if (current.enabled || rootsChanged) {
+      await libraryIndex.clear({ deleteDisk: true });
     }
     return next;
   });

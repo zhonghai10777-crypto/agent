@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
+import { zipSync, strToU8 } from "fflate";
 import { readXlsx } from "../../electron/xlsx-reader";
 
 const fixtures = path.resolve(__dirname, "..", "fixtures", "documents");
@@ -24,6 +25,25 @@ test("renders date-formatted cells as dates rather than serial numbers", async (
   expect(row?.[1]).toBe("2025-01-15");
   // A plain number in the same row must NOT be date-converted.
   expect(row?.[3]).toBe("3");
+});
+
+test("uses the workbook 1904 date system when requested", () => {
+  const workbook = readXlsx(zipSync({
+    "xl/workbook.xml": strToU8(
+      '<workbook><workbookPr date1904="1"/><sheets><sheet name="Dates" r:id="rId1"/></sheets></workbook>',
+    ),
+    "xl/_rels/workbook.xml.rels": strToU8(
+      '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+    ),
+    "xl/styles.xml": strToU8(
+      '<styleSheet><cellXfs><xf numFmtId="0"/><xf numFmtId="14"/></cellXfs></styleSheet>',
+    ),
+    "xl/worksheets/sheet1.xml": strToU8(
+      '<worksheet><sheetData><row><c r="A1" s="1"><v>1</v></c></row></sheetData></worksheet>',
+    ),
+  }));
+
+  expect(workbook.sheets[0]?.rows[0]?.[0]).toBe("1904-01-02");
 });
 
 test("decodes XML-escaped cell text", async () => {
