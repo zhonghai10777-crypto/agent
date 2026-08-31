@@ -12,7 +12,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocument } from "yaml";
 
-const PRODUCT_NAME = "pi-gui";
+const PRODUCT_NAME = "Agent";
 const SCHEMA_VERSION = 1;
 const PLATFORMS = ["macos", "linux", "windows"];
 

@@ -1,4 +1,5 @@
 import { type ThemePresetId } from "./desktop-state";
+import { PRODUCT } from "./product";
 
 export type ResolvedTheme = "light" | "dark";
 
@@ -705,7 +706,7 @@ export const themePresets: readonly ThemePreset[] = [
   {
     id: "default",
     name: "Default",
-    description: "The current pi-gui palette.",
+    description: `The current ${PRODUCT.name} palette.`,
     swatches: ["#f8f8fb", "#ffffff", "#6a55f2", "#1f2638"],
     variants: {
       light: { label: "Default light", tokens: {} },

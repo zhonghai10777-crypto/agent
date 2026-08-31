@@ -94,9 +94,6 @@ jobs:
       - name: Verify packaged runtime dependencies
         run: pnpm --dir apps/desktop run verify:packaged-runtime-deps
 
-      - name: Verify Homebrew tap rewrite
-        run: pnpm test:homebrew-tap
-
       - name: Smoke test packaged release zip
         run: pnpm --dir apps/desktop run test:prod:release-zip-smoke:ci
 
@@ -254,7 +251,7 @@ jobs:
           ./apps/desktop/scripts/verify-windows-release.ps1 `
             -ReleaseDir "$PWD/apps/desktop/release" `
             -Version "$($env:GITHUB_REF_NAME -replace '^v', '')" `
-            -PackagedApp "$PWD/apps/desktop/release/win-unpacked/pi-gui.exe" `
+            -PackagedApp "$PWD/apps/desktop/release/win-unpacked/agent.exe" `
             -SmokePackages
 
       - name: Stage validated Windows artifacts
@@ -613,63 +610,3 @@ jobs:
             -ReleaseDir "$PWD/published-release" `
             -Version "$($env:GITHUB_REF_NAME -replace '^v', '')" `
             -SmokePackages
-
-  sync-homebrew:
-    needs:
-      - verify-published-macos
-      - verify-published-linux
-      - verify-published-windows
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Validate Homebrew credential
-        env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [[ -z "$HOMEBREW_TAP_TOKEN" ]]; then
-            echo "Missing required release secret: HOMEBREW_TAP_TOKEN" >&2
-            exit 1
-          fi
-
-      - name: Download published DMG
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir release-download
-          gh release download "$GITHUB_REF_NAME" \
-            --pattern "pi-gui-${GITHUB_REF_NAME#v}-arm64.dmg" \
-            --dir release-download
-
-      - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: minghinmatthewlam/homebrew-tap
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-          fetch-depth: 0
-
-      - name: Sync Homebrew tap
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          pnpm release:homebrew-sync \
-            --tap-dir "$PWD/homebrew-tap" \
-            --version "${GITHUB_REF_NAME#v}" \
-            --tag "$GITHUB_REF_NAME" \
-            --github-repo "$GITHUB_REPOSITORY" \
-            --asset-name "pi-gui-${GITHUB_REF_NAME#v}-arm64.dmg" \
-            --dmg-path "$PWD/release-download/pi-gui-${GITHUB_REF_NAME#v}-arm64.dmg" \
-            --commit \
-            --push

@@ -113,7 +113,7 @@ const enMessages = {
   "composer.compacting": "Compacting session context…",
 
   /* ── Startup failure ─────────────────────────────── */
-  "startup.failedTitle": "pi-gui could not start",
+  "startup.failedTitle": "Agent could not start",
   "startup.failedBody": "Something went wrong while loading your saved data, so the app has to close. If this keeps happening, the details below will help track it down.",
 
   /* ── Render failure ──────────────────────────────── */
@@ -560,7 +560,7 @@ const enMessages = {
 
   /* ── Theme presets ───────────────────────────────── */
   "theme.defaultName": "Default",
-  "theme.defaultDesc": "The current pi-gui palette.",
+  "theme.defaultDesc": "The current Agent palette.",
   "theme.catppuccinName": "Catppuccin",
   "theme.catppuccinDesc": "Soft pastel Latte and Mocha variants.",
   "theme.tokyoNightName": "Tokyo Night",
@@ -594,7 +594,7 @@ const enMessages = {
   /* ── Startup diagnostics / schema skew ───────────── */
   "diagnostics.title": "Some saved workspaces could not be refreshed.",
   "diagnostics.unavailable": "{workspaceName} is unavailable.",
-  "schemaSkew.title": "This session was written by a newer version of pi — some content may not display. Update pi-gui (or open it with the pi CLI) to see everything.",
+  "schemaSkew.title": "This session was written by a newer version of pi — some content may not display. Update Agent (or open it with the pi CLI) to see everything.",
   "schemaSkew.dismiss": "Dismiss",
   "schemaSkew.dismissAria": "Dismiss notice",
 

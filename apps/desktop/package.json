@@ -2,10 +2,10 @@
   "name": "@pi-gui/desktop",
   "private": true,
   "version": "0.1.0-beta.33",
-  "author": "Matthew Lam",
+  "author": "zhonghai10777-crypto",
   "license": "MIT",
   "description": "Codex-style desktop shell for pi",
-  "homepage": "https://github.com/minghinmatthewlam/pi-gui",
+  "homepage": "https://github.com/zhonghai10777-crypto/agent",
   "main": "out/main/main.mjs",
   "scripts": {
     "build:deps": "pnpm --dir ../.. --filter @pi-gui/session-driver --filter @pi-gui/pi-sdk-driver --filter @pi-gui/catalogs run build",

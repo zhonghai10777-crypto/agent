@@ -1,19 +1,19 @@
-# pi-gui
+# Agent
 
 A Codex-style desktop app for the [`pi`](https://github.com/earendil-works/pi) coding agent.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Latest release](https://img.shields.io/github/v/release/minghinmatthewlam/pi-gui?include_prereleases&label=release)](https://github.com/minghinmatthewlam/pi-gui/releases)
-[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](#install)
+[![Latest release](https://img.shields.io/github/v/release/zhonghai10777-crypto/agent?include_prereleases&label=release)](https://github.com/zhonghai10777-crypto/agent/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#install)
 
-pi-gui gives `pi` a native home on the desktop: a threaded timeline of your agent
+Agent gives `pi` a native home on the desktop: a threaded timeline of your agent
 sessions, git worktrees per thread, an integrated terminal and inline diff viewer,
 and multi-agent orchestration — all backed by `pi`'s own session files as the source
 of truth. It is a UI shell around [`@earendil-works/pi-coding-agent`](https://www.npmjs.com/package/@earendil-works/pi-coding-agent),
 not a separate agent runtime: session management, model/auth setup, and agent
 execution all run through upstream `pi`.
 
-![pi-gui in action](./docs/assets/demo.gif)
+![Agent in action](./docs/assets/demo.gif)
 
 <sub>Expanding a tool call, reviewing the diff panel, the integrated terminal, and a theme switch. ([higher-quality MP4](./docs/assets/demo.mp4))</sub>
 
@@ -49,25 +49,15 @@ execution all run through upstream `pi`.
 
 ## Install
 
-pi-gui is in public beta for **macOS (Apple Silicon)** and **Linux (AppImage)**.
+Agent is in public beta for **Windows 10/11 x64**, **macOS (Apple Silicon)**, and **Linux x64**.
 
 ### From GitHub Releases
 
-Download the latest `.dmg` (macOS) or `.AppImage` (Linux) from the
-[Releases page](https://github.com/minghinmatthewlam/pi-gui/releases).
+Download the latest Windows setup/standalone package, macOS `.dmg`, or Linux `.AppImage` from the
+[Releases page](https://github.com/zhonghai10777-crypto/agent/releases).
 
-On macOS, drag `pi-gui.app` into `/Applications` and launch it. Releases are signed
+On macOS, drag `Agent.app` into `/Applications` and launch it. Releases are signed
 and notarized. To update, download the newer release and replace the app.
-
-### With Homebrew (macOS)
-
-```bash
-brew tap minghinmatthewlam/tap
-brew install --cask pi-gui
-```
-
-Update with `brew upgrade --cask pi-gui`. During beta, a Homebrew upgrade may prompt
-you to re-confirm macOS permissions or Dock placement.
 
 ### From source
 
@@ -76,19 +66,19 @@ not as the primary install path.
 
 ## Quickstart
 
-1. Install pi-gui and launch it.
+1. Install Agent and launch it.
 2. Open **Settings → Providers** and connect a model provider (OAuth or API key).
 3. Add a workspace (a local project folder).
 4. Click **New thread**, pick `Local` or `Worktree`, and send your first prompt.
 
-You need valid model/provider authentication that `pi` supports; pi-gui uses `pi`'s
+You need valid model/provider authentication that `pi` supports; Agent uses `pi`'s
 auth and session state, so anything you've already configured with the `pi` CLI
 carries over.
 
 ## Runtime modes
 
 Choose the mode under **Settings → General**. A mode change is saved immediately
-and takes effect after restarting pi-gui.
+and takes effect after restarting Agent.
 
 - **Light mode** is the default for everyday questions and read-only assistance.
   It keeps model and web access available while disabling terminal commands, file
@@ -102,7 +92,7 @@ Agent mode is intended for machines with more memory or short, focused coding ru
 
 ## Architecture
 
-pi-gui is an Electron app organized around a tight main/preload/renderer boundary,
+Agent is an Electron app organized around a tight main/preload/renderer boundary,
 sitting on top of the `pi` runtime:
 
 - **Renderer** (`apps/desktop/src`) — the React UI: timeline, composer, diff panel,
@@ -115,7 +105,7 @@ sitting on top of the `pi` runtime:
   `@earendil-works/pi-coding-agent`. It stays close to upstream `pi` and does not
   fork or reimplement runtime behavior.
 - **JSONL session files as the source of truth** — `pi` persists each session as a
-  JSONL transcript on disk; pi-gui reads those files as the authoritative record for
+  JSONL transcript on disk; Agent reads those files as the authoritative record for
   closed sessions rather than keeping a divergent copy.
 
 Supporting packages: `packages/session-driver` (shared session driver types) and
@@ -171,7 +161,7 @@ to be verified on the real Electron surface, not only by unit tests.
 
 ## Computer use
 
-Native computer use is not built into pi-gui. Desktop/browser control is available
+Native computer use is not built into Agent. Desktop/browser control is available
 separately through the author's standalone
 [`computer-use-mcp`](https://github.com/minghinmatthewlam/computer-use-mcp) server,
 which any MCP-capable agent can use.
@@ -183,4 +173,4 @@ which any MCP-capable agent can use.
 
 ## License
 
-[MIT](./LICENSE) © Matthew Lam
+[MIT](./LICENSE) © Matthew Lam and zhonghai10777-crypto contributors

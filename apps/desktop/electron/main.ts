@@ -20,7 +20,7 @@ import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { lstat, readFile, stat } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { augmentPosixPath } from "../scripts/augment-path.cjs";
@@ -63,6 +63,7 @@ import {
 } from "../src/ipc";
 import { SUPPORTED_COMPOSER_IMAGE_TYPES } from "../src/composer-attachments";
 import { tGlobal } from "../src/i18n";
+import { PRODUCT } from "../src/product";
 import { createWebRuntimeExtension } from "./web-runtime";
 import {
   createDocumentRuntimeExtension,
@@ -100,6 +101,7 @@ import type { SessionDriverEvent } from "@pi-gui/session-driver";
 import type { GenerateThreadTitleOptions } from "@pi-gui/pi-sdk-driver";
 import type { PermissionMode, SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
 import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
+import { resolveProductUserDataDir } from "./user-data-dir";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
 const appTestMode = resolveAppTestMode(process.env.PI_APP_TEST_MODE);
@@ -1067,7 +1069,7 @@ async function runManualUpdateCheck(): Promise<void> {
       // be silently suppressed if the OS permission is denied.
       const choice = await showDialog({
         type: "info",
-        title: "pi-gui",
+        title: PRODUCT.name,
         message: `Version ${result.latestVersion} is available.`,
         detail: `You have ${result.currentVersion}.`,
         buttons: ["Download", "Later"],
@@ -1083,7 +1085,7 @@ async function runManualUpdateCheck(): Promise<void> {
     if (result.status === "up-to-date") {
       await showDialog({
         type: "info",
-        title: "pi-gui",
+        title: PRODUCT.name,
         message: `You're up to date on version ${result.currentVersion}.`,
         buttons: ["OK"],
       });
@@ -1092,7 +1094,7 @@ async function runManualUpdateCheck(): Promise<void> {
 
     await showDialog({
       type: "warning",
-      title: "pi-gui",
+      title: PRODUCT.name,
       message: "Could not check for updates right now.",
       detail: result.message,
       buttons: ["OK"],
@@ -1101,7 +1103,7 @@ async function runManualUpdateCheck(): Promise<void> {
     console.error("pi-gui: manual update check failed:", error);
     await showDialog({
       type: "warning",
-      title: "pi-gui",
+      title: PRODUCT.name,
       message: "Could not check for updates right now.",
       detail: error instanceof Error ? error.message : String(error),
       buttons: ["OK"],
@@ -1177,9 +1179,15 @@ if (augmentedPath.changed) {
   process.env.PATH = augmentedPath.path;
 }
 
-app.setName("pi");
-
-const configuredUserDataDir = process.env.PI_APP_USER_DATA_DIR?.trim() || app.getPath("userData");
+const legacyUserDataDir = path.join(app.getPath("appData"), "pi");
+app.setName(PRODUCT.name);
+const productUserDataDir = app.getPath("userData");
+const configuredUserDataDir = resolveProductUserDataDir(
+  process.env.PI_APP_USER_DATA_DIR,
+  productUserDataDir,
+  legacyUserDataDir,
+  existsSync,
+);
 app.setPath("userData", configuredUserDataDir);
 
 function readInitialRuntimeMode(userDataDir: string): RuntimeMode {
@@ -1321,7 +1329,7 @@ app.whenReady().then(async () => {
         description: "Create and edit simple Word and Excel files with confirmation and safe copies",
       },
       ...(initialRuntimeMode === "agent"
-        ? [{ displayName: "Thread orchestration", description: "Start child pi-gui threads from transcript tool calls" }]
+        ? [{ displayName: "Thread orchestration", description: `Start child ${PRODUCT.name} threads from transcript tool calls` }]
         : []),
       {
         displayName: "Permission gate",
@@ -1570,7 +1578,7 @@ app.whenReady().then(async () => {
     return toWebToolsSettingsView(webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey })));
   });
   ipcMain.handle(desktopIpc.testWebSearch, async (_event, query: unknown): Promise<WebSearchTestResult> => {
-    const text = typeof query === "string" && query.trim() ? query.trim() : "pi-gui connectivity test";
+    const text = typeof query === "string" && query.trim() ? query.trim() : `${PRODUCT.name} connectivity test`;
     try {
       // Test against the saved settings with the master switch forced on, so the
       // user can verify a key before committing to enabling web access.
@@ -2115,7 +2123,7 @@ async function promptForText(
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
-    title: "pi-gui",
+    title: PRODUCT.name,
     webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
   });
 
