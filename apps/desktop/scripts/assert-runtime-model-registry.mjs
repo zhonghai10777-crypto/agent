@@ -1,7 +1,7 @@
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
-const registry = ModelRegistry.inMemory(AuthStorage.inMemory());
-const models = registry.getAll();
+const runtime = await ModelRuntime.create({ modelsPath: null });
+const models = runtime.getModels();
 const modelChecks = [
   ...["luna", "sol", "terra"].map((variant) => ({
     provider: "openai-codex",
@@ -20,8 +20,8 @@ const modelChecks = [
   },
   {
     provider: "zai",
-    id: "glm-5.1",
-    reason: "issue #12 GLM 5.1 visibility",
+    id: "glm-5.2",
+    reason: "current GLM visibility",
     requireReasoning: true,
     requireImageInput: false,
   },

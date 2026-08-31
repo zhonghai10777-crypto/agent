@@ -27,6 +27,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Verify Pi runtime version consistency
+        run: pnpm verify:pi-version
+
       - name: Typecheck
         run: pnpm typecheck
 

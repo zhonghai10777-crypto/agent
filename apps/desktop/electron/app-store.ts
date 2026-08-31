@@ -135,7 +135,7 @@ export interface DesktopAppStoreOptions {
   readonly shouldKeepSessionDialogs?: (sessionRef: SessionRef) => boolean;
   readonly driverOptions?: Pick<
     PiSdkDriverConfig,
-    "extensionFactories" | "inlineExtensionMetadata" | "authStorage" | "noExtensions" | "noSkills" | "runtimeMode"
+    "extensionFactories" | "inlineExtensionMetadata" | "credentialStore" | "noExtensions" | "noSkills" | "runtimeMode"
   >;
   readonly generateThreadTitleOverride?: (
     workspace: WorkspaceRef,

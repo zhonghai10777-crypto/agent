@@ -4,9 +4,10 @@ import {
   createExtensionRuntime,
   createAgentSession,
   type CreateAgentSessionOptions,
+  type ModelRegistry,
+  type ModelRuntime,
   type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
-import type { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { SessionModelSelection, WorkspaceRef } from "@pi-gui/session-driver";
 import { messageText as sessionMessageText } from "./session-supervisor-utils.js";
 
@@ -19,7 +20,7 @@ export interface GenerateThreadTitleOptions {
 
 interface ThreadTitleGeneratorDeps {
   readonly agentDir: string;
-  readonly authStorage: AuthStorage;
+  readonly modelRuntime: ModelRuntime;
   readonly modelRegistry: ModelRegistry;
 }
 
@@ -52,8 +53,7 @@ export async function generateThreadTitle(
   const createOptions: CreateAgentSessionOptions = {
     cwd: workspace.path,
     agentDir: deps.agentDir,
-    authStorage: deps.authStorage,
-    modelRegistry: deps.modelRegistry,
+    modelRuntime: deps.modelRuntime,
     resourceLoader,
     settingsManager,
     sessionManager: SessionManager.inMemory(),
@@ -82,8 +82,8 @@ export async function generateThreadTitle(
     if (!session.model) {
       return null;
     }
-    const auth = await session.modelRegistry.getApiKeyAndHeaders(session.model);
-    if (!auth.ok || !auth.apiKey) {
+    const auth = await session.modelRuntime.getAuth(session.model);
+    if (!auth?.auth.apiKey && !auth?.auth.headers) {
       return null;
     }
 
@@ -104,6 +104,8 @@ function createThreadTitleResourceLoader(): ResourceLoader {
     getAgentsFiles: () => ({ agentsFiles: [] }),
     getSystemPrompt: () => THREAD_TITLE_SYSTEM_PROMPT,
     getAppendSystemPrompt: () => [],
+    getSystemPromptSource: () => undefined,
+    getAppendSystemPromptSources: () => [],
     extendResources: () => {},
     reload: async () => {},
   };
