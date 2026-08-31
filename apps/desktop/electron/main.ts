@@ -14,7 +14,7 @@ import {
   type MessageBoxOptions,
   type OpenDialogOptions,
 } from "electron";
-import { AuthStorage, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
@@ -348,6 +348,7 @@ function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
     ui: {} as ExtensionContext["ui"],
     modelRegistry: {} as ExtensionContext["modelRegistry"],
     model: undefined,
+    scopedModels: [],
     signal: undefined,
     isIdle: () => true,
     isProjectTrusted: () => true,
@@ -1265,7 +1266,6 @@ app.whenReady().then(async () => {
     path.join(getAgentDir(), "auth.json"),
     path.join(getAgentDir(), "models.json"),
   );
-  const secureAuthStorage = AuthStorage.fromStorage(secureAuthStorageBackend);
   const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
   libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
@@ -1336,7 +1336,7 @@ app.whenReady().then(async () => {
         description: "Read-only plan mode blocks write/edit/bash tools until the user switches to auto",
       },
     ],
-    authStorage: secureAuthStorage,
+    credentialStore: secureAuthStorageBackend,
   };
   store = new DesktopAppStore({
     userDataDir: configuredUserDataDir,

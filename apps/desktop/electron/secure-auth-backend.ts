@@ -1,7 +1,7 @@
 import type { SafeStorage } from "electron";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AuthStorageBackend } from "@earendil-works/pi-coding-agent";
+import type { CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import {
   CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
   PI_GUI_CUSTOM_PROVIDER_MARKER,
@@ -17,14 +17,16 @@ import {
  *   (the standard pi auth.json), preserving SDK OAuth login/refresh and
  *   interoperability with the pi CLI.
  *
- * Implements the `AuthStorageBackend` contract consumed by
- * `AuthStorage.fromStorage()`: each call receives the current combined JSON
- * (parsed from both sources), and if the callback returns `next`, the merged
- * result is written back with per-type routing.
+ * Implements Pi's `CredentialStore` contract while retaining a combined JSON
+ * view internally so each serialized update can be routed by credential type.
  *
  * `safeStorage` must come from the Electron main process (constructor arg).
  */
-export class SecureAuthStorageBackend implements AuthStorageBackend {
+type CredentialStore = NonNullable<CreateModelRuntimeOptions["credentials"]>;
+type Credential = NonNullable<Awaited<ReturnType<CredentialStore["read"]>>>;
+type AuthOperationOptions = Parameters<CredentialStore["read"]>[1];
+
+export class SecureAuthStorageBackend implements CredentialStore {
   private readonly safeStorage: SafeStorage;
   private readonly secureKeysPath: string;
   private readonly authJsonPath: string;
@@ -86,9 +88,53 @@ export class SecureAuthStorageBackend implements AuthStorageBackend {
     return run;
   }
 
+  async read(providerId: string, options?: AuthOperationOptions): Promise<Credential | undefined> {
+    options?.signal?.throwIfAborted();
+    const credential = parseCredentials(this.readMerged())[providerId];
+    options?.signal?.throwIfAborted();
+    return credential ? structuredClone(credential) : undefined;
+  }
+
+  async list(options?: AuthOperationOptions) {
+    options?.signal?.throwIfAborted();
+    const credentials = parseCredentials(this.readMerged());
+    options?.signal?.throwIfAborted();
+    return Object.entries(credentials).map(([providerId, credential]) => ({
+      providerId,
+      type: credential.type,
+    }));
+  }
+
+  async modify(
+    providerId: string,
+    fn: (current: Credential | undefined) => Promise<Credential | undefined>,
+    options?: AuthOperationOptions,
+  ): Promise<Credential | undefined> {
+    return this.withLockAsync(async (current) => {
+      options?.signal?.throwIfAborted();
+      const credentials = parseCredentials(current);
+      const nextCredential = await fn(credentials[providerId]);
+      options?.signal?.throwIfAborted();
+      if (nextCredential === undefined) {
+        return { result: credentials[providerId] };
+      }
+      credentials[providerId] = nextCredential;
+      return { result: nextCredential, next: JSON.stringify(credentials, null, 2) };
+    });
+  }
+
+  async delete(providerId: string, options?: AuthOperationOptions): Promise<void> {
+    await this.withLockAsync(async (current) => {
+      options?.signal?.throwIfAborted();
+      const credentials = parseCredentials(current);
+      delete credentials[providerId];
+      return { result: undefined, next: JSON.stringify(credentials, null, 2) };
+    });
+  }
+
   /**
    * Merge both physical sources into a single combined JSON object (as a
-   * string, matching the `AuthStorageBackend` contract).
+   * string used by the serialized credential update helpers).
    */
   private readMerged(): string | undefined {
     const keys = this.readSecureKeys();
@@ -367,4 +413,15 @@ export class SecureAuthStorageBackend implements AuthStorageBackend {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
     writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   }
+}
+
+function parseCredentials(raw: string | undefined): Record<string, Credential> {
+  if (!raw?.trim()) {
+    return {};
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("SecureAuthStorageBackend: invalid credential store data.");
+  }
+  return parsed as Record<string, Credential>;
 }
