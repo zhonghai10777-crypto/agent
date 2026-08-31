@@ -1,6 +1,10 @@
 import { readFile, stat } from "node:fs/promises";
+import { access } from "node:fs/promises";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
 import {
   extractDocument,
+  MAX_DOCUMENT_BYTES,
   segmentText,
   type DocumentExtraction,
   type DocumentExtractionFailure,
@@ -36,6 +40,15 @@ const MAX_CACHED_CHARS = 4_000_000;
 
 const cache = new Map<string, CacheEntry>();
 let cachedChars = 0;
+
+interface PendingWorkerRequest {
+  readonly resolve: (value: DocumentExtraction) => void;
+  readonly reject: (reason?: unknown) => void;
+}
+
+let extractionWorker: Worker | undefined;
+let workerRequestId = 0;
+const pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 
 export async function getDocumentExtraction(fsPath: string): Promise<DocumentExtraction> {
   return (await load(fsPath)).extraction;
@@ -87,8 +100,18 @@ async function load(fsPath: string): Promise<CacheEntry> {
 
   let extraction: DocumentExtraction;
   try {
-    const buffer = new Uint8Array(await readFile(fsPath));
-    extraction = await extractDocument(buffer, fsPath);
+    const stats = await stat(fsPath);
+    if (stats.size > MAX_DOCUMENT_BYTES) {
+      extraction = {
+        ok: false,
+        kind: "unknown",
+        reason: "too-large",
+        detail: `${stats.size} bytes exceeds ${MAX_DOCUMENT_BYTES}`,
+      };
+    } else {
+      const buffer = new Uint8Array(await readFile(fsPath));
+      extraction = await extractDocumentInWorker(buffer, fsPath);
+    }
   } catch (error) {
     extraction = { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) };
   }
@@ -102,6 +125,70 @@ async function load(fsPath: string): Promise<CacheEntry> {
   cachedChars += entrySize(entry);
   evict();
   return entry;
+}
+
+async function extractDocumentInWorker(buffer: Uint8Array, fileName: string): Promise<DocumentExtraction> {
+  const workerPath = await resolveDocumentWorkerPath();
+  if (!workerPath) {
+    return extractDocument(buffer, fileName);
+  }
+
+  const worker = getExtractionWorker(workerPath);
+  const id = ++workerRequestId;
+  const promise = new Promise<DocumentExtraction>((resolve, reject) => {
+    pendingWorkerRequests.set(id, { resolve, reject });
+  });
+  const transferable = buffer.slice().buffer;
+  worker.postMessage({ id, buffer: transferable, fileName }, [transferable]);
+  return promise.catch(() => extractDocument(buffer, fileName));
+}
+
+function getExtractionWorker(workerPath: string): Worker {
+  if (extractionWorker) {
+    return extractionWorker;
+  }
+  const worker = new Worker(workerPath);
+  extractionWorker = worker;
+  worker.on("message", (message: { readonly id: number; readonly result?: DocumentExtraction; readonly error?: string }) => {
+    const pending = pendingWorkerRequests.get(message.id);
+    if (!pending) return;
+    pendingWorkerRequests.delete(message.id);
+    if (message.result) pending.resolve(message.result);
+    else pending.reject(new Error(message.error ?? "Document worker failed."));
+  });
+  worker.on("error", (error) => {
+    extractionWorker = undefined;
+    for (const pending of pendingWorkerRequests.values()) pending.reject(error);
+    pendingWorkerRequests.clear();
+  });
+  worker.on("exit", (code) => {
+    if (code !== 0 && extractionWorker === worker) {
+      extractionWorker = undefined;
+      const error = new Error(`Document worker exited with code ${code}.`);
+      for (const pending of pendingWorkerRequests.values()) pending.reject(error);
+      pendingWorkerRequests.clear();
+    }
+  });
+  return worker;
+}
+
+async function resolveDocumentWorkerPath(): Promise<string | undefined> {
+  const candidates = [
+    path.join(process.cwd(), "out", "main", "document-worker.mjs"),
+    path.join(process.cwd(), "apps", "desktop", "out", "main", "document-worker.mjs"),
+    process.resourcesPath
+      ? path.join(process.resourcesPath, "app.asar", "out", "main", "document-worker.mjs")
+      : undefined,
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return candidate;
+    } catch {
+      // Try the next development or packaged-app location.
+    }
+  }
+  return undefined;
 }
 
 function entrySize(entry: CacheEntry): number {

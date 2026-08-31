@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -197,5 +197,36 @@ test("an interrupted temp write leaves the last committed catalog readable", asy
     );
     const persisted = JSON.parse(await readFile(catalogFilePath, "utf8")) as { workspaces: unknown[] };
     assert.equal(persisted.workspaces.length, 1);
+  });
+});
+
+test("recovers a corrupt catalog from its backup and quarantines the primary", async () => {
+  await withTempDir(async (dir) => {
+    const catalogFilePath = join(dir, "catalogs.json");
+    const catalog = new JsonCatalogStore({ catalogFilePath });
+    await catalog.workspaces.upsertWorkspace({
+      workspaceId: "workspace",
+      path: join(dir, "workspace"),
+      displayName: "Workspace",
+      lastOpenedAt: timestamp,
+      sortOrder: 0,
+    });
+    await catalog.workspaces.upsertWorkspace({
+      workspaceId: "workspace-2",
+      path: join(dir, "workspace-2"),
+      displayName: "Workspace 2",
+      lastOpenedAt: timestamp,
+      sortOrder: 1,
+    });
+
+    await writeFile(catalogFilePath, "{\"version\":2,\"workspaces\":[", "utf8");
+    const reopened = new JsonCatalogStore({ catalogFilePath });
+    assert.deepEqual(
+      (await reopened.workspaces.listWorkspaces()).workspaces.map((entry) => entry.workspaceId),
+      ["workspace"],
+    );
+    const entries = await readdir(dir);
+    assert.ok(entries.some((entry) => entry.startsWith("catalogs.json.corrupt-")));
+    assert.ok(entries.includes("catalogs.json.bak"));
   });
 });

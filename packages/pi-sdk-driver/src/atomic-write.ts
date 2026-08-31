@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, open, rename, rm } from "node:fs/promises";
+import { copyFile, mkdir, open, rename, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 /** Suffix of the transient files writeFileAtomic creates before renaming into place. */
@@ -19,7 +19,18 @@ let tmpCounter = 0;
  * - fsync the containing directory so the rename entry itself survives power
  *   loss, not just the temp file's data blocks.
  */
-export async function writeFileAtomic(filePath: string, data: string | Uint8Array): Promise<void> {
+export interface AtomicWriteOptions {
+  /** Preserve the previous good contents as `<filePath>.bak` before replacing. */
+  readonly backup?: boolean;
+  /** Number of retries for transient Windows file-sharing/AV locks. */
+  readonly retries?: number;
+}
+
+export async function writeFileAtomic(
+  filePath: string,
+  data: string | Uint8Array,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
   const dir = dirname(filePath);
   await mkdir(dir, { recursive: true });
 
@@ -38,7 +49,10 @@ export async function writeFileAtomic(filePath: string, data: string | Uint8Arra
   }
 
   try {
-    await rename(tmpPath, filePath);
+    if (options.backup) {
+      await preserveBackup(filePath, options.retries);
+    }
+    await withTransientRetry(() => rename(tmpPath, filePath), options.retries);
   } catch (error) {
     await rm(tmpPath, { force: true }).catch(() => {});
     throw error;
@@ -48,8 +62,46 @@ export async function writeFileAtomic(filePath: string, data: string | Uint8Arra
 }
 
 /** Serialize `value` as pretty JSON with a trailing newline and write it atomically. */
-export async function writeJsonFileAtomic(filePath: string, value: unknown): Promise<void> {
-  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+export async function writeJsonFileAtomic(
+  filePath: string,
+  value: unknown,
+  options: AtomicWriteOptions = {},
+): Promise<void> {
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`, options);
+}
+
+async function preserveBackup(filePath: string, retries = 5): Promise<void> {
+  try {
+    await withTransientRetry(() => copyFile(filePath, `${filePath}.bak`), retries);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+  }
+}
+
+async function withTransientRetry<T>(operation: () => Promise<T>, retries = 5): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt >= retries || !isTransientWindowsFileError(error)) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 25 * 2 ** attempt));
+      attempt += 1;
+    }
+  }
+}
+
+function isTransientWindowsFileError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+  return code === "EPERM" || code === "EACCES" || code === "EBUSY" || code === "ENOTEMPTY";
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
 
 async function syncDirectory(dir: string): Promise<void> {

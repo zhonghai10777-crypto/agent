@@ -39,14 +39,15 @@ export function toAttachmentExtraction(extraction: DocumentExtraction): SessionA
 export async function withExtractionMetadata(
   attachments: readonly ComposerAttachment[],
 ): Promise<ComposerAttachment[]> {
-  return Promise.all(
-    attachments.map(async (attachment) => {
-      if (attachment.kind !== "file") {
-        return attachment;
-      }
-      return { ...attachment, extraction: toAttachmentExtraction(await getDocumentExtraction(attachment.fsPath)) };
-    }),
-  );
+  const result: ComposerAttachment[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind !== "file") {
+      result.push(attachment);
+      continue;
+    }
+    result.push({ ...attachment, extraction: toAttachmentExtraction(await getDocumentExtraction(attachment.fsPath)) });
+  }
+  return result;
 }
 
 /**
@@ -59,19 +60,20 @@ export async function withDocumentText(
   if (attachments.length === 0) {
     return attachments;
   }
-  return Promise.all(
-    attachments.map(async (attachment) => {
-      if (attachment.kind !== "file") {
-        return attachment;
-      }
-      const extraction = await getDocumentExtraction(attachment.fsPath);
-      const summary = toAttachmentExtraction(extraction);
-      const inline = extraction.ok && extraction.text.length <= INLINE_DOCUMENT_CHAR_LIMIT;
-      return {
-        ...attachment,
-        extraction: summary,
-        ...(inline && extraction.ok ? { documentText: extraction.text } : {}),
-      };
-    }),
-  );
+  const result: SessionAttachment[] = [];
+  for (const attachment of attachments) {
+    if (attachment.kind !== "file") {
+      result.push(attachment);
+      continue;
+    }
+    const extraction = await getDocumentExtraction(attachment.fsPath);
+    const summary = toAttachmentExtraction(extraction);
+    const inline = extraction.ok && extraction.text.length <= INLINE_DOCUMENT_CHAR_LIMIT;
+    result.push({
+      ...attachment,
+      extraction: summary,
+      ...(inline && extraction.ok ? { documentText: extraction.text } : {}),
+    });
+  }
+  return result;
 }

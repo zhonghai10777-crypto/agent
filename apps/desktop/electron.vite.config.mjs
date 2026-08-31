@@ -20,6 +20,7 @@ export default defineConfig(({ command }) => {
         rollupOptions: {
           input: {
             main: path.resolve(projectRoot, "electron/main.ts"),
+            "document-worker": path.resolve(projectRoot, "electron/document-worker.ts"),
           },
           output: {
             // `@earendil-works/pi-coding-agent` ships ESM-only exports (no
