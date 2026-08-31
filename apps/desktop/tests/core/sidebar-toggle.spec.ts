@@ -77,7 +77,9 @@ async function setElectronWindowSize(
     if (!window) {
       return false;
     }
-    window.setSize(size.width, size.height);
+    // setSize controls the outer window frame; setContentSize gives the
+    // renderer the requested viewport on Windows and macOS alike.
+    window.setContentSize(size.width, size.height);
     return true;
   }, { width, height });
   expect(didSetSize).toBe(true);

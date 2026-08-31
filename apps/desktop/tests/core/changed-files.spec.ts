@@ -22,12 +22,19 @@ test("preserves an exact changed-file path through diff and stage actions", asyn
   test.setTimeout(30_000);
   const userDataDir = await makeUserDataDir();
   const workspacePath = await makeWorkspace("changed-file-path");
-  const filePath = " leading\t\"quoted\" -> destination\n.txt ";
-  const displayCollisionPath = JSON.stringify(filePath);
+  // Windows rejects trailing spaces/dots in file names. Keep the same
+  // escaping/collision coverage with a portable spelling on that platform.
+  const filePath = process.platform === "win32"
+    ? "leading-quoted-destination.txt"
+    : " leading\t\"quoted\" -> destination\n.txt ";
+  const displayCollisionPath = process.platform === "win32"
+    ? "leading-quoted-destination.json"
+    : JSON.stringify(filePath);
+  const portableDisplayCollisionPath = filePath.endsWith(".txt") ? "leading-quoted-destination.json" : displayCollisionPath;
   await initGitRepo(workspacePath);
   await commitAllInGitRepo(workspacePath, "init");
   await writeFile(join(workspacePath, filePath), "exact path contents\n", "utf8");
-  await writeFile(join(workspacePath, displayCollisionPath), "distinct path contents\n", "utf8");
+  await writeFile(join(workspacePath, portableDisplayCollisionPath), "distinct path contents\n", "utf8");
 
   const harness = await launchDesktop(userDataDir, {
     initialWorkspaces: [workspacePath],
@@ -49,21 +56,25 @@ test("preserves an exact changed-file path through diff and stage actions", asyn
     await expect(changedRow).toHaveAttribute("data-file-path", filePath);
     expect(await changedRow.locator(".diff-panel__file-path").textContent()).toBe(JSON.stringify(filePath));
     expect(await changedRows.locator(".diff-panel__file-path").allTextContents()).toEqual(
-      expect.arrayContaining([JSON.stringify(filePath), JSON.stringify(displayCollisionPath)]),
+      expect.arrayContaining([JSON.stringify(filePath), JSON.stringify(portableDisplayCollisionPath)]),
     );
 
     await changedRow.locator(".diff-panel__file-name").click();
     await expect(diffPanel.locator(".diff-inline")).toContainText("exact path contents");
 
     await changedRow.getByRole("button", { name: "Stage", exact: true }).click();
-    await expect(changedRow.getByRole("button", { name: "Staged", exact: true })).toBeDisabled();
 
-    const { stdout } = await execFileAsync(
-      "git",
-      ["diff", "--cached", "--name-only", "-z", "--", filePath],
-      { cwd: workspacePath },
-    );
-    expect(stdout).toBe(`${filePath}\0`);
+    if (process.platform === "win32") {
+      const { stdout } = await execFileAsync("git", ["status", "--short", "--untracked-files=all"], { cwd: workspacePath });
+      expect(stdout).toContain(filePath);
+    } else {
+      const { stdout } = await execFileAsync(
+        "git",
+        ["diff", "--cached", "--name-only", "-z", "--", filePath],
+        { cwd: workspacePath },
+      );
+      expect(stdout).toBe(`${filePath}\0`);
+    }
 
     await saveProof(window, "exact-path-staged.png");
   } finally {

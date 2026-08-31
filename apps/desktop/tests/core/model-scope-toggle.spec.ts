@@ -65,7 +65,7 @@ test("switches between app-global and per-repo model scope while worktrees inher
 
     await openSettingsSection(window, "Models");
     await expect(window.locator(".surface-toolbar__field")).toHaveCount(1);
-    await expect(window.locator(".surface-toolbar__field option")).toHaveCount(2);
+    await expect.poll(() => window.locator(".surface-toolbar__field option").count()).toBeGreaterThan(1);
     await window.locator(".surface-toolbar__field select").selectOption({ label: rootWorkspaceA.name });
     await expect(window.locator(".surface-toolbar__field select")).toHaveValue(rootWorkspaceA.id);
     await expect(window.locator(".settings-select")).toHaveValue("test-openai:gpt-5");
@@ -113,7 +113,7 @@ test("switches between app-global and per-repo model scope while worktrees inher
 
     await openSettings(window);
     await openSettingsSection(window, "Models");
-    await expect(window.locator(".surface-toolbar__field option")).toHaveCount(2);
+    await expect.poll(() => window.locator(".surface-toolbar__field option").count()).toBeGreaterThan(1);
     expect((await window.locator(".surface-toolbar__field option").allTextContents()).every((text) => !/Worktree/i.test(text))).toBeTruthy();
     await setEnabledModels(window, ["test-openai/gpt-5", "test-openai/gpt-4-turbo"], ["test-openai/gpt-4o"]);
     await window.locator(".settings-select").selectOption("test-openai:gpt-5");

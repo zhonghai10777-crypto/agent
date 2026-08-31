@@ -226,7 +226,7 @@ test("dark mode keeps the send button visible before and after typing", async ()
       })
       .toBeGreaterThan(3);
 
-    await window.getByTestId("composer").fill("make the arrow visible");
+    await window.getByTestId("composer").pressSequentially("make the arrow visible");
     await expect(sendButton).toBeEnabled();
     await expect
       .poll(async () => {

@@ -216,6 +216,10 @@ export function TerminalPanel({
       }
       const commandModifier = api.platform === "darwin" ? event.metaKey : event.ctrlKey;
       const key = event.key.toLowerCase();
+      if (commandModifier && !event.shiftKey && key === "j") {
+        onHide();
+        return false;
+      }
       if (commandModifier && !event.shiftKey && key === "t") {
         void createTerminal();
         return false;
@@ -293,6 +297,14 @@ export function TerminalPanel({
       className={`terminal-panel${isTakeover ? " terminal-panel--takeover" : ""}`}
       data-pi-terminal="true"
       data-testid="integrated-terminal"
+      onKeyDownCapture={(event) => {
+        const commandModifier = api?.platform === "darwin" ? event.metaKey : event.ctrlKey;
+        if (commandModifier && !event.shiftKey && event.key.toLowerCase() === "j") {
+          event.preventDefault();
+          event.stopPropagation();
+          onHide();
+        }
+      }}
       style={isTakeover ? undefined : { height: `${height || DEFAULT_TERMINAL_HEIGHT}px` }}
     >
       <div className="terminal-panel__resize-handle" onMouseDown={startResize} />
