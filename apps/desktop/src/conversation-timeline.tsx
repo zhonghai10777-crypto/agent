@@ -74,16 +74,10 @@ export function ConversationTimeline({
 
   const displayItems = useMemo(() => buildDisplayTimelineItems(transcript), [transcript]);
 
-  // Giant prose blocks and attachment-heavy rows routinely blow past the estimator,
-  // so keep those transcripts on the exact DOM path instead of restoring to a fake bottom.
-  const hasUnreliableVirtualizedHeights = transcript.some(
-    (item) => item.kind === "message" && (item.text.length > 2000 || Boolean(item.attachments?.length)),
-  );
   const shouldVirtualize =
     !threadSearch.isOpen &&
     transcript.length > VIRTUALIZATION_THRESHOLD &&
-    !disableVirtualization &&
-    !hasUnreliableVirtualizedHeights;
+    !disableVirtualization;
   const [expandedToolCallIds, setExpandedToolCallIds] = useState<Set<string>>(() => new Set());
   const measuredHeightsRef = useRef(new Map<string, number>());
   const [measurementVersion, setMeasurementVersion] = useState(0);

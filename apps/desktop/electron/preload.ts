@@ -32,6 +32,7 @@ import type {
 import type { RuntimeSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type {
   AppView,
+  AssistantDeltaEvent,
   ComposerAttachment,
   ComposerImageAttachment,
   CreateSessionInput,
@@ -100,6 +101,8 @@ contextBridge.exposeInMainWorld("piApp", {
       ipcRenderer.removeListener(desktopIpc.selectedTranscriptChanged, handle);
     };
   },
+  onAssistantDelta: (listener: (event: AssistantDeltaEvent) => void) =>
+    subscribeIpc(desktopIpc.assistantDelta, listener),
   onCommand: (listener: (command: PiDesktopCommand) => void) => {
     const handle = (_event: Electron.IpcRendererEvent, command: PiDesktopCommand) => {
       listener(command);

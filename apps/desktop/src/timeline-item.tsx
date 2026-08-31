@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { SessionTranscriptMessage } from "@pi-gui/pi-sdk-driver";
 import type { DisplayTimelineItem, TimelineActivity, TimelineToolCall, TimelineSummary, TimelineTurnMarker } from "./timeline-types";
 import { MessageMarkdown } from "./message-markdown";
@@ -7,21 +8,23 @@ import { extensionToLanguage } from "./syntax-highlight";
 import { useI18n } from "./i18n/I18nProvider";
 import type { Translator } from "./i18n";
 
-export function TimelineItem({
-  item,
-  expandedToolCallIds,
-  onToggleToolCall,
-  onViewFileInDiff,
-  sourceMessageIndex,
-  onForkFromMessage,
-}: {
+interface TimelineItemProps {
   readonly item: DisplayTimelineItem;
   readonly expandedToolCallIds?: ReadonlySet<string>;
   readonly onToggleToolCall?: (callId: string) => void;
   readonly onViewFileInDiff?: (path: string) => void;
   readonly sourceMessageIndex?: number;
   readonly onForkFromMessage?: (messageIndex: number, preview?: string) => void;
-}) {
+}
+
+export const TimelineItem = memo(function TimelineItem({
+  item,
+  expandedToolCallIds,
+  onToggleToolCall,
+  onViewFileInDiff,
+  sourceMessageIndex,
+  onForkFromMessage,
+}: TimelineItemProps) {
   switch (item.kind) {
     case "turn-marker":
       return <TimelineTurnMarkerItem item={item} />;
@@ -49,6 +52,25 @@ export function TimelineItem({
     default:
       return null;
   }
+}, areTimelineItemPropsEqual);
+
+function areTimelineItemPropsEqual(previous: TimelineItemProps, next: TimelineItemProps): boolean {
+  if (
+    previous.item !== next.item ||
+    previous.sourceMessageIndex !== next.sourceMessageIndex ||
+    previous.onToggleToolCall !== next.onToggleToolCall ||
+    previous.onViewFileInDiff !== next.onViewFileInDiff ||
+    previous.onForkFromMessage !== next.onForkFromMessage
+  ) {
+    return false;
+  }
+  if (previous.item.kind !== "tool") {
+    return true;
+  }
+  return (
+    (previous.expandedToolCallIds?.has(previous.item.callId) ?? false) ===
+    (next.expandedToolCallIds?.has(previous.item.callId) ?? false)
+  );
 }
 
 function TimelineMessage({

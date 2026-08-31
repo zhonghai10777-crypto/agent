@@ -98,9 +98,9 @@ export function appendAssistantDelta(
   activeAssistantMessageBySession: Map<string, string>,
   sessionRef: SessionRef,
   text: string,
-): void {
+): { readonly messageId: string; readonly createdAt: string } {
   const key = sessionKey(sessionRef);
-  const transcript = [...(transcriptCache.get(key) ?? [])];
+  const transcript = transcriptCache.get(key) ?? [];
   const activeId = activeAssistantMessageBySession.get(key);
 
   if (activeId) {
@@ -111,18 +111,21 @@ export function appendAssistantDelta(
         ...current,
         text: `${current.text}${text}`,
       };
+      return { messageId: current.id, createdAt: current.createdAt };
     } else {
       const message = makeTranscriptMessage("assistant", text);
       transcript.push(message);
       activeAssistantMessageBySession.set(key, message.id);
+      transcriptCache.set(key, transcript);
+      return { messageId: message.id, createdAt: message.createdAt };
     }
   } else {
     const message = makeTranscriptMessage("assistant", text);
     transcript.push(message);
     activeAssistantMessageBySession.set(key, message.id);
+    transcriptCache.set(key, transcript);
+    return { messageId: message.id, createdAt: message.createdAt };
   }
-
-  transcriptCache.set(key, transcript);
 }
 
 export function clearActiveAssistantMessage(

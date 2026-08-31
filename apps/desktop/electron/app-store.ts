@@ -41,6 +41,7 @@ import type {
 } from "@pi-gui/session-driver/runtime-types";
 import {
   type AppView,
+  type AssistantDeltaEvent,
   type ComposerAttachment,
   type ComposerDraftSyncSource,
   type ExtensionCommandCompatibilityRecord,
@@ -120,6 +121,7 @@ import { isSessionActivelyViewed, isSessionVisibleInWindow } from "./session-vis
 
 type StateListener = (state: DesktopAppState) => void;
 type SelectedTranscriptListener = (payload: SelectedTranscriptRecord | null) => void;
+type AssistantDeltaListener = (event: AssistantDeltaEvent) => void;
 type SessionEventListener = (event: SessionDriverEvent, state: DesktopAppState) => void | Promise<void>;
 type ExtensionUiDialogRequest = Extract<SessionDriverEvent, { type: "hostUiRequest" }>["request"] & {
   readonly requestId: string;
@@ -176,6 +178,18 @@ export class DesktopAppStore implements AppStoreInternals {
   /** Serialize full-state refreshes so stale async builders cannot publish over newer state. */
   private refreshStateQueue: Promise<void> = Promise.resolve();
   private readonly selectedTranscriptListeners = new Set<SelectedTranscriptListener>();
+  private readonly assistantDeltaListeners = new Set<AssistantDeltaListener>();
+  private readonly pendingAssistantDeltas = new Map<
+    string,
+    {
+      readonly sessionRef: SessionRef;
+      readonly messageId: string;
+      readonly createdAt: string;
+      delta: string;
+      timer: NodeJS.Timeout;
+    }
+  >();
+  private readonly assistantDeltaSequences = new Map<string, { readonly messageId: string; sequence: number }>();
   private readonly sessionEventListeners = new Set<SessionEventListener>();
   private readonly sessionEventQueues = new Map<string, Promise<void>>();
   /**
@@ -405,6 +419,13 @@ export class DesktopAppStore implements AppStoreInternals {
     void this.getSelectedTranscript().then(listener).catch(() => undefined);
     return () => {
       this.selectedTranscriptListeners.delete(listener);
+    };
+  }
+
+  subscribeToAssistantDeltas(listener: AssistantDeltaListener): () => void {
+    this.assistantDeltaListeners.add(listener);
+    return () => {
+      this.assistantDeltaListeners.delete(listener);
     };
   }
 
@@ -2436,9 +2457,17 @@ export class DesktopAppStore implements AppStoreInternals {
       }
 
       switch (event.type) {
-        case "assistantDelta":
-          appendAssistantDelta(this.sessionState.transcriptCache, this.sessionState.activeAssistantMessageBySession, event.sessionRef, event.text);
-          break;
+        case "assistantDelta": {
+          const message = appendAssistantDelta(
+            this.sessionState.transcriptCache,
+            this.sessionState.activeAssistantMessageBySession,
+            event.sessionRef,
+            event.text,
+          );
+          this.queueAssistantDelta(event.sessionRef, message.messageId, message.createdAt, event.text);
+          await this.emitSessionEvent(event, this.state);
+          return;
+        }
         case "sessionOpened":
         case "runCompleted":
           this.updateSessionConfig(event.sessionRef, event.snapshot.config);
@@ -2538,9 +2567,62 @@ export class DesktopAppStore implements AppStoreInternals {
     } catch (error) {
       console.error(`[app-store] failed to apply session event ${event.type} for ${key}`, error);
     } finally {
-      const snapshot = this.emit();
-      this.publishSelectedTranscriptFor(event.sessionRef);
-      await this.emitSessionEvent(event, snapshot);
+      if (event.type !== "assistantDelta") {
+        const eventSessionKey = sessionKey(event.sessionRef);
+        this.flushAssistantDelta(eventSessionKey);
+        const snapshot = this.emit();
+        this.publishSelectedTranscriptFor(event.sessionRef);
+        await this.emitSessionEvent(event, snapshot);
+        if (event.type === "sessionClosed") {
+          this.assistantDeltaSequences.delete(eventSessionKey);
+        }
+      }
+    }
+  }
+
+  private queueAssistantDelta(
+    sessionRef: SessionRef,
+    messageId: string,
+    createdAt: string,
+    delta: string,
+  ): void {
+    const key = sessionKey(sessionRef);
+    const pending = this.pendingAssistantDeltas.get(key);
+    if (pending?.messageId === messageId) {
+      pending.delta += delta;
+      return;
+    }
+    if (pending) {
+      this.flushAssistantDelta(key);
+    }
+    const timer = setTimeout(() => {
+      this.flushAssistantDelta(key);
+    }, 50);
+    timer.unref?.();
+    this.pendingAssistantDeltas.set(key, { sessionRef, messageId, createdAt, delta, timer });
+  }
+
+  private flushAssistantDelta(key: string): void {
+    const pending = this.pendingAssistantDeltas.get(key);
+    if (!pending) {
+      return;
+    }
+    clearTimeout(pending.timer);
+    this.pendingAssistantDeltas.delete(key);
+    const previous = this.assistantDeltaSequences.get(key);
+    const sequence = previous?.messageId === pending.messageId ? previous.sequence + 1 : 1;
+    this.assistantDeltaSequences.set(key, { messageId: pending.messageId, sequence });
+    const event: AssistantDeltaEvent = {
+      type: "assistant-delta",
+      workspaceId: pending.sessionRef.workspaceId,
+      sessionId: pending.sessionRef.sessionId,
+      messageId: pending.messageId,
+      sequence,
+      delta: pending.delta,
+      createdAt: pending.createdAt,
+    };
+    for (const listener of this.assistantDeltaListeners) {
+      listener(event);
     }
   }
 

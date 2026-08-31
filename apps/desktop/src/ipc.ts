@@ -7,6 +7,7 @@ import type {
 } from "@pi-gui/session-driver/types";
 import type {
   AppView,
+  AssistantDeltaEvent,
   ComposerAttachment,
   ComposerImageAttachment,
   CreateSessionInput,
@@ -120,6 +121,7 @@ export const desktopIpc = {
   stateChanged: "pi-gui:state-changed",
   selectedTranscriptRequest: "pi-gui:selected-transcript-request",
   selectedTranscriptChanged: "pi-gui:selected-transcript-changed",
+  assistantDelta: "pi-gui:assistant-delta",
   appCommand: "pi-gui:app-command",
   workspacePicked: "pi-gui:workspace-picked",
   clipboardImagePasted: "pi-gui:clipboard-image-pasted",
@@ -240,6 +242,7 @@ export function getDesktopShortcutLabel(platform: NodeJS.Platform, key: string):
 
 export type PiDesktopStateListener = (state: DesktopAppState) => void;
 export type PiDesktopSelectedTranscriptListener = (payload: SelectedTranscriptRecord | null) => void;
+export type PiDesktopAssistantDeltaListener = (event: AssistantDeltaEvent) => void;
 export type PiDesktopCommand = (typeof desktopCommands)[keyof typeof desktopCommands];
 
 export type ChangedFileStatus = "added" | "copied" | "deleted" | "modified" | "renamed" | "untracked";
@@ -365,6 +368,7 @@ export interface PiDesktopApi {
   onStateChanged(listener: PiDesktopStateListener): () => void;
   getSelectedTranscript(): Promise<SelectedTranscriptRecord | null>;
   onSelectedTranscriptChanged(listener: PiDesktopSelectedTranscriptListener): () => void;
+  onAssistantDelta(listener: PiDesktopAssistantDeltaListener): () => void;
   onCommand(listener: (command: PiDesktopCommand) => void): () => void;
   onWorkspacePicked(listener: (workspaceId: string) => void): () => void;
   onClipboardImagePasted(listener: (attachment: ComposerImageAttachment) => void): () => void;

@@ -4,7 +4,7 @@ import type {
   ExtensionFactory,
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import { numberParam, stringParam, toolErrorMessage } from "./tool-params";
+import { numberParam, stringParam } from "./tool-params";
 import type { LibraryDocument, LibraryIndexReader, LibraryIndexStatus } from "./library-index";
 import type { LibrarySettings } from "./library-store";
 
@@ -31,6 +31,9 @@ export interface LibrarySearchToolDetails {
 export interface LibraryListToolDetails {
   readonly action: "library_list";
   readonly filter: string;
+  readonly offset: number;
+  readonly limit: number;
+  readonly total: number;
   readonly documents: readonly LibraryListEntry[];
   readonly error?: string;
 }
@@ -65,6 +68,7 @@ export function searchLibraryDocuments(
     return [];
   }
 
+  const boundedLimit = Math.min(Math.max(Math.trunc(limit), 1), 20);
   const matches: LibrarySearchMatch[] = [];
   for (const document of documents) {
     for (const [partIndex, part] of document.parts.entries()) {
@@ -77,7 +81,7 @@ export function searchLibraryDocuments(
         normalized.indexOf(term) < normalized.indexOf(best) ? term : best,
       );
       const firstMatch = normalized.indexOf(firstTerm);
-      matches.push({
+      const match = {
         path: document.path,
         title: document.title,
         part: partIndex + 1,
@@ -85,19 +89,11 @@ export function searchLibraryDocuments(
         snippet: snippetAround(part, firstMatch, firstTerm.length, 200),
         matchedTerms: terms.length,
         frequency,
-      });
+      } satisfies LibrarySearchMatch;
+      insertRankedMatch(matches, match, boundedLimit);
     }
   }
-
-  return matches
-    .sort(
-      (left, right) =>
-        right.matchedTerms - left.matchedTerms ||
-        right.frequency - left.frequency ||
-        left.title.localeCompare(right.title) ||
-        left.part - right.part,
-    )
-    .slice(0, Math.min(Math.max(Math.trunc(limit), 1), 20));
+  return matches;
 }
 
 function createLibrarySearchTool(
@@ -180,23 +176,33 @@ function createLibraryListTool(
           type: "string",
           description: "Optional case-insensitive file-name filter.",
         },
+        offset: {
+          type: "number",
+          description: "Zero-based document offset. Defaults to 0.",
+        },
+        limit: {
+          type: "number",
+          description: "Maximum documents to return. Defaults to 50 and is capped at 50.",
+        },
       },
     },
     async execute(_toolCallId, params): Promise<AgentToolResult<LibraryToolDetails>> {
       const filter = stringParam(params, "filter") ?? "";
+      const offset = Math.max(0, Math.trunc(numberParam(params, "offset") ?? 0));
+      const limit = Math.min(50, Math.max(1, Math.trunc(numberParam(params, "limit") ?? 50)));
       const settings = getSettings();
       const configurationError = describeLibraryMisconfiguration(settings);
       if (configurationError) {
-        return errorResult({ action: "library_list", filter, documents: [], error: configurationError });
+        return errorResult({ action: "library_list", filter, offset, limit, total: 0, documents: [], error: configurationError });
       }
 
       const readinessError = await refreshReadyIndex(index, settings.roots);
       if (readinessError) {
-        return errorResult({ action: "library_list", filter, documents: [], error: readinessError });
+        return errorResult({ action: "library_list", filter, offset, limit, total: 0, documents: [], error: readinessError });
       }
 
       const normalizedFilter = filter.toLowerCase();
-      const documents = index
+      const matchingDocuments = index
         .documents()
         .filter((document) => !normalizedFilter || document.title.toLowerCase().includes(normalizedFilter))
         .map((document) => ({
@@ -205,11 +211,12 @@ function createLibraryListTool(
           unit: document.unit,
           parts: document.parts.length,
         }));
+      const documents = matchingDocuments.slice(offset, offset + limit);
       const text = documents.length
         ? documents
             .map((document, documentIndex) => {
               const unit = document.unit === "page" ? "page(s)" : "section(s)";
-              return `${documentIndex + 1}. 《${document.title}》 — ${document.parts} ${unit}\nPath: ${document.path}`;
+              return `${offset + documentIndex + 1}. 《${document.title}》 — ${document.parts} ${unit}\nPath: ${document.path}`;
             })
             .join("\n\n")
         : filter
@@ -217,7 +224,7 @@ function createLibraryListTool(
           : "The local library contains no readable documents.";
       return {
         content: [{ type: "text", text }],
-        details: { action: "library_list", filter, documents },
+        details: { action: "library_list", filter, offset, limit, total: matchingDocuments.length, documents },
       };
     },
   };
@@ -260,12 +267,30 @@ async function refreshReadyIndex(index: LibraryIndexReader, roots: readonly stri
   if (status.state === "indexing") {
     return indexingMessage(status);
   }
-  try {
-    await index.rebuild(roots);
-    return undefined;
-  } catch (error) {
-    return `The local library could not be refreshed (${toolErrorMessage(error)}).`;
+  return undefined;
+}
+
+function insertRankedMatch(matches: LibrarySearchMatch[], match: LibrarySearchMatch, limit: number): void {
+  const insertAt = matches.findIndex((current) => compareSearchMatches(match, current) < 0);
+  if (insertAt < 0) {
+    if (matches.length < limit) {
+      matches.push(match);
+    }
+    return;
   }
+  matches.splice(insertAt, 0, match);
+  if (matches.length > limit) {
+    matches.pop();
+  }
+}
+
+function compareSearchMatches(left: LibrarySearchMatch, right: LibrarySearchMatch): number {
+  return (
+    right.matchedTerms - left.matchedTerms ||
+    right.frequency - left.frequency ||
+    left.title.localeCompare(right.title) ||
+    left.part - right.part
+  );
 }
 
 function indexingMessage(status: LibraryIndexStatus): string {

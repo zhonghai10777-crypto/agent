@@ -1,9 +1,10 @@
-import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import type { DesktopAppState, SelectedTranscriptRecord } from "../desktop-state";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import type { AssistantDeltaEvent, DesktopAppState, SelectedTranscriptRecord } from "../desktop-state";
 
 export function useDesktopAppState() {
   const [snapshot, setSnapshot] = useState<DesktopAppState | null>(null);
   const [selectedTranscript, setSelectedTranscript] = useState<SelectedTranscriptRecord | null>(null);
+  const assistantDeltaSequencesRef = useRef(new Map<string, { readonly messageId: string; readonly sequence: number }>());
 
   useEffect(() => {
     let active = true;
@@ -42,15 +43,62 @@ export function useDesktopAppState() {
         setSelectedTranscript(payload);
       }
     });
+    const unsubscribeAssistantDelta = api.onAssistantDelta((event) => {
+      if (!active) {
+        return;
+      }
+      receivedPushedTranscript = true;
+      const key = `${event.workspaceId}\0${event.sessionId}`;
+      const previous = assistantDeltaSequencesRef.current.get(key);
+      const previousSequence = previous?.messageId === event.messageId ? previous.sequence : 0;
+      if (event.sequence <= previousSequence) {
+        return;
+      }
+      assistantDeltaSequencesRef.current.set(key, { messageId: event.messageId, sequence: event.sequence });
+      setSelectedTranscript((current) => applyAssistantDelta(current, event));
+    });
 
     return () => {
       active = false;
       unsubscribeState();
       unsubscribeTranscript();
+      unsubscribeAssistantDelta();
     };
   }, []);
 
   return [snapshot, setSnapshot, selectedTranscript] as const;
+}
+
+export function applyAssistantDelta(
+  current: SelectedTranscriptRecord | null,
+  event: AssistantDeltaEvent,
+): SelectedTranscriptRecord | null {
+  if (!current || current.workspaceId !== event.workspaceId || current.sessionId !== event.sessionId) {
+    return current;
+  }
+  const messageIndex = current.transcript.findIndex((item) => item.id === event.messageId);
+  if (messageIndex < 0) {
+    return {
+      ...current,
+      transcript: [
+        ...current.transcript,
+        {
+          kind: "message",
+          id: event.messageId,
+          role: "assistant",
+          text: event.delta,
+          createdAt: event.createdAt,
+        },
+      ],
+    };
+  }
+  const message = current.transcript[messageIndex];
+  if (message?.kind !== "message" || message.role !== "assistant") {
+    return current;
+  }
+  const transcript = [...current.transcript];
+  transcript[messageIndex] = { ...message, text: `${message.text}${event.delta}` };
+  return { ...current, transcript };
 }
 
 /**
