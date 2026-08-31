@@ -29,3 +29,12 @@ export type {
   SessionTranscriptRole,
   SessionTranscriptToolCall,
 } from "./transcript.js";
+export {
+  PI_RUNTIME_VERSION,
+  createAgentEventNormalizer,
+  findModel,
+  listAvailableModels,
+  listModels,
+  modelSupportsImages,
+} from "./pi-compat/index.js";
+export type { AgentEventNormalizer, NormalizedAgentEvent } from "./pi-compat/index.js";

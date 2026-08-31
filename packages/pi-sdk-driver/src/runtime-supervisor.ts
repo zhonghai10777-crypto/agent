@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   DefaultPackageManager,
-  DefaultResourceLoader,
   type CreateModelRuntimeOptions,
+  type ResourceLoader,
   type PackageSource,
   SettingsManager,
   parseFrontmatter,
@@ -31,6 +31,17 @@ import { createSettingsManagerWithoutNpmPackages, isGlobalNpmLookupError } from 
 import { skillSlashCommand } from "./runtime-command-utils.js";
 import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import {
+  createCompatResourceLoader,
+  listAvailableModels,
+  listCredentialInfo,
+  listModels,
+  loginProvider,
+  logoutProvider,
+  removeRuntimeApiKey,
+  resolveProviderAuth,
+  setRuntimeApiKey,
+} from "./pi-compat/index.js";
+import {
   BUILT_IN_PROVIDER_IDS,
   CustomProviderStore,
   type CustomProviderEntry,
@@ -56,7 +67,7 @@ interface RuntimeContext {
   readonly workspace: WorkspaceRef;
   readonly settingsManager: SettingsManager;
   readonly packageManager: DefaultPackageManager;
-  readonly resourceLoader: DefaultResourceLoader;
+  readonly resourceLoader: ResourceLoader;
 }
 
 export interface RuntimeInlineExtensionMetadata {
@@ -135,7 +146,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
   async login(workspace: WorkspaceRef, providerId: string, callbacks: RuntimeLoginCallbacks): Promise<RuntimeSnapshot> {
     const context = await this.ensureContext(workspace);
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await runtime.login(providerId, "oauth", toPiAuthInteraction(callbacks));
+    await loginProvider(runtime, providerId, "oauth", toPiAuthInteraction(callbacks));
     await registry.refresh();
     await context.resourceLoader.reload();
     await this.autoEnableModelsForAuthenticatedProviders(context, [providerId]);
@@ -145,7 +156,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
   async logout(workspace: WorkspaceRef, providerId: string): Promise<RuntimeSnapshot> {
     const context = await this.ensureContext(workspace);
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await runtime.logout(providerId);
+    await logoutProvider(runtime, providerId);
     await registry.refresh();
     await context.resourceLoader.reload();
     return this.buildSnapshot(context);
@@ -161,7 +172,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       throw new Error(`API key setup is not supported for ${providerId}.`);
     }
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await runtime.setRuntimeApiKey(providerId, normalized);
+    await setRuntimeApiKey(runtime, providerId, normalized);
     await registry.refresh();
     await context.resourceLoader.reload();
     await this.autoEnableModelsForAuthenticatedProviders(context, [providerId]);
@@ -174,7 +185,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     // is configured so the UI can reflect the custom endpoint's key state.
     const runtime = await this.modelRuntime;
     const records = await Promise.all(entries.map(async (entry) => {
-      const credential = await runtime.getAuth(entry.providerId);
+      const credential = await resolveProviderAuth(runtime, entry.providerId);
       const hasKey = Boolean(credential?.auth.apiKey || credential?.auth.headers);
       return hasKey ? { ...entry, apiKey: REDACTED_API_KEY } : entry;
     }));
@@ -183,7 +194,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
 
   async setCustomProvider(workspace: WorkspaceRef, input: CustomProviderInput): Promise<RuntimeSnapshot> {
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    const oauthProviderIds = new Set((await runtime.listCredentials()).filter((entry) => entry.type === "oauth").map((entry) => entry.providerId));
+    const oauthProviderIds = new Set((await listCredentialInfo(runtime)).filter((entry) => entry.type === "oauth").map((entry) => entry.providerId));
     if (BUILT_IN_PROVIDER_IDS.has(input.providerId) || oauthProviderIds.has(input.providerId)) {
       throw new Error(
         `Provider ID "${input.providerId}" conflicts with a built-in provider. Pick a unique ID.`,
@@ -200,7 +211,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     // on edit; treat it as "keep the existing key" instead of overwriting the
     // stored credential with the literal sentinel.
     if (trimmedKey && trimmedKey !== REDACTED_API_KEY) {
-      await runtime.setRuntimeApiKey(input.providerId, trimmedKey);
+      await setRuntimeApiKey(runtime, input.providerId, trimmedKey);
     }
     await registry.refresh();
     await context.resourceLoader.reload();
@@ -212,7 +223,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     const context = await this.ensureContext(workspace);
     await this.customProviderStore.delete(providerId);
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await runtime.removeRuntimeApiKey(providerId);
+    await removeRuntimeApiKey(runtime, providerId);
     await registry.refresh();
     await context.resourceLoader.reload();
     return this.buildSnapshot(context);
@@ -397,7 +408,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       agentDir: this.agentDir,
       settingsManager,
     });
-    let resourceLoader = new DefaultResourceLoader({
+    let resourceLoader = createCompatResourceLoader({
       cwd: workspace.path,
       agentDir: this.agentDir,
       settingsManager,
@@ -429,7 +440,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
         agentDir: this.agentDir,
         settingsManager,
       });
-      resourceLoader = new DefaultResourceLoader({
+      resourceLoader = createCompatResourceLoader({
         cwd: workspace.path,
         agentDir: this.agentDir,
         settingsManager,
@@ -517,7 +528,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       (await this.customProviderStore.list()).map((entry) => entry.providerId),
     );
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    const credentials = await runtime.listCredentials();
+    const credentials = await listCredentialInfo(runtime);
     const credentialByProvider = new Map(credentials.map((credential) => [credential.providerId, credential]));
     const oauthProviderIds = new Set(credentials.filter((credential) => credential.type === "oauth").map((credential) => credential.providerId));
 
@@ -550,13 +561,12 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     // `getAvailable()` may perform provider network checks and transiently
     // hide otherwise configured custom models while an endpoint is offline.
     const availableKeys = new Set(
-      runtime.getAvailableSnapshot().map((model) => `${model.provider}:${model.id}`),
+      listAvailableModels(runtime).map((model) => `${model.provider}:${model.id}`),
     );
     const providerMap = new Map(providers.map((provider) => [provider.id, provider]));
     const customProviderIds = new Set(providerMap.keys());
 
-    return runtime
-      .getModels()
+    return listModels(runtime)
       .filter((model) => customProviderIds.has(model.provider))
       .map<RuntimeModelRecord>((model) => {
         const provider = providerMap.get(model.provider);
@@ -711,7 +721,7 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     );
   }
 
-  private buildInlineExtensionRecord(extension: ReturnType<DefaultResourceLoader["getExtensions"]>["extensions"][number]): RuntimeExtensionRecord {
+  private buildInlineExtensionRecord(extension: ReturnType<ResourceLoader["getExtensions"]>["extensions"][number]): RuntimeExtensionRecord {
     const metadata = inlineExtensionMetadataForPath(extension.path, this.inlineExtensionMetadata);
     return {
       path: extension.path,
