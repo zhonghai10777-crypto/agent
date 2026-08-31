@@ -41,8 +41,8 @@ proof_dir="${3:-$release_dir/linux-package-proof}"
 mkdir -p "$proof_dir"
 proof_dir="$(cd "$proof_dir" && pwd)"
 
-appimage="$release_dir/pi-gui-$version-x86_64.AppImage"
-deb="$release_dir/pi-gui_${version}_amd64.deb"
+appimage="$release_dir/Agent-$version-x86_64.AppImage"
+deb="$release_dir/Agent_${version}_amd64.deb"
 debian_version="$(normalize_debian_version "$version")"
 required_dependencies=(
   "libgtk-3-0 | libgtk-3-0t64"
@@ -125,7 +125,7 @@ verify_deb_archive() {
   assert_control_field Section "devel"
   assert_control_field Priority "optional"
   assert_control_field Maintainer "Matthew Lam <minghinmatthew.lam@gmail.com>"
-  assert_control_field Homepage "https://github.com/minghinmatthewlam/pi-gui"
+  assert_control_field Homepage "https://github.com/zhonghai10777-crypto/agent"
 
   local description
   description="$(dpkg-deb --field "$deb" Description | head -n 1)"

@@ -50,6 +50,7 @@ import { useTreeForkModals } from "./hooks/use-tree-fork-modals";
 import { useComposerDraftSync } from "./hooks/use-composer-draft-sync";
 import { useSessionComposer } from "./hooks/use-session-composer";
 import { ErrorBoundary } from "./error-boundary";
+import { PRODUCT } from "./product";
 
 export default function App() {
   const [snapshot, setSnapshot, selectedTranscript] = useDesktopAppState();
@@ -650,7 +651,7 @@ function AppShell({
     return (
       <div className="shell shell--loading">
         <main className="loading-card">
-          <div className="loading-card__eyebrow">pi-gui</div>
+          <div className="loading-card__eyebrow">{PRODUCT.name}</div>
           <h1>{t("app.loadingSessions")}</h1>
           <p>{t("app.loadingSessionsBody")}</p>
         </main>

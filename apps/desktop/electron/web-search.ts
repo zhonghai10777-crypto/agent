@@ -1,3 +1,5 @@
+import { PRODUCT } from "../src/product";
+
 /**
  * Search backends. The three shapes cover the realistic deployments:
  *  - `bocha`   博查 — a mainland-reachable commercial search API.
@@ -41,7 +43,7 @@ const MAX_FETCH_BYTES = 5 * 1024 * 1024;
 /** Hard cap on extracted characters handed back to the model. */
 const MAX_EXTRACT_CHARS = 40_000;
 const REQUEST_TIMEOUT_MS = 20_000;
-const USER_AGENT = "pi-gui/1.0 (+desktop assistant)";
+const USER_AGENT = `${PRODUCT.name}/1.0 (+desktop assistant)`;
 
 export interface WebSearchResult {
   readonly title: string;

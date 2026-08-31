@@ -1,6 +1,6 @@
-appId: com.pi-gui.desktop
-productName: pi-gui
-copyright: Copyright 2026 Matthew Lam
+appId: com.zhonghai10777.agent
+productName: Agent
+copyright: Copyright 2026 zhonghai10777-crypto
 electronVersion: 37.10.3
 
 directories:
@@ -44,7 +44,7 @@ linux:
   category: Development
   executableName: pi-gui
   maintainer: Matthew Lam <minghinmatthew.lam@gmail.com>
-  vendor: pi-gui
+  vendor: Agent
   synopsis: Codex-style desktop app for the pi coding agent
   description: A native desktop interface for pi coding agent sessions, workspaces, and tools.
   target:
@@ -74,7 +74,7 @@ deb:
     - libgbm1
 
 win:
-  executableName: pi-gui
+  executableName: agent
   signAndEditExecutable: true
   target:
     - target: nsis
@@ -107,5 +107,5 @@ dmg:
 
 publish:
   provider: github
-  owner: minghinmatthewlam
-  repo: pi-gui
+  owner: zhonghai10777-crypto
+  repo: agent

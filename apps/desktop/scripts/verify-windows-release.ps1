@@ -66,8 +66,8 @@ function Invoke-SevenZip([string]$SevenZip, [string[]]$Arguments) {
   }
 }
 
-$setup = Join-Path $ReleaseDir "pi-gui-$Version-x64-setup.exe"
-$portable = Join-Path $ReleaseDir "pi-gui-$Version-x64-portable.exe"
+$setup = Join-Path $ReleaseDir "Agent-$Version-x64-setup.exe"
+$portable = Join-Path $ReleaseDir "Agent-$Version-x64-portable.exe"
 Assert-ValidSignature $setup
 Assert-ValidSignature $portable
 
@@ -96,14 +96,14 @@ if ($SmokePackages) {
       throw "NSIS silent install failed with exit code $($installer.ExitCode)"
     }
 
-    $installedApp = Join-Path $installRoot "pi-gui.exe"
+    $installedApp = Join-Path $installRoot "agent.exe"
     Assert-ValidSignature $installedApp
     Assert-X64Pe $installedApp
 
     Invoke-SevenZip $sevenZip @("x", "-y", "-o$portableRoot", $portable)
     $portableAppFile = Get-ChildItem `
       -LiteralPath $portableRoot `
-      -Filter "pi-gui.exe" `
+      -Filter "agent.exe" `
       -File `
       -Recurse | Select-Object -First 1
     if (-not $portableAppFile) {
@@ -113,19 +113,19 @@ if ($SmokePackages) {
         -File `
         -Recurse | Select-Object -First 1
       if (-not $embeddedArchive) {
-        throw "Portable package did not contain pi-gui.exe or an embedded application archive"
+        throw "Portable package did not contain agent.exe or an embedded application archive"
       }
       $embeddedRoot = Join-Path $portableRoot "embedded"
       New-Item -ItemType Directory -Path $embeddedRoot | Out-Null
       Invoke-SevenZip $sevenZip @("x", "-y", "-o$embeddedRoot", $embeddedArchive.FullName)
       $portableAppFile = Get-ChildItem `
         -LiteralPath $embeddedRoot `
-        -Filter "pi-gui.exe" `
+        -Filter "agent.exe" `
         -File `
         -Recurse | Select-Object -First 1
     }
     if (-not $portableAppFile) {
-      throw "Portable application archive did not contain pi-gui.exe"
+      throw "Portable application archive did not contain agent.exe"
     }
     $portableApp = $portableAppFile.FullName
     Assert-ValidSignature $portableApp

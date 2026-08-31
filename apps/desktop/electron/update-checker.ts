@@ -1,8 +1,9 @@
 import { app, net, Notification, shell } from "electron";
+import { PRODUCT, PRODUCT_REPOSITORY_URL } from "../src/product";
 
 const RELEASES_URL =
-  "https://api.github.com/repos/minghinmatthewlam/pi-gui/releases?per_page=1";
-const RELEASES_PAGE = "https://github.com/minghinmatthewlam/pi-gui/releases";
+  `https://api.github.com/repos/${PRODUCT.githubOwner}/${PRODUCT.githubRepo}/releases?per_page=1`;
+const RELEASES_PAGE = `${PRODUCT_REPOSITORY_URL}/releases`;
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INITIAL_DELAY_MS = 15_000; // 15 seconds after launch
@@ -36,7 +37,7 @@ export function showUpdateNotification(
     return;
   }
   const notification = new Notification({
-    title: "pi-gui Release Available",
+    title: `${PRODUCT.name} update available`,
     body: `Version ${latestVersion} is available (you have ${currentVersion}). Click to view the release.`,
   });
   notification.on("click", () => {

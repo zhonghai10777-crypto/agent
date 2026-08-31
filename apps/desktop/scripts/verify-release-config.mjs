@@ -120,6 +120,11 @@ function validateCiWorkflow(workflow) {
 }
 
 function validateBuilderConfig(config, desktopPackage, afterRemoveSource) {
+  assert(config.appId === "com.zhonghai10777.agent", "Application ID must belong to Agent");
+  assert(config.productName === "Agent", "Packaged product name must be Agent");
+  assert(config.publish?.owner === "zhonghai10777-crypto", "GitHub publish owner must target this repository");
+  assert(config.publish?.repo === "agent", "GitHub publish repository must target agent");
+  assert(config.win?.executableName === "agent", "Windows executable name must be agent");
   assert(config.mac?.notarize === true, "electron-builder must notarize the macOS app");
   assert(
     config.win?.signAndEditExecutable === true,
@@ -143,7 +148,7 @@ function validateBuilderConfig(config, desktopPackage, afterRemoveSource) {
   );
 
   assert(
-    desktopPackage.homepage === "https://github.com/minghinmatthewlam/pi-gui",
+    desktopPackage.homepage === "https://github.com/zhonghai10777-crypto/agent",
     "Desktop package metadata must provide the Debian Homepage",
   );
   assert(
@@ -539,15 +544,7 @@ function validateWorkflow(
     "Published Windows packages must be installed and extracted",
   );
 
-  assert(
-    JSON.stringify(jobs["sync-homebrew"]?.needs) ===
-      JSON.stringify([
-        "verify-published-macos",
-        "verify-published-linux",
-        "verify-published-windows",
-      ]),
-    "Homebrew sync must wait for every post-publication native verification",
-  );
+  assert(!jobs["sync-homebrew"], "Release workflow must not publish to the upstream Homebrew tap");
 }
 
 const [

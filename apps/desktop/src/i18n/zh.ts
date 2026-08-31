@@ -112,7 +112,7 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.compacting": "正在压缩会话上下文……",
 
   /* ── Startup failure ─────────────────────────────── */
-  "startup.failedTitle": "pi-gui 无法启动",
+  "startup.failedTitle": "Agent 无法启动",
   "startup.failedBody": "读取已保存的数据时出错，应用需要关闭。如果反复出现，下面的详细信息有助于排查。",
 
   /* ── Render failure ──────────────────────────────── */
@@ -559,7 +559,7 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Theme presets ───────────────────────────────── */
   "theme.defaultName": "默认",
-  "theme.defaultDesc": "当前 pi-gui 调色板。",
+  "theme.defaultDesc": "当前 Agent 调色板。",
   "theme.catppuccinName": "猫普钦",
   "theme.catppuccinDesc": "柔和的淡彩拿铁与摩卡变体。",
   "theme.tokyoNightName": "东京之夜",
@@ -593,7 +593,7 @@ const zhMessages: Record<MessageKey, string> = {
   /* ── Startup diagnostics / schema skew ───────────── */
   "diagnostics.title": "部分已保存的工作区无法刷新。",
   "diagnostics.unavailable": "{workspaceName} 不可用。",
-  "schemaSkew.title": "此会话由更新版本的 pi 写入——部分内容可能无法显示。请更新 pi-gui（或用 pi CLI 打开）以查看全部内容。",
+  "schemaSkew.title": "此会话由更新版本的 pi 写入——部分内容可能无法显示。请更新 Agent（或用 pi CLI 打开）以查看全部内容。",
   "schemaSkew.dismiss": "忽略",
   "schemaSkew.dismissAria": "忽略提示",
 

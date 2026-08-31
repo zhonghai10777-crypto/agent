@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction } from "react";
 import type { DesktopAppState, WorkspaceRecord, WorktreeRecord } from "../desktop-state";
 import type { PiDesktopApi } from "../ipc";
+import { PRODUCT } from "../product";
 
 interface UseWorkspaceMenuParams {
   readonly api: PiDesktopApi | undefined;
@@ -134,7 +135,7 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   };
 
   const removeWorkspace = (workspace: WorkspaceRecord) => {
-    const confirmed = window.confirm(`Remove ${workspace.name} from pi-gui? This will not delete any files.`);
+    const confirmed = window.confirm(`Remove ${workspace.name} from ${PRODUCT.name}? This will not delete any files.`);
     setWorkspaceMenuId(null);
     setWorkspaceRenameId(null);
     if (!confirmed || !api) {
