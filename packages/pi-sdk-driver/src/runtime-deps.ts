@@ -1,12 +1,8 @@
 import { join, resolve } from "node:path";
-import {
-  ModelRegistry,
-  ModelRuntime,
-  getAgentDir,
-  type CreateModelRuntimeOptions,
-} from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type CreateModelRuntimeOptions, type ModelRegistry, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { CustomProviderStore } from "./custom-provider-store.js";
 import type { RuntimeSupervisorOptions } from "./runtime-supervisor.js";
+import { createModelRegistry, createModelRuntime } from "./pi-compat/index.js";
 
 export interface RuntimeDependencies {
   readonly agentDir: string;
@@ -25,13 +21,13 @@ export function createRuntimeDependencies(options: RuntimeSupervisorOptions = {}
   const modelsJsonPath = join(agentDir, "models.json");
   const modelRuntime = options.modelRuntime
     ? Promise.resolve(options.modelRuntime)
-    : ModelRuntime.create({
+    : createModelRuntime({
         ...(options.credentialStore ? { credentials: options.credentialStore } : { authPath: join(agentDir, "auth.json") }),
         modelsPath: modelsJsonPath,
       });
   const modelRegistry = options.modelRegistry
     ? Promise.resolve(options.modelRegistry)
-    : modelRuntime.then((runtime) => new ModelRegistry(runtime));
+    : modelRuntime.then(createModelRegistry);
   const customProviderStore = options.customProviderStore ?? new CustomProviderStore(modelsJsonPath);
   return {
     agentDir,

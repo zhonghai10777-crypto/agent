@@ -1,4 +1,4 @@
-import type { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { SessionCatalogSnapshot, WorkspaceCatalogSnapshot, WorkspaceId } from "@pi-gui/catalogs";
 import type {
   NavigateSessionTreeOptions,
@@ -35,7 +35,6 @@ export class PiSdkDriver implements SessionDriver {
   private readonly supervisor: SessionSupervisor;
   private readonly agentDir: string;
   private readonly modelRuntime: Promise<ModelRuntime>;
-  private readonly modelRegistry: Promise<ModelRegistry>;
   private readonly generateThreadTitleOverride:
     | ((workspace: WorkspaceRef, options: GenerateThreadTitleOptions) => Promise<string | null | undefined>)
     | undefined;
@@ -45,7 +44,6 @@ export class PiSdkDriver implements SessionDriver {
     const deps = createRuntimeDependencies(options);
     this.agentDir = deps.agentDir;
     this.modelRuntime = deps.modelRuntime;
-    this.modelRegistry = deps.modelRegistry;
     this.generateThreadTitleOverride = options.generateThreadTitleOverride;
 
     this.supervisor = new SessionSupervisor({ ...options, modelRuntime: deps.modelRuntime });
@@ -183,11 +181,10 @@ export class PiSdkDriver implements SessionDriver {
         return override;
       }
     }
-    const [modelRuntime, modelRegistry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
+    const modelRuntime = await this.modelRuntime;
     return generateThreadTitle(workspace, options, {
       agentDir: this.agentDir,
       modelRuntime,
-      modelRegistry,
     });
   }
 }

@@ -2,7 +2,7 @@ import { access, realpath, stat, unlink } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   ModelRuntime,
-  SessionManager,
+  type SessionManager,
   type AgentSessionRuntime,
   type AgentSession,
   type AgentSessionEvent,
@@ -96,9 +96,17 @@ import {
 } from "./session-supervisor-utils.js";
 import type { SessionTranscriptItem, SessionTranscriptMessage } from "./transcript.js";
 import {
-  createAgentSessionRuntimeWithNpmFallback,
-  type PiCreateAgentSessionOptions,
-} from "./npm-package-fallback.js";
+  createAgentEventNormalizer,
+  createCompatSession,
+  createSessionManager,
+  findModel,
+  forkSessionManager,
+  listSessions,
+  openSessionManager,
+  resolveModelAuth,
+  type AgentEventNormalizer,
+  type CompatAgentSessionOptions,
+} from "./pi-compat/index.js";
 
 export interface PiSdkDriverOptions {
   readonly catalogFilePath?: string;
@@ -172,6 +180,7 @@ interface ManagedSessionRecord {
    * not tagging — is what keeps run attribution correct.
    */
   pendingCancel: Promise<void> | undefined;
+  eventNormalizer: AgentEventNormalizer;
 }
 
 interface RegisteredCommandAdapter {
@@ -227,10 +236,10 @@ export class SessionSupervisor {
     this.createAgentSessionRuntimeImpl =
       options.createAgentSessionRuntimeImpl ??
       ((createOptions) =>
-        createAgentSessionRuntimeWithNpmFallback({
+        createCompatSession({
           ...createOptions,
           resourceLoaderOptions: {
-            ...(createOptions as PiCreateAgentSessionOptions | undefined)?.resourceLoaderOptions,
+            ...(createOptions as CompatAgentSessionOptions | undefined)?.resourceLoaderOptions,
             ...(options.extensionFactories ? { extensionFactories: [...options.extensionFactories] } : {}),
             ...(options.noExtensions ? { noExtensions: true } : {}),
             ...(options.noSkills ? { noSkills: true } : {}),
@@ -260,7 +269,7 @@ export class SessionSupervisor {
 
   async syncWorkspace(path: string, displayName?: string): Promise<SyncWorkspaceResult> {
     const workspace = await this.registerWorkspace(path, displayName);
-    const infos = await SessionManager.list(path);
+    const infos = await listSessions(path);
     const existingSessions = (await this.catalogs.sessions.listSessions(workspace.workspaceId)).sessions;
     const existingByKey = new Map(existingSessions.map((session) => [sessionKey(session.sessionRef), session]));
     const nextEntries = infos.map((info) =>
@@ -426,7 +435,7 @@ export class SessionSupervisor {
       throw new Error(`Session ${sessionKey(sessionRef)} has no tracked session file.`);
     }
 
-    const sessionManager = SessionManager.open(sessionFile);
+    const sessionManager = openSessionManager(sessionFile);
     return transcriptFromMessages(sessionManager.buildSessionContext().messages, sessionEntry?.updatedAt);
   }
 
@@ -468,7 +477,7 @@ export class SessionSupervisor {
     if (!workspace) {
       return undefined;
     }
-    const infos = await SessionManager.list(workspace.path);
+    const infos = await listSessions(workspace.path);
     return infos.find((info) => info.id === sessionRef.sessionId)?.path;
   }
 
@@ -496,7 +505,7 @@ export class SessionSupervisor {
       : undefined;
     const createOptions: CreateAgentSessionOptions = {
       cwd: workspace.path,
-      sessionManager: SessionManager.create(workspace.path),
+      sessionManager: createSessionManager(workspace.path),
       ...(this.modelRuntime ? { modelRuntime: await this.modelRuntime } : {}),
     };
     if (initialModel) {
@@ -585,17 +594,17 @@ export class SessionSupervisor {
     let branchedManager: SessionManager;
     if (!targetLeafId) {
       // Forking before the first user message: start a fresh empty session in the target.
-      branchedManager = SessionManager.create(targetWorkspace.path);
+      branchedManager = createSessionManager(targetWorkspace.path);
       branchedManager.newSession({ parentSession: sourceFile });
     } else if (sameWorkspace) {
-      const opened = SessionManager.open(sourceFile);
+      const opened = openSessionManager(sourceFile);
       const forkedPath = opened.createBranchedSession(targetLeafId);
       if (!forkedPath) {
         throw new Error(`Failed to create forked session from ${sessionKey(sourceRef)}.`);
       }
       branchedManager = opened;
     } else {
-      const forked = SessionManager.forkFrom(sourceFile, targetWorkspace.path);
+      const forked = forkSessionManager(sourceFile, targetWorkspace.path);
       const fullForkPath = forked.getSessionFile();
       let forkedPath: string | undefined;
       try {
@@ -735,6 +744,9 @@ export class SessionSupervisor {
 
     const isQueuedMessage = session.isStreaming && !isExtensionCommand && Boolean(input.deliverAs);
     const runId = isQueuedMessage || isExtensionCommand ? undefined : crypto.randomUUID();
+    if (runId) {
+      record.eventNormalizer.reset();
+    }
     record.runningRunId = runId ?? record.runningRunId;
     record.status = isQueuedMessage || isExtensionCommand ? record.status : "running";
     record.updatedAt = nowIso();
@@ -913,6 +925,12 @@ export class SessionSupervisor {
     // against it can never be delivered. Clear both the SDK queue and our
     // mirror so the composer stops showing orphaned pending messages — matching
     // the SDK's own "clear the queue when the user aborts" convention.
+    // Close the run before publishing the final idle snapshot, then drain any
+    // already-queued events from the stopped turn. Otherwise a prebuilt
+    // `sessionUpdated(running)` can arrive after Stop returns and overwrite the
+    // idle state even though subsequent late events are correctly ignored.
+    record.eventNormalizer.markSettled();
+    await record.eventQueue;
     record.session?.clearQueue();
     record.queuedMessages = [];
     record.runningRunId = undefined;
@@ -929,7 +947,7 @@ export class SessionSupervisor {
     }
 
     const model = await this.resolveModel(selection.provider, selection.modelId);
-    const auth = await session.modelRuntime.getAuth(model);
+    const auth = await resolveModelAuth(session.modelRuntime, model);
     if (!auth) {
       throw new Error(`No authentication configured for ${selection.provider}.`);
     }
@@ -1133,7 +1151,7 @@ export class SessionSupervisor {
 
     const runtime = await this.createAgentSessionRuntimeImpl({
       cwd: workspace.path,
-      sessionManager: SessionManager.open(sessionFile),
+      sessionManager: openSessionManager(sessionFile),
       ...(this.modelRuntime ? { modelRuntime: await this.modelRuntime } : {}),
       ...(this.runtimeMode === "light" ? { excludeTools: ["bash", "edit", "write"] } : {}),
     });
@@ -1195,6 +1213,7 @@ export class SessionSupervisor {
       contextUsage: undefined,
       cancelRequested: false,
       pendingCancel: undefined,
+      eventNormalizer: createAgentEventNormalizer(),
     };
     return record;
   }
@@ -1337,6 +1356,7 @@ export class SessionSupervisor {
     }
 
     record.session = session;
+    record.eventNormalizer.reset();
     record.sessionFile = session.sessionFile ?? session.sessionManager.getSessionFile();
     record.unsubscribeAgent?.();
     record.unsubscribeAgent = session.subscribe((event) => {
@@ -1649,7 +1669,7 @@ export class SessionSupervisor {
   }
 
   private async resolveModel(provider: string, modelId: string) {
-    const model = this.modelRuntime ? (await this.modelRuntime).getModel(provider, modelId) : undefined;
+    const model = this.modelRuntime ? findModel(await this.modelRuntime, provider, modelId) : undefined;
     if (!model) {
       throw new Error(`Unknown model ${provider}:${modelId}`);
     }
@@ -1901,6 +1921,9 @@ export class SessionSupervisor {
     switch (event.type) {
       case "agent_start":
       case "turn_start":
+        if (!record.eventNormalizer.normalize(event, { timestamp })) {
+          return [];
+        }
         record.status = "running";
         return [sessionUpdatedEvent(record)];
       case "message_start":
@@ -1924,42 +1947,49 @@ export class SessionSupervisor {
         return [sessionUpdatedEvent(record)];
       case "message_update":
         this.updatePreviewFromMessage(record, event.message);
-        if (event.message.role === "assistant" && event.assistantMessageEvent.type === "text_delta") {
+        const normalizedMessage = record.eventNormalizer.normalize(event, { timestamp });
+        if (normalizedMessage?.type === "assistant-delta") {
           return toDriverEvents({
             type: "assistantDelta" as const,
             sessionRef: record.ref,
             timestamp,
-            text: event.assistantMessageEvent.delta ?? "",
+            text: normalizedMessage.text,
           }, record);
         }
         return [sessionUpdatedEvent(record)];
       case "tool_execution_start":
+        const normalizedToolStart = record.eventNormalizer.normalize(event, { timestamp });
+        if (normalizedToolStart?.type !== "tool-started") return [];
         record.status = "running";
         return toDriverEvents({
           type: "toolStarted" as const,
           sessionRef: record.ref,
           timestamp,
-          toolName: event.toolName,
-          callId: event.toolCallId,
-          input: event.args,
+          toolName: normalizedToolStart.toolName,
+          callId: normalizedToolStart.callId,
+          input: normalizedToolStart.input,
         }, record);
       case "tool_execution_update":
+        const normalizedToolUpdate = record.eventNormalizer.normalize(event, { timestamp });
+        if (normalizedToolUpdate?.type !== "tool-updated") return [];
         return toDriverEvents({
           type: "toolUpdated" as const,
           sessionRef: record.ref,
           timestamp,
-          callId: event.toolCallId,
-          ...(typeof event.partialResult === "string" ? { text: event.partialResult } : {}),
-          ...(typeof event.partialResult === "number" ? { progress: event.partialResult } : {}),
+          callId: normalizedToolUpdate.callId,
+          ...(normalizedToolUpdate.detail !== undefined ? { text: normalizedToolUpdate.detail } : {}),
+          ...(normalizedToolUpdate.progress !== undefined ? { progress: normalizedToolUpdate.progress } : {}),
         }, record);
       case "tool_execution_end":
+        const normalizedToolEnd = record.eventNormalizer.normalize(event, { timestamp });
+        if (normalizedToolEnd?.type !== "tool-finished") return [];
         return toDriverEvents({
           type: "toolFinished" as const,
           sessionRef: record.ref,
           timestamp,
-          callId: event.toolCallId,
-          success: !event.isError,
-          output: event.result,
+          callId: normalizedToolEnd.callId,
+          success: normalizedToolEnd.success,
+          output: normalizedToolEnd.output,
         }, record);
       case "turn_end":
         refreshSessionContextUsage(record);
@@ -1977,7 +2007,17 @@ export class SessionSupervisor {
         // runRetrying, the non-latching channel: the handshake subscribes,
         // the error banner and desktop notifications do not.
         const outcome = determineRunOutcome(event.messages);
-        if (event.willRetry && !outcome.success && !record.cancelRequested) {
+        const cancelledByUser = record.cancelRequested && !outcome.success;
+        const normalizedEnd = record.eventNormalizer.normalize(event, {
+          timestamp,
+          success: outcome.success,
+          cancelled: cancelledByUser,
+          ...(outcome.error ? { error: new Error(outcome.error.message) } : {}),
+        });
+        if (!normalizedEnd) {
+          return [];
+        }
+        if (normalizedEnd.type === "run-retrying") {
           record.updatedAt = timestamp;
           return toDriverEvents(
             {
@@ -1999,7 +2039,6 @@ export class SessionSupervisor {
         // live SSE stream surfaces as "Stream ended without finish_reason" (code
         // ERROR) rather than ABORTED, so treat any failure while a cancel is
         // outstanding as a clean stop.
-        const cancelledByUser = record.cancelRequested && !outcome.success;
         record.cancelRequested = false;
         record.status = cancelledByUser || outcome.success ? "idle" : "failed";
         record.updatedAt = timestamp;
@@ -2036,7 +2075,11 @@ export class SessionSupervisor {
         // continue the loop past an agent_end (threshold compaction, queued
         // continuations), which would otherwise leave the session pinned to
         // "running" with a stale runId.
-        if (record.status !== "running" && !record.runningRunId && !record.cancelRequested) {
+        const normalizedSettled = record.eventNormalizer.normalize(event, { timestamp });
+        if (
+          !normalizedSettled ||
+          (record.status !== "running" && !record.runningRunId && !record.cancelRequested)
+        ) {
           return [];
         }
         const runId = record.runningRunId;

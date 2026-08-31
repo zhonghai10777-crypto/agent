@@ -1,14 +1,16 @@
 import {
-  SessionManager,
   SettingsManager,
-  createExtensionRuntime,
-  createAgentSession,
   type CreateAgentSessionOptions,
-  type ModelRegistry,
   type ModelRuntime,
-  type ResourceLoader,
 } from "@earendil-works/pi-coding-agent";
 import type { SessionModelSelection, WorkspaceRef } from "@pi-gui/session-driver";
+import {
+  createInMemorySessionManager,
+  createOneShotSession,
+  createStaticResourceLoader,
+  findModel,
+  resolveModelAuth,
+} from "./pi-compat/index.js";
 import { messageText as sessionMessageText } from "./session-supervisor-utils.js";
 
 export interface GenerateThreadTitleOptions {
@@ -21,7 +23,6 @@ export interface GenerateThreadTitleOptions {
 interface ThreadTitleGeneratorDeps {
   readonly agentDir: string;
   readonly modelRuntime: ModelRuntime;
-  readonly modelRegistry: ModelRegistry;
 }
 
 const MAX_THREAD_TITLE_LENGTH = 36;
@@ -48,7 +49,7 @@ export async function generateThreadTitle(
     compaction: { enabled: false },
     retry: { enabled: false },
   });
-  const resourceLoader = createThreadTitleResourceLoader();
+  const resourceLoader = createStaticResourceLoader(THREAD_TITLE_SYSTEM_PROMPT);
 
   const createOptions: CreateAgentSessionOptions = {
     cwd: workspace.path,
@@ -56,11 +57,11 @@ export async function generateThreadTitle(
     modelRuntime: deps.modelRuntime,
     resourceLoader,
     settingsManager,
-    sessionManager: SessionManager.inMemory(),
+    sessionManager: createInMemorySessionManager(),
     tools: [],
   };
   if (options.model) {
-    const selectedModel = deps.modelRegistry.find(options.model.provider, options.model.modelId);
+    const selectedModel = findModel(deps.modelRuntime, options.model.provider, options.model.modelId);
     if (!selectedModel) {
       return null;
     }
@@ -70,7 +71,7 @@ export async function generateThreadTitle(
     createOptions.thinkingLevel = options.thinkingLevel as NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
   }
 
-  const { session } = await createAgentSession(createOptions);
+  const { session } = await createOneShotSession(createOptions);
   const handleAbort = () => {
     void session.abort().catch(() => undefined);
   };
@@ -82,7 +83,7 @@ export async function generateThreadTitle(
     if (!session.model) {
       return null;
     }
-    const auth = await session.modelRuntime.getAuth(session.model);
+    const auth = await resolveModelAuth(session.modelRuntime, session.model);
     if (!auth?.auth.apiKey && !auth?.auth.headers) {
       return null;
     }
@@ -93,22 +94,6 @@ export async function generateThreadTitle(
     options.signal?.removeEventListener("abort", handleAbort);
     session.dispose();
   }
-}
-
-function createThreadTitleResourceLoader(): ResourceLoader {
-  return {
-    getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
-    getSkills: () => ({ skills: [], diagnostics: [] }),
-    getPrompts: () => ({ prompts: [], diagnostics: [] }),
-    getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
-    getSystemPrompt: () => THREAD_TITLE_SYSTEM_PROMPT,
-    getAppendSystemPrompt: () => [],
-    getSystemPromptSource: () => undefined,
-    getAppendSystemPromptSources: () => [],
-    extendResources: () => {},
-    reload: async () => {},
-  };
 }
 
 function buildTitlePrompt(prompt: string): string {
