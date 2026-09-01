@@ -10,6 +10,14 @@ directories:
 files:
   - out/**/*
   - package.json
+  # lazystream (used by exceljs) imports the legacy subpath
+  # readable-stream/passthrough. pnpm hoisting exposes a newer top-level
+  # readable-stream, so preserve lazystream's nested 2.x dependency in the
+  # packaged app as well.
+  - from: ../../node_modules/lazystream/node_modules/readable-stream
+    to: node_modules/lazystream/node_modules/readable-stream
+    filter:
+      - '**/*'
 
 extraResources:
   - from: resources/icon.png
