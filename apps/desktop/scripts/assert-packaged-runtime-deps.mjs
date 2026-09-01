@@ -130,6 +130,7 @@ const packagedRuntimeImportChecks = [
   // which is how the missing xmlbuilder under mammoth was caught.
   ["unpdf", "dist", "index.mjs"],
   ["mammoth", "lib", "index.js"],
+  ["exceljs", "excel.js"],
   ["fflate", "esm", "index.mjs"],
 ];
 
@@ -150,6 +151,7 @@ try {
   });
 
   verifyRequiredPackages(extractedDir);
+  verifyLegacyLazystreamDependency(extractedDir);
   await verifyPackagedPiRuntime(extractedDir);
   await verifyPackagedRuntimeImports(extractedDir);
   await verifyNativeNodePty(asarPath);
@@ -167,6 +169,20 @@ try {
     } else {
       throw error;
     }
+  }
+}
+
+function verifyLegacyLazystreamDependency(extractedDir) {
+  const passthroughPath = path.join(
+    extractedDir,
+    "node_modules",
+    "lazystream",
+    "node_modules",
+    "readable-stream",
+    "passthrough.js",
+  );
+  if (!existsSync(passthroughPath)) {
+    throw new Error(`Packaged app is missing lazystream's legacy readable-stream/passthrough dependency: ${passthroughPath}`);
   }
 }
 
