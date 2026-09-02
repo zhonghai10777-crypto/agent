@@ -26,6 +26,27 @@ export function usesModelProviderKey(provider: WebSearchProvider): boolean {
 /** pi's built-in provider id whose credential the deepseek backend borrows. */
 export const DEEPSEEK_PROVIDER_ID = "deepseek";
 
+/** Official DeepSeek API host. Server-side search is only offered there. */
+const DEEPSEEK_API_HOST = "api.deepseek.com";
+
+/**
+ * Whether a custom endpoint points at DeepSeek's own API.
+ *
+ * A user who reaches DeepSeek through a custom endpoint (any id: `deepseek-api`,
+ * `ds`, …) has already entered the one credential search needs, so search
+ * borrows it instead of demanding the same key a second time under the built-in
+ * `deepseek` id — which is otherwise unreachable from the UI once a custom
+ * endpoint occupies the same account.
+ */
+export function isDeepSeekEndpoint(baseUrl: string): boolean {
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === DEEPSEEK_API_HOST || host.endsWith(`.${DEEPSEEK_API_HOST}`);
+  } catch {
+    return false;
+  }
+}
+
 export interface WebToolsSettings {
   /** Master switch. When false neither tool is registered at all. */
   readonly enabled: boolean;

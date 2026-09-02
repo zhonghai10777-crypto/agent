@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import {
   describeWebToolsMisconfiguration,
   extractReadableText,
+  isDeepSeekEndpoint,
   isHostAllowed,
   isHttpUrl,
   normalizeWebToolsSettings,
@@ -115,6 +116,21 @@ test("deepseek is a valid provider and borrows the model credential", () => {
   expect(usesModelProviderKey("deepseek")).toBe(true);
   expect(usesModelProviderKey("bocha")).toBe(false);
   expect(usesModelProviderKey("searxng")).toBe(false);
+});
+
+test("a custom endpoint on DeepSeek's API is recognized whatever its provider id", () => {
+  // The UI refuses the built-in `deepseek` id, so users reach DeepSeek through a
+  // custom endpoint named anything at all. Search claims the key by base URL.
+  expect(isDeepSeekEndpoint("https://api.deepseek.com/v1")).toBe(true);
+  expect(isDeepSeekEndpoint("https://api.deepseek.com")).toBe(true);
+  expect(isDeepSeekEndpoint("https://api.deepseek.com/anthropic/v1/messages")).toBe(true);
+  // Subdomains of the real host count; look-alikes must not.
+  expect(isDeepSeekEndpoint("https://gateway.api.deepseek.com/v1")).toBe(true);
+  expect(isDeepSeekEndpoint("https://api.deepseek.com.attacker.net/v1")).toBe(false);
+  expect(isDeepSeekEndpoint("https://deepseek.example.com/v1")).toBe(false);
+  expect(isDeepSeekEndpoint("http://localhost:11434/v1")).toBe(false);
+  expect(isDeepSeekEndpoint("not a url")).toBe(false);
+  expect(isDeepSeekEndpoint("")).toBe(false);
 });
 
 test("describeWebToolsMisconfiguration sends deepseek users to the provider settings", () => {
