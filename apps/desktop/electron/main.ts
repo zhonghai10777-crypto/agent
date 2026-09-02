@@ -80,7 +80,13 @@ import {
 import { createPermissionModeExtension } from "./permission-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
-import { normalizeWebToolsSettings, runWebSearch, type WebToolsSettings } from "./web-search";
+import {
+  DEEPSEEK_PROVIDER_ID,
+  normalizeWebToolsSettings,
+  runWebSearch,
+  usesModelProviderKey,
+  type WebToolsSettings,
+} from "./web-search";
 import { LibraryStore, normalizeLibrarySettings } from "./library-store";
 import { LibraryIndex } from "./library-index";
 import { createLibraryRuntimeExtension, createLibraryRuntimeTools } from "./library-runtime";
@@ -1267,6 +1273,19 @@ app.whenReady().then(async () => {
     path.join(getAgentDir(), "models.json"),
   );
   const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
+  /**
+   * DeepSeek web search bills against the DeepSeek *model* key, so the user
+   * configures one credential instead of two. The key is overlaid at read time
+   * rather than copied into web-tools.json: it stays in the encrypted credential
+   * store, and rotating it under Settings → Providers takes effect at once.
+   */
+  const readWebToolsSettings = (): WebToolsSettings => {
+    const settings = webToolsStore.read();
+    if (!usesModelProviderKey(settings.provider)) {
+      return settings;
+    }
+    return { ...settings, apiKey: secureAuthStorageBackend.readApiKeySync(DEEPSEEK_PROVIDER_ID) };
+  };
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
   libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
     maxIndexedChars: initialRuntimeMode === "light" ? 10_000_000 : 100_000_000,
@@ -1287,7 +1306,7 @@ app.whenReady().then(async () => {
     extensionFactories: [
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
-      createWebRuntimeExtension(() => webToolsStore.read()),
+      createWebRuntimeExtension(readWebToolsSettings),
       createLibraryRuntimeExtension(() => libraryStore.read(), libraryIndex),
       // Same lazy read, and scoped per call: extensions are built once per
       // workspace, so the calling session decides what is reachable.
@@ -1568,21 +1587,24 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.probeCustomProviderModels, (_event, input: CustomProviderProbeInput) =>
     probeCustomProviderModels(input),
   );
-  ipcMain.handle(desktopIpc.getWebToolsSettings, () => toWebToolsSettingsView(webToolsStore.read()));
+  ipcMain.handle(desktopIpc.getWebToolsSettings, () => toWebToolsSettingsView(readWebToolsSettings()));
   ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
     const current = webToolsStore.read();
     const incoming = (update ?? {}) as Record<string, unknown>;
     // An omitted apiKey means "keep the stored one": the renderer never receives
     // the secret, so it cannot echo it back on an unrelated settings change.
     const apiKey = typeof incoming.apiKey === "string" ? incoming.apiKey.trim() : current.apiKey;
-    return toWebToolsSettingsView(webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey })));
+    webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey }));
+    // Re-read so `hasApiKey` reports the *effective* key: with the deepseek
+    // backend selected that is the provider credential, not the stored one.
+    return toWebToolsSettingsView(readWebToolsSettings());
   });
   ipcMain.handle(desktopIpc.testWebSearch, async (_event, query: unknown): Promise<WebSearchTestResult> => {
     const text = typeof query === "string" && query.trim() ? query.trim() : `${PRODUCT.name} connectivity test`;
     try {
       // Test against the saved settings with the master switch forced on, so the
       // user can verify a key before committing to enabling web access.
-      const results = await runWebSearch(text, { ...webToolsStore.read(), enabled: true });
+      const results = await runWebSearch(text, { ...readWebToolsSettings(), enabled: true });
       return {
         ok: true,
         resultCount: results.length,
