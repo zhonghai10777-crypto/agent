@@ -82,6 +82,7 @@ import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import {
   DEEPSEEK_PROVIDER_ID,
+  isDeepSeekEndpoint,
   normalizeWebToolsSettings,
   runWebSearch,
   usesModelProviderKey,
@@ -1278,13 +1279,29 @@ app.whenReady().then(async () => {
    * configures one credential instead of two. The key is overlaid at read time
    * rather than copied into web-tools.json: it stays in the encrypted credential
    * store, and rotating it under Settings → Providers takes effect at once.
+   *
+   * Search first looks for the built-in `deepseek` provider's key. If that slot
+   * is empty but a custom endpoint points at DeepSeek's own API (any id — the
+   * UI cannot register the built-in id, so a user reaching DeepSeek through a
+   * custom endpoint has no other way to supply search its credential), search
+   * borrows that endpoint's key instead.
    */
   const readWebToolsSettings = (): WebToolsSettings => {
     const settings = webToolsStore.read();
     if (!usesModelProviderKey(settings.provider)) {
       return settings;
     }
-    return { ...settings, apiKey: secureAuthStorageBackend.readApiKeySync(DEEPSEEK_PROVIDER_ID) };
+    const builtinKey = secureAuthStorageBackend.readApiKeySync(DEEPSEEK_PROVIDER_ID);
+    if (builtinKey) {
+      return { ...settings, apiKey: builtinKey };
+    }
+    for (const providerId of readDeepSeekEndpointProviderIds()) {
+      const key = secureAuthStorageBackend.readApiKeySync(providerId);
+      if (key) {
+        return { ...settings, apiKey: key };
+      }
+    }
+    return { ...settings, apiKey: "" };
   };
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
   libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
@@ -2247,6 +2264,35 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+/**
+ * Custom-endpoint provider ids whose base URL is DeepSeek's own API.
+ *
+ * Read from models.json on each call so adding or editing an endpoint takes
+ * effect without a restart, matching how the rest of the web settings are read
+ * lazily. Returns ids only — the credential itself stays in the encrypted store.
+ */
+function readDeepSeekEndpointProviderIds(): readonly string[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path.join(getAgentDir(), "models.json"), "utf8"));
+  } catch {
+    // No catalog, unreadable, or malformed: there is no endpoint to borrow from.
+    return [];
+  }
+  const providers = (parsed as { providers?: unknown } | null)?.providers;
+  if (!providers || typeof providers !== "object") {
+    return [];
+  }
+  const ids: string[] = [];
+  for (const [providerId, config] of Object.entries(providers as Record<string, unknown>)) {
+    const baseUrl = (config as { baseUrl?: unknown } | null)?.baseUrl;
+    if (typeof baseUrl === "string" && isDeepSeekEndpoint(baseUrl)) {
+      ids.push(providerId);
+    }
+  }
+  return ids;
 }
 
 function toWebToolsSettingsView(settings: WebToolsSettings): WebToolsSettingsView {
