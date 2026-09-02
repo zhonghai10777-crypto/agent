@@ -107,6 +107,7 @@ import {
   type AgentEventNormalizer,
   type CompatAgentSessionOptions,
 } from "./pi-compat/index.js";
+import { LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "./windows-shell.js";
 
 export interface PiSdkDriverOptions {
   readonly catalogFilePath?: string;
@@ -508,6 +509,10 @@ export class SessionSupervisor {
       sessionManager: createSessionManager(workspace.path),
       ...(this.modelRuntime ? { modelRuntime: await this.modelRuntime } : {}),
     };
+    const toolNames = sessionToolNames();
+    if (toolNames) {
+      createOptions.tools = toolNames;
+    }
     if (initialModel) {
       createOptions.model = initialModel;
     }
@@ -515,7 +520,7 @@ export class SessionSupervisor {
       createOptions.thinkingLevel = options.initialThinkingLevel as NonNullable<CreateAgentSessionOptions["thinkingLevel"]>;
     }
     if (this.runtimeMode === "light") {
-      createOptions.excludeTools = ["bash", "edit", "write"];
+      createOptions.excludeTools = [...LIGHT_MODE_EXCLUDED_TOOLS];
     }
 
     const runtime = await this.createAgentSessionRuntimeImpl(createOptions);
@@ -625,6 +630,10 @@ export class SessionSupervisor {
       sessionManager: branchedManager,
       ...(this.modelRuntime ? { modelRuntime: await this.modelRuntime } : {}),
     };
+    const forkToolNames = sessionToolNames();
+    if (forkToolNames) {
+      createOptions.tools = forkToolNames;
+    }
     const forkConfig = deriveSessionConfig(branchedManager);
     if (forkConfig?.provider && forkConfig?.modelId) {
       try {
@@ -639,7 +648,7 @@ export class SessionSupervisor {
       >;
     }
     if (this.runtimeMode === "light") {
-      createOptions.excludeTools = ["bash", "edit", "write"];
+      createOptions.excludeTools = [...LIGHT_MODE_EXCLUDED_TOOLS];
     }
 
     const runtime = await this.createAgentSessionRuntimeImpl(createOptions);
@@ -1149,11 +1158,13 @@ export class SessionSupervisor {
     // conversation. Absent/dead/own leases never block (fully advisory).
     await this.assertSessionNotForeignLeased(sessionFile);
 
+    const reopenToolNames = sessionToolNames();
     const runtime = await this.createAgentSessionRuntimeImpl({
       cwd: workspace.path,
       sessionManager: openSessionManager(sessionFile),
       ...(this.modelRuntime ? { modelRuntime: await this.modelRuntime } : {}),
-      ...(this.runtimeMode === "light" ? { excludeTools: ["bash", "edit", "write"] } : {}),
+      ...(reopenToolNames ? { tools: reopenToolNames } : {}),
+      ...(this.runtimeMode === "light" ? { excludeTools: [...LIGHT_MODE_EXCLUDED_TOOLS] } : {}),
     });
     const session = runtime.session;
 
