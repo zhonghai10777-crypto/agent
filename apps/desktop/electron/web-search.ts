@@ -1,20 +1,39 @@
 import { PRODUCT } from "../src/product";
 
 /**
- * Search backends. The three shapes cover the realistic deployments:
+ * Search backends. The four shapes cover the realistic deployments:
+ *  - `deepseek` DeepSeek's own server-side search, billed to the DeepSeek model
+ *               key the user has already configured — so web access costs no
+ *               extra signup. Returns sources without snippets (see
+ *               `searchDeepSeek`).
  *  - `bocha`   博查 — a mainland-reachable commercial search API.
  *  - `tavily`  an LLM-oriented search API used widely outside the mainland.
  *  - `searxng` a self-hosted meta-search instance, which is the only option
  *              that works on an isolated plant network pointed at an internal
  *              index. Needs no key.
  */
-export type WebSearchProvider = "bocha" | "tavily" | "searxng";
+export type WebSearchProvider = "deepseek" | "bocha" | "tavily" | "searxng";
+
+/**
+ * Backends whose key is the user's DeepSeek *model* credential rather than a
+ * key typed into the web-access settings. For these the stored `apiKey` is
+ * always empty and the caller overlays the provider key before use.
+ */
+export function usesModelProviderKey(provider: WebSearchProvider): boolean {
+  return provider === "deepseek";
+}
+
+/** pi's built-in provider id whose credential the deepseek backend borrows. */
+export const DEEPSEEK_PROVIDER_ID = "deepseek";
 
 export interface WebToolsSettings {
   /** Master switch. When false neither tool is registered at all. */
   readonly enabled: boolean;
   readonly provider: WebSearchProvider;
-  /** Required for bocha/tavily; ignored by searxng. */
+  /**
+   * Required for bocha/tavily; ignored by searxng. For deepseek this is not
+   * stored — main overlays the configured DeepSeek provider key at read time.
+   */
   readonly apiKey: string;
   /** Base URL of the self-hosted instance; only used by searxng. */
   readonly searxngBaseUrl: string;
@@ -31,7 +50,10 @@ export const DEFAULT_WEB_TOOLS_SETTINGS: WebToolsSettings = {
   // Off by default: an app that silently starts making outbound requests is not
   // something a plant-network deployment can accept without review.
   enabled: false,
-  provider: "bocha",
+  // DeepSeek by default because it needs no second signup: it reuses the model
+  // key the user already has. Existing installs keep whatever they saved —
+  // normalization only falls back to this when nothing valid is stored.
+  provider: "deepseek",
   apiKey: "",
   searxngBaseUrl: "",
   maxResults: 5,
@@ -51,15 +73,21 @@ export interface WebSearchResult {
   readonly snippet: string;
 }
 
+/** Every valid provider, in the order the settings dropdown offers them. */
+export const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ["deepseek", "bocha", "tavily", "searxng"];
+
+function isWebSearchProvider(value: unknown): value is WebSearchProvider {
+  return typeof value === "string" && (WEB_SEARCH_PROVIDERS as readonly string[]).includes(value);
+}
+
 export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
   if (typeof input !== "object" || input === null) {
     return DEFAULT_WEB_TOOLS_SETTINGS;
   }
   const raw = input as Partial<Record<keyof WebToolsSettings, unknown>>;
-  const provider: WebSearchProvider =
-    raw.provider === "tavily" || raw.provider === "searxng" || raw.provider === "bocha"
-      ? raw.provider
-      : DEFAULT_WEB_TOOLS_SETTINGS.provider;
+  const provider: WebSearchProvider = isWebSearchProvider(raw.provider)
+    ? raw.provider
+    : DEFAULT_WEB_TOOLS_SETTINGS.provider;
   const maxResultsRaw = typeof raw.maxResults === "number" ? Math.trunc(raw.maxResults) : NaN;
   return {
     enabled: raw.enabled === true,
@@ -95,7 +123,11 @@ export function describeWebToolsMisconfiguration(settings: WebToolsSettings): st
     return undefined;
   }
   if (!settings.apiKey) {
-    return `No API key is configured for ${settings.provider}. Add one under Settings → Web access.`;
+    // For deepseek the key is the model credential, so pointing the user at the
+    // web-access key field would send them somewhere that has no field to fill.
+    return usesModelProviderKey(settings.provider)
+      ? "No DeepSeek API key is configured. Add one under Settings → Providers → DeepSeek; web search reuses that same key."
+      : `No API key is configured for ${settings.provider}. Add one under Settings → Web access.`;
   }
   return undefined;
 }
@@ -177,16 +209,144 @@ export async function runWebSearch(
     throw new Error(misconfiguration);
   }
 
-  const results =
-    settings.provider === "tavily"
-      ? await searchTavily(query, settings, signal)
-      : settings.provider === "searxng"
-        ? await searchSearxng(query, settings, signal)
-        : await searchBocha(query, settings, signal);
+  const results = await searchWith(settings.provider, query, settings, signal);
 
   // Apply the allowlist to results too: on a locked-down deployment the model
   // must not even see links it is not allowed to open.
   return results.filter((result) => isHostAllowed(result.url, settings.allowedDomains)).slice(0, settings.maxResults);
+}
+
+function searchWith(
+  provider: WebSearchProvider,
+  query: string,
+  settings: WebToolsSettings,
+  signal: AbortSignal | undefined,
+): Promise<readonly WebSearchResult[]> {
+  switch (provider) {
+    case "deepseek":
+      return searchDeepSeek(query, settings, signal);
+    case "tavily":
+      return searchTavily(query, settings, signal);
+    case "searxng":
+      return searchSearxng(query, settings, signal);
+    case "bocha":
+      return searchBocha(query, settings, signal);
+  }
+}
+
+/**
+ * DeepSeek's Anthropic-compatible endpoint. Server-side search is only offered
+ * there and on the Responses API — the OpenAI-compatible `/chat/completions`
+ * rejects the tool outright (`unknown variant web_search`), so this backend
+ * talks to `/anthropic` regardless of which API shape the chat session uses.
+ *
+ * Pinned to the official host on purpose: the tool is a DeepSeek server feature,
+ * and a relay that only proxies `/v1` chat completions cannot serve it.
+ */
+const DEEPSEEK_SEARCH_ENDPOINT = "https://api.deepseek.com/anthropic/v1/messages";
+/** Cheapest model that supports the search tool; the prose it writes is discarded. */
+const DEEPSEEK_SEARCH_MODEL = "deepseek-v4-flash";
+/**
+ * Output budget for the throwaway answer. Generous enough that the model can
+ * think before it searches — running out mid-thought would yield zero results —
+ * and still fractions of a cent.
+ */
+const DEEPSEEK_SEARCH_MAX_TOKENS = 512;
+/**
+ * More than one search is allowed because a malformed first call (the model
+ * occasionally emits an empty query) otherwise burns the only attempt and the
+ * whole request comes back as `max_uses_exceeded`.
+ */
+const DEEPSEEK_SEARCH_MAX_USES = 3;
+
+/**
+ * Runs the search on DeepSeek's servers and harvests the sources out of the
+ * `web_search_tool_result` blocks.
+ *
+ * Note the shape difference from the other backends: DeepSeek returns each
+ * source's title and URL but keeps the page text in an opaque `encrypted_content`
+ * field meant for feeding back to the model, so there is no snippet to pass on.
+ * The model is expected to follow up with `web_fetch`, which the tool
+ * description already tells it to do.
+ */
+async function searchDeepSeek(
+  query: string,
+  settings: WebToolsSettings,
+  signal: AbortSignal | undefined,
+): Promise<readonly WebSearchResult[]> {
+  const payload = await requestJson(
+    DEEPSEEK_SEARCH_ENDPOINT,
+    {
+      method: "POST",
+      headers: {
+        "x-api-key": settings.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: DEEPSEEK_SEARCH_MODEL,
+        max_tokens: DEEPSEEK_SEARCH_MAX_TOKENS,
+        messages: [{ role: "user", content: `Search the web for: ${query}` }],
+        // No tool_choice: forcing the tool makes the model emit a call with an
+        // empty input, which the server rejects as `invalid_tool_input`.
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: DEEPSEEK_SEARCH_MAX_USES }],
+      }),
+    },
+    signal,
+  );
+  return parseDeepSeekSearchResults(payload);
+}
+
+/**
+ * Pulls the sources out of an Anthropic-shaped DeepSeek response.
+ *
+ * Split from the request so the block walk can be tested without a live key: the
+ * response nests results two levels deep and interleaves them with reasoning,
+ * text and per-search error entries, which is exactly the shape that quietly
+ * regresses when the API adds a block type.
+ */
+export function parseDeepSeekSearchResults(payload: unknown): readonly WebSearchResult[] {
+  const content = pick(payload, "content");
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const results: WebSearchResult[] = [];
+  const seen = new Set<string>();
+  const errorCodes: string[] = [];
+  for (const block of content) {
+    if (stringField(block, "type") !== "web_search_tool_result") {
+      continue;
+    }
+    const entries = pick(block, "content");
+    if (!Array.isArray(entries)) {
+      continue;
+    }
+    for (const entry of entries) {
+      const entryType = stringField(entry, "type");
+      if (entryType === "web_search_tool_result_error") {
+        const code = stringField(entry, "error_code");
+        if (code) {
+          errorCodes.push(code);
+        }
+        continue;
+      }
+      const url = stringField(entry, "url");
+      // The model may repeat a source across several searches in one turn.
+      if (entryType !== "web_search_result" || !url || seen.has(url)) {
+        continue;
+      }
+      seen.add(url);
+      results.push({ title: stringField(entry, "title") ?? url, url, snippet: "" });
+    }
+  }
+
+  // Only surface an error when nothing at all came back: a partially failed
+  // multi-search turn still gives the model usable sources.
+  if (results.length === 0 && errorCodes.length > 0) {
+    throw new Error(`DeepSeek search failed (${[...new Set(errorCodes)].join(", ")}).`);
+  }
+  return results;
 }
 
 async function searchBocha(

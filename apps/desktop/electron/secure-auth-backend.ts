@@ -95,6 +95,24 @@ export class SecureAuthStorageBackend implements CredentialStore {
     return credential ? structuredClone(credential) : undefined;
   }
 
+  /**
+   * Synchronous API-key lookup for callers that cannot await.
+   *
+   * The web-search backend reads settings on the model's critical path through a
+   * synchronous getter, and DeepSeek search authenticates with the DeepSeek
+   * *model* key rather than a separately entered one. Everything `read` does is
+   * synchronous underneath, so this exposes that without duplicating the
+   * decryption path. Returns "" when the provider has no key credential — an
+   * OAuth-authenticated provider deliberately yields nothing here.
+   */
+  readApiKeySync(providerId: string): string {
+    const credential = parseCredentials(this.readMerged())[providerId];
+    if (!credential || credential.type !== "api_key") {
+      return "";
+    }
+    return typeof credential.key === "string" ? credential.key.trim() : "";
+  }
+
   async list(options?: AuthOperationOptions) {
     options?.signal?.throwIfAborted();
     const credentials = parseCredentials(this.readMerged());

@@ -5,6 +5,8 @@ import {
   isHostAllowed,
   isHttpUrl,
   normalizeWebToolsSettings,
+  parseDeepSeekSearchResults,
+  usesModelProviderKey,
   DEFAULT_WEB_TOOLS_SETTINGS,
 } from "../../electron/web-search";
 
@@ -106,4 +108,106 @@ test("describeWebToolsMisconfiguration explains what to fix, per provider", () =
     searxngBaseUrl: "http://searx.intranet.local",
   });
   expect(describeWebToolsMisconfiguration(searxngOk)).toBeUndefined();
+});
+
+test("deepseek is a valid provider and borrows the model credential", () => {
+  expect(normalizeWebToolsSettings({ provider: "deepseek" }).provider).toBe("deepseek");
+  expect(usesModelProviderKey("deepseek")).toBe(true);
+  expect(usesModelProviderKey("bocha")).toBe(false);
+  expect(usesModelProviderKey("searxng")).toBe(false);
+});
+
+test("describeWebToolsMisconfiguration sends deepseek users to the provider settings", () => {
+  const noKey = normalizeWebToolsSettings({ enabled: true, provider: "deepseek" });
+  const message = describeWebToolsMisconfiguration(noKey);
+  // The web-access screen has no key field for deepseek, so pointing there would
+  // send the user somewhere with nothing to fill in.
+  expect(message).toContain("Providers");
+  expect(message).not.toContain("Web access");
+
+  // Main overlays the provider key before use; once present the config is valid.
+  const bound = normalizeWebToolsSettings({ enabled: true, provider: "deepseek", apiKey: "sk-test" });
+  expect(describeWebToolsMisconfiguration(bound)).toBeUndefined();
+});
+
+/**
+ * Mirrors a real `api.deepseek.com/anthropic/v1/messages` reply: reasoning and
+ * commentary blocks interleaved with the search results, a repeated source, and
+ * a second search that failed.
+ */
+const DEEPSEEK_RESPONSE = {
+  type: "message",
+  content: [
+    { type: "thinking", thinking: "The user wants a standard. Let me search." },
+    { type: "server_tool_use", id: "call_00", name: "web_search", input: { query: "锅炉效率 标准" } },
+    {
+      type: "web_search_tool_result",
+      tool_use_id: "call_00",
+      content: [
+        {
+          type: "web_search_result",
+          title: "GB/T 10184-2025：电站锅炉性能试验规程",
+          url: "https://std.samr.gov.cn/hb/search/stdHBDetailed?id=2FA2",
+          page_age: "2025-03-11",
+          encrypted_content: "EqGZ+Sls0jp3h5EnzsKGkOUdyPSDXAi02S8",
+        },
+        // Same source surfaced twice in one turn — must collapse to one result.
+        {
+          type: "web_search_result",
+          title: "GB/T 10184-2025（重复）",
+          url: "https://std.samr.gov.cn/hb/search/stdHBDetailed?id=2FA2",
+          encrypted_content: "dup",
+        },
+        { type: "web_search_result", title: "行业标准信息服务平台", url: "https://hbba.sacinfo.org.cn/stdDetail/ae96" },
+        // A source with no URL cannot be fetched, so it is not a usable result.
+        { type: "web_search_result", title: "无链接条目" },
+      ],
+    },
+    { type: "text", text: "根据检索结果……" },
+    {
+      type: "web_search_tool_result",
+      tool_use_id: "call_01",
+      content: [{ type: "web_search_tool_result_error", error_code: "max_uses_exceeded" }],
+    },
+  ],
+  stop_reason: "max_tokens",
+};
+
+test("parseDeepSeekSearchResults harvests sources and ignores the surrounding blocks", () => {
+  const results = parseDeepSeekSearchResults(DEEPSEEK_RESPONSE);
+
+  expect(results.map((result) => result.url)).toEqual([
+    "https://std.samr.gov.cn/hb/search/stdHBDetailed?id=2FA2",
+    "https://hbba.sacinfo.org.cn/stdDetail/ae96",
+  ]);
+  expect(results[0]?.title).toBe("GB/T 10184-2025：电站锅炉性能试验规程");
+  // DeepSeek keeps the page text in an opaque field, so there is no snippet —
+  // and the encrypted blob must never be passed off as one.
+  expect(results[0]?.snippet).toBe("");
+  expect(results[1]?.snippet).toBe("");
+  expect(JSON.stringify(results)).not.toContain("EqGZ");
+});
+
+test("parseDeepSeekSearchResults reports a wholly failed search but tolerates a partial one", () => {
+  const allFailed = {
+    content: [
+      {
+        type: "web_search_tool_result",
+        content: [{ type: "web_search_tool_result_error", error_code: "invalid_tool_input" }],
+      },
+    ],
+  };
+  expect(() => parseDeepSeekSearchResults(allFailed)).toThrow(/invalid_tool_input/);
+
+  // One bad search among several must not discard the sources the others found.
+  expect(parseDeepSeekSearchResults(DEEPSEEK_RESPONSE)).toHaveLength(2);
+});
+
+test("parseDeepSeekSearchResults survives a response shape it does not recognize", () => {
+  expect(parseDeepSeekSearchResults({})).toEqual([]);
+  expect(parseDeepSeekSearchResults({ content: "not an array" })).toEqual([]);
+  expect(parseDeepSeekSearchResults(undefined)).toEqual([]);
+  // A future block type must be skipped, not crash the search.
+  expect(parseDeepSeekSearchResults({ content: [{ type: "some_new_block" }] })).toEqual([]);
+  expect(parseDeepSeekSearchResults({ content: [{ type: "web_search_tool_result", content: null }] })).toEqual([]);
 });

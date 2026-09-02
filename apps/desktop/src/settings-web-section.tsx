@@ -1,9 +1,12 @@
 import { useEffect, useState } from "react";
-import type { WebSearchProvider, WebToolsSettingsView } from "./ipc";
+import {
+  WEB_SEARCH_PROVIDERS,
+  webSearchUsesModelProviderKey,
+  type WebSearchProvider,
+  type WebToolsSettingsView,
+} from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
-
-const PROVIDERS: readonly WebSearchProvider[] = ["bocha", "tavily", "searxng"];
 
 /** Placeholder shown in the key field once a key is stored, so the real secret never reaches the renderer. */
 const STORED_KEY_MASK = "••••••••••••";
@@ -75,7 +78,10 @@ export function SettingsWebSection() {
     }
   };
 
-  const needsApiKey = settings.provider !== "searxng";
+  // DeepSeek borrows the model credential, so there is no key to type here and
+  // no SearXNG address to fill in either.
+  const usesProviderKey = webSearchUsesModelProviderKey(settings.provider);
+  const needsApiKey = !usesProviderKey && settings.provider !== "searxng";
 
   return (
     <>
@@ -95,7 +101,7 @@ export function SettingsWebSection() {
             value={settings.provider}
             onChange={(event) => void save({ provider: event.target.value as WebSearchProvider })}
           >
-            {PROVIDERS.map((provider) => (
+            {WEB_SEARCH_PROVIDERS.map((provider) => (
               <option key={provider} value={provider}>
                 {t(`web.provider.${provider}`)}
               </option>
@@ -103,7 +109,13 @@ export function SettingsWebSection() {
           </select>
         </SettingsRow>
 
-        {needsApiKey ? (
+        {usesProviderKey ? (
+          <SettingsRow title={t("web.boundKey")} description={t("web.boundKeyDesc")}>
+            <span className={settings.hasApiKey ? "settings-status--ok" : "settings-status--error"}>
+              {settings.hasApiKey ? t("web.boundKeyReady") : t("web.boundKeyMissing")}
+            </span>
+          </SettingsRow>
+        ) : needsApiKey ? (
           <SettingsRow title={t("web.apiKey")} description={t("web.apiKeyDesc")}>
             <input
               aria-label={t("web.apiKey")}
