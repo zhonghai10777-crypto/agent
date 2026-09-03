@@ -14,6 +14,7 @@ import {
   type ComposerSlashOption,
 } from "../composer-commands";
 import type { PiDesktopApi } from "../ipc";
+import { useI18n } from "../i18n/I18nProvider";
 import { deriveModelOnboardingState } from "../model-onboarding";
 import type { SettingsSection } from "../settings-view";
 
@@ -124,6 +125,7 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
     onSelectLoginProvider,
     onSelectLogoutProvider,
   } = params;
+  const { t } = useI18n();
 
   const [slashIndex, setSlashIndex] = useState(0);
   const [slashOptionIndex, setSlashOptionIndex] = useState(0);
@@ -162,10 +164,11 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
   const modelSlashEmptyState =
     activeSlashOptionCommand?.kind === "model" && slashOptions.length === 0
       ? (() => {
-          const state = deriveModelOnboardingState(selectedModelRuntime, {
-            provider: undefined,
-            modelId: undefined,
-          });
+          const state = deriveModelOnboardingState(
+            selectedModelRuntime,
+            { provider: undefined, modelId: undefined },
+            t,
+          );
           return {
             title: state.emptyModelTitle,
             description: state.emptyModelDescription,

@@ -27,6 +27,7 @@ import {
 } from "../composer-attachments";
 import { buildModelOptions, parseTreeComposerCommand } from "../composer-commands";
 import type { PiDesktopApi } from "../ipc";
+import { useI18n } from "../i18n/I18nProvider";
 import { deriveModelOnboardingState } from "../model-onboarding";
 import { getEffectiveModelRuntime } from "../model-settings";
 import type { SettingsSection } from "../settings-view";
@@ -58,6 +59,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
     expandWorkspace,
     openSettings,
   } = params;
+  const { t } = useI18n();
   const allowWorktree = snapshot?.capabilities.worktrees ?? false;
 
   const [pendingWorkspaceId, setPendingWorkspaceId] = useState("");
@@ -80,10 +82,11 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
   const resolvedProvider = provider ?? (defaultEnabled ? runtime?.settings.defaultProvider : undefined);
   const resolvedModelId = modelId ?? (defaultEnabled ? runtime?.settings.defaultModelId : undefined);
   const resolvedThinkingLevel = thinkingLevel ?? runtime?.settings.defaultThinkingLevel;
-  const modelOnboarding = deriveModelOnboardingState(runtime, {
-    provider: resolvedProvider,
-    modelId: resolvedModelId,
-  });
+  const modelOnboarding = deriveModelOnboardingState(
+    runtime,
+    { provider: resolvedProvider, modelId: resolvedModelId },
+    t,
+  );
 
   const focusComposer = useCallback(() => {
     window.requestAnimationFrame(() => {

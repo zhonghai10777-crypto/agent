@@ -368,6 +368,21 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.notifications.notEnabledYet": "尚未启用",
   "settings.notifications.unavailable": "不可用",
   "settings.notifications.checking": "正在检查……",
+  "settings.notifications.systemDesc": "是否允许 {product} 显示桌面通知，由 macOS 决定。",
+  "settings.notifications.inAppAlertsDesc": "在 macOS 权限开启后，选择哪些后台事件需要通知你。",
+  "settings.notifications.turnOnAskDesc":
+    "当有任务首次转入后台时，{product} 会向 macOS 申请权限。你也可以现在就申请。",
+  "settings.notifications.turnOnDeniedDesc":
+    "macOS 已禁止 {product} 发送通知。请打开系统设置重新允许。",
+  "settings.notifications.backgroundCompletionDesc": "后台会话完成时通知我。",
+  "settings.notifications.backgroundFailuresDesc": "后台会话失败时通知我。",
+  "settings.notifications.needsInputDesc": "需要你输入才能继续时通知我。",
+  "settings.notifications.grantedDesc": "macOS 已允许 {product} 就后台线程的进展显示桌面通知。",
+  "settings.notifications.deniedDesc":
+    "macOS 已禁止 {product} 发送通知。请在系统设置中允许，才能收到后台完成提醒。",
+  "settings.notifications.defaultDesc": "{product} 尚未向 macOS 申请桌面通知权限。",
+  "settings.notifications.unsupportedDesc": "此系统不支持桌面通知。",
+  "settings.notifications.checkingDesc": "正在检查 macOS 是否允许 {product} 发送通知。",
 
   "settings.endpoints.customEndpoints": "自定义端点",
   "settings.endpoints.noEndpoints": "还没有自定义端点。",
@@ -447,6 +462,19 @@ const zhMessages: Record<MessageKey, string> = {
   "onboarding.openProviders": "打开设置 → Provider",
   "onboarding.openModelsOrProviders": "打开设置 → 模型/Provider",
   "onboarding.noConnectedModels": "还没有可用的已连接模型。",
+  "onboarding.pickModelHint": "请选择一个模型。",
+  "onboarding.enableModelsHint": "打开设置 → 模型，启用模型。",
+  "onboarding.connectProviderHint": "打开设置 → Provider，连接一个服务商后才会有可用模型。",
+  "onboarding.allModelsDisabled": "所有可用模型当前都被禁用了。打开设置 → 模型，启用模型。",
+  "onboarding.connectProviderFirst": "请先在设置 → Provider 里连接一个服务商，然后再选择模型或设置默认值。",
+  "onboarding.selectedUnavailableUpdateDefault":
+    "本线程选中的模型已不可用。请另选一个模型，然后打开设置 → 模型更新默认值。",
+  "onboarding.selectedUnavailableChooseDefault":
+    "本线程选中的模型已不可用。请另选一个模型，然后打开设置 → 模型指定应用默认值。",
+  "onboarding.setDefaultHint": "请在设置 → 模型里设置一个默认模型。",
+  "onboarding.defaultUnavailableUpdate": "你保存的默认模型（{model}）已不可用。打开设置 → 模型更新它。",
+  "onboarding.defaultUnavailableChooseThenUpdate":
+    "你保存的默认模型（{model}）已不可用。请先为本线程选一个模型，然后打开设置 → 模型更新它。",
 
   /* ── Extensions ──────────────────────────────────── */
   "extensions.title": "扩展",

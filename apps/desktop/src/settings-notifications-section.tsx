@@ -1,5 +1,7 @@
 import type { DesktopNotificationPermissionStatus } from "./ipc";
 import type { NotificationPreferences } from "./desktop-state";
+import { useI18n } from "./i18n/I18nProvider";
+import type { Translator } from "./i18n";
 import { PRODUCT } from "./product";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
@@ -20,25 +22,29 @@ export function SettingsNotificationsSection({
   onRequestNotificationPermission,
   onOpenSystemNotificationSettings,
 }: SettingsNotificationsSectionProps) {
-  const statusLabel = labelForPermissionStatus(notificationPermissionStatus);
-  const statusDescription = descriptionForPermissionStatus(notificationPermissionStatus);
+  const { t } = useI18n();
+  const statusLabel = labelForPermissionStatus(notificationPermissionStatus, t);
+  const statusDescription = descriptionForPermissionStatus(notificationPermissionStatus, t);
   const showAskMacOs = notificationPermissionStatus === "default";
   const showOpenSystemSettings = notificationPermissionStatus === "denied";
   const showRecoveryActions = showAskMacOs || showOpenSystemSettings;
 
   return (
     <>
-      <SettingsGroup title="System" description={`macOS decides whether ${PRODUCT.name} can show desktop notifications at all.`}>
-        <SettingsRow title="macOS notification access" description={statusDescription}>
+      <SettingsGroup
+        title={t("settings.notifications.system")}
+        description={t("settings.notifications.systemDesc", { product: PRODUCT.name })}
+      >
+        <SettingsRow title={t("settings.notifications.macAccess")} description={statusDescription}>
           <span className="settings-row__value">{statusLabel}</span>
         </SettingsRow>
         {showRecoveryActions ? (
           <SettingsRow
-            title="Turn on notifications"
+            title={t("settings.notifications.turnOn")}
             description={
               showAskMacOs
-                ? `${PRODUCT.name} asks macOS when active work first moves into the background. You can also ask now.`
-                : `macOS notifications are already turned off for ${PRODUCT.name}. Open System Settings to enable them again.`
+                ? t("settings.notifications.turnOnAskDesc", { product: PRODUCT.name })
+                : t("settings.notifications.turnOnDeniedDesc", { product: PRODUCT.name })
             }
           >
             <div className="settings-row__actions">
@@ -49,7 +55,7 @@ export function SettingsNotificationsSection({
                   type="button"
                   onClick={onRequestNotificationPermission}
                 >
-                  Ask macOS
+                  {t("settings.notifications.askMacos")}
                 </button>
               ) : null}
               {showOpenSystemSettings ? (
@@ -59,7 +65,7 @@ export function SettingsNotificationsSection({
                   type="button"
                   onClick={onOpenSystemNotificationSettings}
                 >
-                  Open System Settings
+                  {t("settings.notifications.openSystemSettings")}
                 </button>
               ) : null}
             </div>
@@ -67,26 +73,38 @@ export function SettingsNotificationsSection({
         ) : null}
       </SettingsGroup>
 
-      <SettingsGroup title="In-app alerts" description="Choose which background events should try to notify once macOS access is enabled.">
-        <SettingsRow title="Background completion" description="Notify when a background session finishes.">
+      <SettingsGroup
+        title={t("settings.notifications.inAppAlerts")}
+        description={t("settings.notifications.inAppAlertsDesc")}
+      >
+        <SettingsRow
+          title={t("settings.notifications.backgroundCompletion")}
+          description={t("settings.notifications.backgroundCompletionDesc")}
+        >
           <input
-            aria-label="Background completion"
+            aria-label={t("settings.notifications.backgroundCompletion")}
             checked={notificationPreferences.backgroundCompletion}
             type="checkbox"
             onChange={(event) => onSetNotificationPreferences({ backgroundCompletion: event.target.checked })}
           />
         </SettingsRow>
-        <SettingsRow title="Background failures" description="Notify when a background session fails.">
+        <SettingsRow
+          title={t("settings.notifications.backgroundFailures")}
+          description={t("settings.notifications.backgroundFailuresDesc")}
+        >
           <input
-            aria-label="Background failures"
+            aria-label={t("settings.notifications.backgroundFailures")}
             checked={notificationPreferences.backgroundFailure}
             type="checkbox"
             onChange={(event) => onSetNotificationPreferences({ backgroundFailure: event.target.checked })}
           />
         </SettingsRow>
-        <SettingsRow title="Needs input or approval" description="Notify when input is needed to continue.">
+        <SettingsRow
+          title={t("settings.notifications.needsInput")}
+          description={t("settings.notifications.needsInputDesc")}
+        >
           <input
-            aria-label="Needs input or approval"
+            aria-label={t("settings.notifications.needsInput")}
             checked={notificationPreferences.attentionNeeded}
             type="checkbox"
             onChange={(event) => onSetNotificationPreferences({ attentionNeeded: event.target.checked })}
@@ -97,32 +115,32 @@ export function SettingsNotificationsSection({
   );
 }
 
-function labelForPermissionStatus(status: DesktopNotificationPermissionStatus): string {
+function labelForPermissionStatus(status: DesktopNotificationPermissionStatus, t: Translator): string {
   switch (status) {
     case "granted":
-      return "Enabled";
+      return t("settings.notifications.enabled");
     case "denied":
-      return "Turned off";
+      return t("settings.notifications.turnedOff");
     case "default":
-      return "Not enabled yet";
+      return t("settings.notifications.notEnabledYet");
     case "unsupported":
-      return "Unavailable";
+      return t("settings.notifications.unavailable");
     default:
-      return "Checking…";
+      return t("settings.notifications.checking");
   }
 }
 
-function descriptionForPermissionStatus(status: DesktopNotificationPermissionStatus): string {
+function descriptionForPermissionStatus(status: DesktopNotificationPermissionStatus, t: Translator): string {
   switch (status) {
     case "granted":
-      return `macOS will allow ${PRODUCT.name} to show desktop notifications for background thread updates.`;
+      return t("settings.notifications.grantedDesc", { product: PRODUCT.name });
     case "denied":
-      return `macOS notifications are turned off for ${PRODUCT.name}. Enable them in System Settings to receive background completion alerts.`;
+      return t("settings.notifications.deniedDesc", { product: PRODUCT.name });
     case "default":
-      return `${PRODUCT.name} has not asked macOS for desktop notification access yet.`;
+      return t("settings.notifications.defaultDesc", { product: PRODUCT.name });
     case "unsupported":
-      return "Desktop notifications are unavailable on this system.";
+      return t("settings.notifications.unsupportedDesc");
     default:
-      return `Checking whether macOS notifications are available for ${PRODUCT.name}.`;
+      return t("settings.notifications.checkingDesc", { product: PRODUCT.name });
   }
 }

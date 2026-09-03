@@ -369,6 +369,23 @@ const enMessages = {
   "settings.notifications.notEnabledYet": "Not enabled yet",
   "settings.notifications.unavailable": "Unavailable",
   "settings.notifications.checking": "Checking…",
+  "settings.notifications.systemDesc": "macOS decides whether {product} can show desktop notifications at all.",
+  "settings.notifications.inAppAlertsDesc":
+    "Choose which background events should try to notify once macOS access is enabled.",
+  "settings.notifications.turnOnAskDesc":
+    "{product} asks macOS when active work first moves into the background. You can also ask now.",
+  "settings.notifications.turnOnDeniedDesc":
+    "macOS notifications are already turned off for {product}. Open System Settings to enable them again.",
+  "settings.notifications.backgroundCompletionDesc": "Notify when a background session finishes.",
+  "settings.notifications.backgroundFailuresDesc": "Notify when a background session fails.",
+  "settings.notifications.needsInputDesc": "Notify when input is needed to continue.",
+  "settings.notifications.grantedDesc":
+    "macOS will allow {product} to show desktop notifications for background thread updates.",
+  "settings.notifications.deniedDesc":
+    "macOS notifications are turned off for {product}. Enable them in System Settings to receive background completion alerts.",
+  "settings.notifications.defaultDesc": "{product} has not asked macOS for desktop notification access yet.",
+  "settings.notifications.unsupportedDesc": "Desktop notifications are unavailable on this system.",
+  "settings.notifications.checkingDesc": "Checking whether macOS notifications are available for {product}.",
 
   "settings.endpoints.customEndpoints": "Custom endpoints",
   "settings.endpoints.noEndpoints": "No custom endpoints yet.",
@@ -448,6 +465,22 @@ const enMessages = {
   "onboarding.openProviders": "Open Settings > Providers",
   "onboarding.openModelsOrProviders": "Open Settings > Models/Providers",
   "onboarding.noConnectedModels": "No connected models available yet.",
+  "onboarding.pickModelHint": "Pick a model.",
+  "onboarding.enableModelsHint": "Open Settings > Models to enable models.",
+  "onboarding.connectProviderHint": "Open Settings > Providers to connect a provider and make models available.",
+  "onboarding.allModelsDisabled":
+    "All available models are currently disabled. Open Settings > Models to enable models.",
+  "onboarding.connectProviderFirst":
+    "Connect a provider in Settings > Providers before choosing a model or setting a default.",
+  "onboarding.selectedUnavailableUpdateDefault":
+    "The model selected for this thread is no longer available. Choose another model, then open Settings > Models to update the default.",
+  "onboarding.selectedUnavailableChooseDefault":
+    "The model selected for this thread is no longer available. Choose another model, then open Settings > Models to choose the app default.",
+  "onboarding.setDefaultHint": "Set a default model in Settings > Models.",
+  "onboarding.defaultUnavailableUpdate":
+    "Your saved default ({model}) is no longer available. Open Settings > Models to update it.",
+  "onboarding.defaultUnavailableChooseThenUpdate":
+    "Your saved default ({model}) is no longer available. Choose a model for this thread, then open Settings > Models to update it.",
 
   /* ── Extensions ──────────────────────────────────── */
   "extensions.title": "Extensions",
