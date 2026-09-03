@@ -188,10 +188,11 @@ function AppShell({
     (selectedDefaultEnabled ? selectedModelRuntime?.settings.defaultModelId : undefined);
   const resolvedSessionThinkingLevel =
     selectedSession?.config?.thinkingLevel ?? selectedModelRuntime?.settings.defaultThinkingLevel;
-  const selectedSessionModelOnboarding = deriveModelOnboardingState(selectedModelRuntime, {
-    provider: resolvedSessionProvider,
-    modelId: resolvedSessionModelId,
-  });
+  const selectedSessionModelOnboarding = deriveModelOnboardingState(
+    selectedModelRuntime,
+    { provider: resolvedSessionProvider, modelId: resolvedSessionModelId },
+    t,
+  );
   const queuedComposerMessages = snapshot?.queuedComposerMessages ?? [];
   const editingQueuedMessageId = snapshot?.editingQueuedMessageId;
   const runningLabel = useRunningLabel(selectedSession?.status === "running" ? selectedSession.runningSince : undefined, t);
