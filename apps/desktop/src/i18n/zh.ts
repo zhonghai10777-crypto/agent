@@ -389,6 +389,25 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.endpoints.bridgeUnavailable": "桌面桥不可用。",
   "settings.endpoints.modelCount": "{count} 个模型",
   "settings.endpoints.enableAria": "启用 {id}",
+  "settings.endpoints.description":
+    "添加兼容 OpenAI 协议的端点（Ollama、vLLM 或你自己的服务器）。配置保存在 ~/.pi/agent/models.json。",
+  "settings.endpoints.addEndpointHint": "注册一个本地或自建的 OpenAI 兼容服务器。",
+  "settings.endpoints.dialogTitleCreate": "添加自定义端点",
+  "settings.endpoints.dialogTitleEdit": "编辑自定义端点",
+  "settings.endpoints.dialogBody":
+    "配置一个兼容 OpenAI 协议的服务器。端点地址和 API 密钥以明文保存在 ~/.pi/agent/models.json。",
+  "settings.endpoints.providerIdPlaceholder": "ollama-local",
+  "settings.endpoints.providerIdHint": "只能用小写字母、数字和短横线。创建后不可修改。",
+  "settings.endpoints.baseUrlPlaceholder": "http://localhost:11434/v1",
+  "settings.endpoints.baseUrlHint":
+    "需要包含 /v1 后缀。Ollama：http://localhost:11434/v1，vLLM：http://localhost:8000/v1。",
+  "settings.endpoints.apiKeyPlaceholder": "vLLM：填服务端的 key；Ollama：留空",
+  "settings.endpoints.apiKeyHint":
+    "存储格式要求此字段。若 vLLM 启动时带了 --api-key，请填入该密钥；Ollama 等无需鉴权的服务器留空即可，会自动存入一个占位值。",
+  "settings.endpoints.toolCallingHint":
+    "模型必须支持工具调用（tool calling）。7B 以下的小模型经常无法正确输出 OpenAI 风格的函数调用。",
+  "settings.endpoints.checklistEmpty": "点击“检测模型”，或在下方手动输入模型 ID 添加。",
+  "settings.endpoints.discoverFailed": "无法自动获取模型列表：{error}",
 
   /* ── Provider status / actions ───────────────────── */
   "provider.oauthConnected": "OAuth · 已连接",

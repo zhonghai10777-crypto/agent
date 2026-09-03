@@ -391,6 +391,25 @@ const enMessages = {
   "settings.endpoints.bridgeUnavailable": "Desktop bridge is not available.",
   "settings.endpoints.modelCount": "{count} model{s}",
   "settings.endpoints.enableAria": "Enable {id}",
+  "settings.endpoints.description":
+    "Add OpenAI-compatible endpoints (Ollama, vLLM, or your own server). Stored in ~/.pi/agent/models.json.",
+  "settings.endpoints.addEndpointHint": "Register a local or custom OpenAI-compatible server.",
+  "settings.endpoints.dialogTitleCreate": "Add custom endpoint",
+  "settings.endpoints.dialogTitleEdit": "Edit custom endpoint",
+  "settings.endpoints.dialogBody":
+    "Configure an OpenAI-compatible server. The endpoint and API key are stored in plaintext at ~/.pi/agent/models.json.",
+  "settings.endpoints.providerIdPlaceholder": "ollama-local",
+  "settings.endpoints.providerIdHint": "Lowercase letters, digits, and dashes. Cannot be changed later.",
+  "settings.endpoints.baseUrlPlaceholder": "http://localhost:11434/v1",
+  "settings.endpoints.baseUrlHint":
+    "Include the /v1 suffix. Ollama: http://localhost:11434/v1. vLLM: http://localhost:8000/v1.",
+  "settings.endpoints.apiKeyPlaceholder": "vLLM: pass through; Ollama: leave blank",
+  "settings.endpoints.apiKeyHint":
+    "Required by the storage format. For vLLM started with --api-key, enter that key. For Ollama or other servers without auth, leave blank and a placeholder is saved.",
+  "settings.endpoints.toolCallingHint":
+    "Tool calling is required. Smaller models (< 7B) often do not emit OpenAI-style function calls cleanly.",
+  "settings.endpoints.checklistEmpty": "Click “Detect models” or type a model ID below to add one manually.",
+  "settings.endpoints.discoverFailed": "Could not discover models: {error}",
 
   /* ── Provider status / actions ───────────────────── */
   "provider.oauthConnected": "OAuth · connected",
