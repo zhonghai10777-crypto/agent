@@ -74,14 +74,14 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Composer ────────────────────────────────────── */
   "composer.label": "输入框",
-  "composer.placeholder": "让 pi 检查代码库、运行修复，或继续当前线程……",
+  "composer.placeholder": "向 pi 提问，或让它查资料、整理文档、制作表格……",
   "composer.enterToSend": "Enter 发送 · Shift+Enter 换行",
   "composer.enterToQueue": "{runningLabel} · Enter 排队 · Cmd+Enter 引导",
   "composer.attachFiles": "附加文件",
   "composer.permission.auto": "可写",
   "composer.permission.plan": "只读",
-  "composer.permission.autoHint": "agent 可修改文件、运行命令。点击切到只读",
-  "composer.permission.planHint": "agent 只能查看,不可写文件或运行命令。点击切到可写",
+  "composer.permission.autoHint": "pi 可以修改文件、执行操作。点击切到只读",
+  "composer.permission.planHint": "pi 只能查看，不能修改文件或执行操作。点击切到可写",
   "composer.stopRun": "停止运行",
   "composer.sendMessage": "发送消息",
   "composer.dropToAttach": "拖放图片或文件以附加",
@@ -124,11 +124,11 @@ const zhMessages: Record<MessageKey, string> = {
   /* ── New thread view ─────────────────────────────── */
   "newThread.promptLabel": "新线程提示词",
   "newThread.placeholder": "向 pi 提问，使用 / 调用命令和技能",
-  "newThread.letsBuild": "开始构建",
+  "newThread.letsBuild": "开始吧",
   "newThread.workspaceSrOnly": "工作区",
   "newThread.startThread": "启动线程",
   "newThread.openFolderToBegin": "先打开一个文件夹",
-  "newThread.openFolderToBeginBody": "先从侧边栏选择一个代码仓库，然后开始本地或工作树线程。",
+  "newThread.openFolderToBeginBody": "先从侧边栏选择一个文件夹，然后开始新的对话。",
 
   /* ── Conversation / timeline ─────────────────────── */
   "timeline.newActivityBelow": "下方有新活动",
