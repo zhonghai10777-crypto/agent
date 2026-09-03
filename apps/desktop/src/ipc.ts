@@ -1,4 +1,5 @@
 import type { RuntimeSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
+import type { WebSearchKeySource, WebSearchProvider } from "./web-search-providers";
 import type {
   NavigateSessionTreeOptions,
   NavigateSessionTreeResult,
@@ -56,33 +57,15 @@ export type CustomProviderProbeResult =
   | { readonly ok: true; readonly models: readonly string[] }
   | { readonly ok: false; readonly error: string };
 
-export type WebSearchProvider = "deepseek" | "bocha" | "tavily" | "searxng";
-
-/**
- * Mirrors `WEB_SEARCH_PROVIDERS` in electron/web-search.ts. The renderer cannot
- * import from the main process, so the list is restated here and kept in the
- * same order the settings dropdown shows.
- */
-export const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ["deepseek", "bocha", "tavily", "searxng"];
-
-/**
- * Providers authenticated with the configured model credential rather than a key
- * typed into the web-access settings — for these the key field is hidden.
- * Mirrors `usesModelProviderKey` in electron/web-search.ts.
- */
-export function webSearchUsesModelProviderKey(provider: WebSearchProvider): boolean {
-  return provider === "deepseek";
-}
-
 /**
  * Web-access settings as the renderer sees them. The API key is never sent to
- * the renderer — `hasApiKey` reports whether one is stored, and an update sends
- * a key only when the user actually typed a new one.
+ * the renderer — `keySource` reports which credential search will use, and an
+ * update sends a key only when the user actually typed a new one.
  */
 export interface WebToolsSettingsView {
   readonly enabled: boolean;
   readonly provider: WebSearchProvider;
-  readonly hasApiKey: boolean;
+  readonly keySource: WebSearchKeySource;
   readonly searxngBaseUrl: string;
   readonly maxResults: number;
   readonly allowedDomains: readonly string[];

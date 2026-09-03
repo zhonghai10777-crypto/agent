@@ -3,7 +3,7 @@ import { CUSTOM_PROVIDER_ID_PATTERN, isValidHttpBaseUrl } from "@pi-gui/pi-sdk-d
 import type { CustomProviderConfig, CustomProviderModelConfig } from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import type { Translator } from "./i18n";
-import { SettingsGroup } from "./settings-utils";
+import { SettingsGroup, SettingsRow } from "./settings-utils";
 
 interface SettingsCustomEndpointsSectionProps {
   readonly existingProviderIds: readonly string[];
@@ -86,20 +86,14 @@ export function SettingsCustomEndpointsSection({
             <span className="settings-row__description">{t("settings.endpoints.noEndpoints")}</span>
           </div>
         ) : (
-          entries.map((entry) => (
-            <div key={entry.providerId} className="settings-row">
-              <div className="settings-row__label">
-                <div className="settings-row__title">{entry.providerId}</div>
-                <div className="settings-row__description">
-                  {entry.baseUrl} ·{" "}
-                  {t("settings.endpoints.modelCount", {
-                    count: (entry.models ?? []).length,
-                    // English pluralizes with the `{s}` marker; Chinese omits it.
-                    s: (entry.models ?? []).length === 1 ? "" : "s",
-                  })}
-                </div>
-              </div>
-              <div className="settings-row__control">
+          entries.map((entry) => {
+            const count = (entry.models ?? []).length;
+            return (
+              <SettingsRow
+                key={entry.providerId}
+                title={entry.providerId}
+                description={`${entry.baseUrl} · ${t("settings.endpoints.modelCount", { count, s: count === 1 ? "" : "s" })}`}
+              >
                 <button
                   className="button button--secondary"
                   type="button"
@@ -114,21 +108,18 @@ export function SettingsCustomEndpointsSection({
                 >
                   {t("common.remove")}
                 </button>
-              </div>
-            </div>
-          ))
+              </SettingsRow>
+            );
+          })
         )}
-        <div className="settings-row">
-          <div className="settings-row__label">
-            <div className="settings-row__title">{t("settings.endpoints.addEndpoint")}</div>
-            <div className="settings-row__description">{t("settings.endpoints.addEndpointHint")}</div>
-          </div>
-          <div className="settings-row__control">
-            <button className="button" type="button" onClick={() => setDialog({ kind: "create" })}>
-              {t("settings.endpoints.addEndpoint")}
-            </button>
-          </div>
-        </div>
+        <SettingsRow
+          title={t("settings.endpoints.addEndpoint")}
+          description={t("settings.endpoints.addEndpointHint")}
+        >
+          <button className="button" type="button" onClick={() => setDialog({ kind: "create" })}>
+            {t("settings.endpoints.addEndpoint")}
+          </button>
+        </SettingsRow>
       </SettingsGroup>
 
       {dialog.kind !== "closed" ? (
@@ -443,10 +434,6 @@ function ModelChecklist({ probed, selected, onToggle, onManualAdd, disabled }: M
   );
 }
 
-/**
- * Bare function rather than a component, so the translator is passed in — the
- * same pattern `ProviderRow` uses in settings-utils.
- */
 function validateProviderId(
   candidate: string,
   existing: readonly string[],
