@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
+import type { WebToolsSettingsView } from "./ipc";
 import {
+  canBorrowModelProviderKey,
   WEB_SEARCH_PROVIDERS,
-  webSearchUsesModelProviderKey,
   type WebSearchProvider,
-  type WebToolsSettingsView,
-} from "./ipc";
+} from "./web-search-providers";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
@@ -29,7 +29,7 @@ export function SettingsWebSection() {
       setSettings(loaded);
       setSearxngDraft(loaded.searxngBaseUrl);
       setDomainsDraft(loaded.allowedDomains.join(", "));
-      setApiKeyDraft(loaded.hasApiKey ? STORED_KEY_MASK : "");
+      setApiKeyDraft(loaded.keySource === "stored" ? STORED_KEY_MASK : "");
     });
     return () => {
       active = false;
@@ -53,7 +53,7 @@ export function SettingsWebSection() {
     });
     if (next) {
       setSettings(next);
-      if (next.hasApiKey && apiKeyDraft !== STORED_KEY_MASK && patch.apiKey) {
+      if (next.keySource === "stored" && apiKeyDraft !== STORED_KEY_MASK && patch.apiKey) {
         setApiKeyDraft(STORED_KEY_MASK);
       }
     }
@@ -78,10 +78,9 @@ export function SettingsWebSection() {
     }
   };
 
-  // DeepSeek borrows the model credential, so there is no key to type here and
-  // no SearXNG address to fill in either.
-  const usesProviderKey = webSearchUsesModelProviderKey(settings.provider);
-  const needsApiKey = !usesProviderKey && settings.provider !== "searxng";
+  // DeepSeek can borrow a model credential; the others cannot, so only DeepSeek
+  // gets the "borrowed / not found" line beside the field.
+  const canBorrowKey = canBorrowModelProviderKey(settings.provider);
 
   return (
     <>
@@ -109,28 +108,7 @@ export function SettingsWebSection() {
           </select>
         </SettingsRow>
 
-        {usesProviderKey ? (
-          <SettingsRow title={t("web.boundKey")} description={t("web.boundKeyDesc")}>
-            <span className={settings.hasApiKey ? "settings-status--ok" : "settings-status--error"}>
-              {settings.hasApiKey ? t("web.boundKeyReady") : t("web.boundKeyMissing")}
-            </span>
-          </SettingsRow>
-        ) : needsApiKey ? (
-          <SettingsRow title={t("web.apiKey")} description={t("web.apiKeyDesc")}>
-            <input
-              aria-label={t("web.apiKey")}
-              type="password"
-              value={apiKeyDraft}
-              placeholder={t("web.apiKeyPlaceholder")}
-              onChange={(event) => setApiKeyDraft(event.target.value)}
-              onBlur={() => {
-                if (apiKeyDraft !== STORED_KEY_MASK) {
-                  void save({ apiKey: apiKeyDraft.trim() });
-                }
-              }}
-            />
-          </SettingsRow>
-        ) : (
+        {settings.provider === "searxng" ? (
           <SettingsRow title={t("web.searxngUrl")} description={t("web.searxngUrlDesc")}>
             <input
               aria-label={t("web.searxngUrl")}
@@ -140,6 +118,33 @@ export function SettingsWebSection() {
               onChange={(event) => setSearxngDraft(event.target.value)}
               onBlur={() => void save({ searxngBaseUrl: searxngDraft.trim() })}
             />
+          </SettingsRow>
+        ) : (
+          <SettingsRow
+            title={t("web.apiKey")}
+            description={canBorrowKey ? t("web.deepseekKeyDesc") : t("web.apiKeyDesc")}
+          >
+            <div className="settings-inline">
+              <input
+                aria-label={t("web.apiKey")}
+                type="password"
+                value={apiKeyDraft}
+                placeholder={
+                  settings.keySource === "borrowed" ? t("web.borrowedKeyPlaceholder") : t("web.apiKeyPlaceholder")
+                }
+                onChange={(event) => setApiKeyDraft(event.target.value)}
+                onBlur={() => {
+                  if (apiKeyDraft !== STORED_KEY_MASK) {
+                    void save({ apiKey: apiKeyDraft.trim() });
+                  }
+                }}
+              />
+              {canBorrowKey && settings.keySource !== "stored" ? (
+                <span className={settings.keySource === "borrowed" ? "settings-status--ok" : "settings-status--error"}>
+                  {settings.keySource === "borrowed" ? t("web.boundKeyReady") : t("web.boundKeyMissing")}
+                </span>
+              ) : null}
+            </div>
           </SettingsRow>
         )}
 

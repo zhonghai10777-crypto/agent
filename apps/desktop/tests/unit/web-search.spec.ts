@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  DEFAULT_WEB_TOOLS_SETTINGS,
   describeWebToolsMisconfiguration,
   extractReadableText,
   isDeepSeekEndpoint,
@@ -7,9 +8,8 @@ import {
   isHttpUrl,
   normalizeWebToolsSettings,
   parseDeepSeekSearchResults,
-  usesModelProviderKey,
-  DEFAULT_WEB_TOOLS_SETTINGS,
 } from "../../electron/web-search";
+import { canBorrowModelProviderKey } from "../../src/web-search-providers";
 
 test("extractReadableText drops scripts, styles and chrome, keeping body prose", () => {
   const html = `<!doctype html><html><head><title>GB/T 14100 — 风电机组</title>
@@ -111,16 +111,16 @@ test("describeWebToolsMisconfiguration explains what to fix, per provider", () =
   expect(describeWebToolsMisconfiguration(searxngOk)).toBeUndefined();
 });
 
-test("deepseek is a valid provider and borrows the model credential", () => {
+test("deepseek is a valid provider and can borrow the model credential", () => {
   expect(normalizeWebToolsSettings({ provider: "deepseek" }).provider).toBe("deepseek");
-  expect(usesModelProviderKey("deepseek")).toBe(true);
-  expect(usesModelProviderKey("bocha")).toBe(false);
-  expect(usesModelProviderKey("searxng")).toBe(false);
+  expect(canBorrowModelProviderKey("deepseek")).toBe(true);
+  expect(canBorrowModelProviderKey("bocha")).toBe(false);
+  expect(canBorrowModelProviderKey("searxng")).toBe(false);
 });
 
 test("a custom endpoint on DeepSeek's API is recognized whatever its provider id", () => {
-  // The UI refuses the built-in `deepseek` id, so users reach DeepSeek through a
-  // custom endpoint named anything at all. Search claims the key by base URL.
+  // A user may reach DeepSeek through a custom endpoint named anything at all,
+  // so search claims the key by base URL rather than by provider id.
   expect(isDeepSeekEndpoint("https://api.deepseek.com/v1")).toBe(true);
   expect(isDeepSeekEndpoint("https://api.deepseek.com")).toBe(true);
   expect(isDeepSeekEndpoint("https://api.deepseek.com/anthropic/v1/messages")).toBe(true);
@@ -133,15 +133,15 @@ test("a custom endpoint on DeepSeek's API is recognized whatever its provider id
   expect(isDeepSeekEndpoint("")).toBe(false);
 });
 
-test("describeWebToolsMisconfiguration sends deepseek users to the provider settings", () => {
+test("describeWebToolsMisconfiguration points deepseek users at a field that exists", () => {
   const noKey = normalizeWebToolsSettings({ enabled: true, provider: "deepseek" });
   const message = describeWebToolsMisconfiguration(noKey);
-  // The web-access screen has no key field for deepseek, so pointing there would
-  // send the user somewhere with nothing to fill in.
+  // Web access owns the key field for every backend, so it is named first;
+  // Providers is mentioned second because the borrow path is also valid.
+  expect(message).toContain("Web access");
   expect(message).toContain("Providers");
-  expect(message).not.toContain("Web access");
 
-  // Main overlays the provider key before use; once present the config is valid.
+  // Whether typed here or borrowed by main, a present key makes the config valid.
   const bound = normalizeWebToolsSettings({ enabled: true, provider: "deepseek", apiKey: "sk-test" });
   expect(describeWebToolsMisconfiguration(bound)).toBeUndefined();
 });

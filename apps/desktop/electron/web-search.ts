@@ -1,4 +1,9 @@
 import { PRODUCT } from "../src/product";
+import {
+  canBorrowModelProviderKey,
+  isWebSearchProvider,
+  type WebSearchProvider,
+} from "../src/web-search-providers";
 
 /**
  * Search backends. The four shapes cover the realistic deployments:
@@ -11,17 +16,10 @@ import { PRODUCT } from "../src/product";
  *  - `searxng` a self-hosted meta-search instance, which is the only option
  *              that works on an isolated plant network pointed at an internal
  *              index. Needs no key.
+ *
+ * The provider identity itself lives in `src/web-search-providers` so the
+ * renderer shares it rather than mirroring it.
  */
-export type WebSearchProvider = "deepseek" | "bocha" | "tavily" | "searxng";
-
-/**
- * Backends whose key is the user's DeepSeek *model* credential rather than a
- * key typed into the web-access settings. For these the stored `apiKey` is
- * always empty and the caller overlays the provider key before use.
- */
-export function usesModelProviderKey(provider: WebSearchProvider): boolean {
-  return provider === "deepseek";
-}
 
 /** pi's built-in provider id whose credential the deepseek backend borrows. */
 export const DEEPSEEK_PROVIDER_ID = "deepseek";
@@ -48,12 +46,12 @@ export function isDeepSeekEndpoint(baseUrl: string): boolean {
 }
 
 export interface WebToolsSettings {
-  /** Master switch. When false neither tool is registered at all. */
+  /** Master switch; the tools stay registered and report "off" (see `createWebRuntimeTools`). */
   readonly enabled: boolean;
   readonly provider: WebSearchProvider;
   /**
-   * Required for bocha/tavily; ignored by searxng. For deepseek this is not
-   * stored — main overlays the configured DeepSeek provider key at read time.
+   * Required for bocha/tavily; ignored by searxng. Optional for deepseek, which
+   * falls back to the configured DeepSeek model credential when this is empty.
    */
   readonly apiKey: string;
   /** Base URL of the self-hosted instance; only used by searxng. */
@@ -92,13 +90,6 @@ export interface WebSearchResult {
   readonly title: string;
   readonly url: string;
   readonly snippet: string;
-}
-
-/** Every valid provider, in the order the settings dropdown offers them. */
-export const WEB_SEARCH_PROVIDERS: readonly WebSearchProvider[] = ["deepseek", "bocha", "tavily", "searxng"];
-
-function isWebSearchProvider(value: unknown): value is WebSearchProvider {
-  return typeof value === "string" && (WEB_SEARCH_PROVIDERS as readonly string[]).includes(value);
 }
 
 export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
@@ -144,10 +135,12 @@ export function describeWebToolsMisconfiguration(settings: WebToolsSettings): st
     return undefined;
   }
   if (!settings.apiKey) {
-    // For deepseek the key is the model credential, so pointing the user at the
-    // web-access key field would send them somewhere that has no field to fill.
-    return usesModelProviderKey(settings.provider)
-      ? "No DeepSeek API key is configured. Add one under Settings → Providers → DeepSeek; web search reuses that same key."
+    // Point at a field that actually exists. Settings → Web access holds the key
+    // input for every backend, including deepseek; the provider fallback is
+    // mentioned second because it only helps someone who already configured
+    // DeepSeek as a model provider.
+    return canBorrowModelProviderKey(settings.provider)
+      ? "No DeepSeek API key is configured. Add one under Settings → Web access, or configure DeepSeek under Settings → Providers and web search will reuse that key."
       : `No API key is configured for ${settings.provider}. Add one under Settings → Web access.`;
   }
   return undefined;

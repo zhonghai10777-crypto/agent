@@ -85,9 +85,9 @@ import {
   isDeepSeekEndpoint,
   normalizeWebToolsSettings,
   runWebSearch,
-  usesModelProviderKey,
   type WebToolsSettings,
 } from "./web-search";
+import { canBorrowModelProviderKey, type WebSearchKeySource } from "../src/web-search-providers";
 import { LibraryStore, normalizeLibrarySettings } from "./library-store";
 import { LibraryIndex } from "./library-index";
 import { createLibraryRuntimeExtension, createLibraryRuntimeTools } from "./library-runtime";
@@ -1275,33 +1275,60 @@ app.whenReady().then(async () => {
   );
   const webToolsStore = new WebToolsStore(safeStorage, path.join(configuredUserDataDir, "web-tools.json"));
   /**
-   * DeepSeek web search bills against the DeepSeek *model* key, so the user
-   * configures one credential instead of two. The key is overlaid at read time
-   * rather than copied into web-tools.json: it stays in the encrypted credential
-   * store, and rotating it under Settings → Providers takes effect at once.
+   * Finds a DeepSeek *model* credential search can bill against, so a user who
+   * already configured DeepSeek is not asked for the same secret twice. Looks at
+   * the built-in `deepseek` provider first, then any custom endpoint pointing at
+   * DeepSeek's own API — a user reaching DeepSeek through a custom endpoint has
+   * already entered the one key search needs.
    *
-   * Search first looks for the built-in `deepseek` provider's key. If that slot
-   * is empty but a custom endpoint points at DeepSeek's own API (any id — the
-   * UI cannot register the built-in id, so a user reaching DeepSeek through a
-   * custom endpoint has no other way to supply search its credential), search
-   * borrows that endpoint's key instead.
+   * Returns "" when neither exists, which is the normal state on a fresh install
+   * and the reason Settings → Web access has its own key field.
    */
-  const readWebToolsSettings = (): WebToolsSettings => {
-    const settings = webToolsStore.read();
-    if (!usesModelProviderKey(settings.provider)) {
-      return settings;
-    }
+  const borrowDeepSeekProviderKey = (): string => {
     const builtinKey = secureAuthStorageBackend.readApiKeySync(DEEPSEEK_PROVIDER_ID);
     if (builtinKey) {
-      return { ...settings, apiKey: builtinKey };
+      return builtinKey;
     }
     for (const providerId of readDeepSeekEndpointProviderIds()) {
       const key = secureAuthStorageBackend.readApiKeySync(providerId);
       if (key) {
-        return { ...settings, apiKey: key };
+        return key;
       }
     }
-    return { ...settings, apiKey: "" };
+    return "";
+  };
+  /**
+   * DeepSeek web search bills against a DeepSeek key, and the key is resolved at
+   * read time rather than copied into web-tools.json so rotating it under
+   * Settings → Providers takes effect at once.
+   *
+   * Precedence lives here alone: a key typed into Settings → Web access wins,
+   * because it is the only one the UI can show and change. Both callers below
+   * read the answer from this one place, and neither runs the borrow scan — a
+   * synchronous read and decrypt of the credential store — once a stored key has
+   * already settled the question.
+   */
+  const resolveWebToolsCredential = (): {
+    readonly stored: WebToolsSettings;
+    readonly effective: WebToolsSettings;
+    readonly source: WebSearchKeySource;
+  } => {
+    const stored = webToolsStore.read();
+    if (stored.apiKey) {
+      return { stored, effective: stored, source: "stored" };
+    }
+    if (!canBorrowModelProviderKey(stored.provider)) {
+      return { stored, effective: stored, source: "none" };
+    }
+    const borrowed = borrowDeepSeekProviderKey();
+    return borrowed
+      ? { stored, effective: { ...stored, apiKey: borrowed }, source: "borrowed" }
+      : { stored, effective: stored, source: "none" };
+  };
+  const readWebToolsSettings = (): WebToolsSettings => resolveWebToolsCredential().effective;
+  const readWebToolsSettingsView = (): WebToolsSettingsView => {
+    const { stored, source } = resolveWebToolsCredential();
+    return toWebToolsSettingsView(stored, source);
   };
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
   libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
@@ -1604,7 +1631,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.probeCustomProviderModels, (_event, input: CustomProviderProbeInput) =>
     probeCustomProviderModels(input),
   );
-  ipcMain.handle(desktopIpc.getWebToolsSettings, () => toWebToolsSettingsView(readWebToolsSettings()));
+  ipcMain.handle(desktopIpc.getWebToolsSettings, readWebToolsSettingsView);
   ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
     const current = webToolsStore.read();
     const incoming = (update ?? {}) as Record<string, unknown>;
@@ -1612,9 +1639,9 @@ app.whenReady().then(async () => {
     // the secret, so it cannot echo it back on an unrelated settings change.
     const apiKey = typeof incoming.apiKey === "string" ? incoming.apiKey.trim() : current.apiKey;
     webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey }));
-    // Re-read so `hasApiKey` reports the *effective* key: with the deepseek
-    // backend selected that is the provider credential, not the stored one.
-    return toWebToolsSettingsView(readWebToolsSettings());
+    // Re-read so the view reflects what was just persisted, including whether a
+    // borrowed provider key is still standing in behind an emptied field.
+    return readWebToolsSettingsView();
   });
   ipcMain.handle(desktopIpc.testWebSearch, async (_event, query: unknown): Promise<WebSearchTestResult> => {
     const text = typeof query === "string" && query.trim() ? query.trim() : `${PRODUCT.name} connectivity test`;
@@ -2295,13 +2322,13 @@ function readDeepSeekEndpointProviderIds(): readonly string[] {
   return ids;
 }
 
-function toWebToolsSettingsView(settings: WebToolsSettings): WebToolsSettingsView {
-  // Deliberately omits apiKey: the renderer only needs to know whether one is
-  // stored, and a secret that never crosses the IPC boundary cannot leak from it.
+function toWebToolsSettingsView(settings: WebToolsSettings, keySource: WebSearchKeySource): WebToolsSettingsView {
+  // Deliberately omits apiKey: the renderer only needs to know which credential
+  // will be used, and a secret that never crosses the IPC boundary cannot leak.
   return {
     enabled: settings.enabled,
     provider: settings.provider,
-    hasApiKey: settings.apiKey.length > 0,
+    keySource,
     searxngBaseUrl: settings.searxngBaseUrl,
     maxResults: settings.maxResults,
     allowedDomains: settings.allowedDomains,
@@ -2311,7 +2338,9 @@ function toWebToolsSettingsView(settings: WebToolsSettings): WebToolsSettingsVie
 async function probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult> {
   const baseUrl = input.baseUrl?.trim();
   if (!baseUrl || !isValidHttpBaseUrl(baseUrl)) {
-    return { ok: false, error: "Base URL must start with http:// or https://" };
+    // Same sentence the renderer shows for the field; localize it here too, since
+    // this one reaches the user through the endpoint dialog's error line.
+    return { ok: false, error: tGlobal("settings.endpoints.baseUrlInvalid") };
   }
   const target = `${baseUrl.replace(/\/+$/, "")}/models`;
   const apiKey = input.apiKey?.trim();
