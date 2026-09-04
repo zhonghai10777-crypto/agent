@@ -138,7 +138,7 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
     activeSlashQuery
       ? buildSlashCommandSections(slashQuery, selectedRuntime, sessionCommands, commandCompatibility, {
           allowTreeCommand,
-        })
+        }, t)
       : [];
   const slashSuggestions = flattenSlashSections(slashSections);
   const exactSlashCommand = slashSuggestions.find((cmd) => isExactSlashCommand(slashQuery, cmd));
@@ -154,12 +154,13 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
   const slashOptions =
     activeSlashOptionCommand?.kind === "model"
       ? buildModelOptions(selectedModelRuntime)
-      : slashOptionsForCommand(activeSlashOptionCommand, selectedRuntime);
+      : slashOptionsForCommand(activeSlashOptionCommand, selectedRuntime, t);
   const activeSlashOptionEmptyState = slashOptionEmptyState(
     activeSlashOptionCommand,
     activeSlashOptionCommand?.kind === "model"
       ? undefined
       : selectedRuntime,
+    t,
   );
   const modelSlashEmptyState =
     activeSlashOptionCommand?.kind === "model" && slashOptions.length === 0
