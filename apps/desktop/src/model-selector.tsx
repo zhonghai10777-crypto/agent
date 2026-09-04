@@ -2,8 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import {
   buildModelOptions,
-  MODEL_OPTIONS_EMPTY_TITLE,
-  THINKING_OPTIONS,
+  thinkingOptions,
   type ComposerModelOption,
 } from "./composer-commands";
 import { useI18n } from "./i18n/I18nProvider";
@@ -35,11 +34,14 @@ export function ModelSelector({
   showEmptyModelControl = false,
   unselectedModelLabel,
   emptyModelLabel,
-  emptyModelTitle = MODEL_OPTIONS_EMPTY_TITLE,
+  emptyModelTitle,
   onSetModel,
   onSetThinking,
 }: ModelSelectorProps) {
   const { t } = useI18n();
+  // Defaulted here rather than in the parameter list: the fallback is localized,
+  // and `t` does not exist yet where destructuring defaults are evaluated.
+  const resolvedEmptyModelTitle = emptyModelTitle ?? t("slash.modelEmptyTitle");
   const [open, setOpen] = useState<OpenDropdown>("none");
   const [modelFilter, setModelFilter] = useState("");
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -150,7 +152,7 @@ export function ModelSelector({
               {groupedModels.length === 0 ? (
                 <>
                   <div className="model-selector__group-title">
-                    {noMatchingModels ? t("model.noMatching") : emptyModelTitle}
+                    {noMatchingModels ? t("model.noMatching") : resolvedEmptyModelTitle}
                   </div>
                   {noMatchingModels ? <div className="model-selector__empty">{t("model.tryDifferentFilter")}</div> : null}
                 </>
@@ -175,7 +177,7 @@ export function ModelSelector({
               onWheel={(event) => event.stopPropagation()}
             >
               <div className="model-selector__group-title">{t("model.thinkingLevel")}</div>
-              {THINKING_OPTIONS.map((option) => {
+              {thinkingOptions(t).map((option) => {
                 const isActive = option.value === thinkingLevel;
                 return (
                   <button

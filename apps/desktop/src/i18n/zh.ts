@@ -32,8 +32,8 @@ const zhMessages: Record<MessageKey, string> = {
   "app.workspace": "工作区",
 
   /* ── Sidebar ─────────────────────────────────────── */
-  "sidebar.newThread": "新建线程",
-  "sidebar.threads": "线程",
+  "sidebar.newThread": "新建对话",
+  "sidebar.threads": "对话",
   "sidebar.skills": "技能",
   "sidebar.extensions": "扩展",
   "sidebar.settings": "设置",
@@ -43,7 +43,7 @@ const zhMessages: Record<MessageKey, string> = {
   "sidebar.openFirstFolder": "打开第一个文件夹",
   "sidebar.pinned": "已置顶",
   "sidebar.archived": "已归档",
-  "sidebar.renameThread": "重命名线程",
+  "sidebar.renameThread": "重命名对话",
   "sidebar.archive": "归档",
   "sidebar.restore": "恢复",
   "sidebar.markAsRead": "标记为已读",
@@ -59,10 +59,10 @@ const zhMessages: Record<MessageKey, string> = {
   "aria.unpinThread": "取消置顶 {title}{context}",
   "aria.archiveThread": "归档 {title}{context}",
   "aria.restoreThread": "恢复 {title}{context}",
-  "aria.threadActionsFor": "对 {title}{context} 的线程操作",
-  "aria.renameThread": "重命名线程 {title}",
+  "aria.threadActionsFor": "对 {title}{context} 的对话操作",
+  "aria.renameThread": "重命名对话 {title}",
   "aria.openFolder": "打开文件夹",
-  "aria.pinnedThreads": "置顶线程",
+  "aria.pinnedThreads": "置顶对话",
 
   /* ── Topbar ──────────────────────────────────────── */
   "topbar.toggleTerminal": "切换终端",
@@ -117,23 +117,23 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Render failure ──────────────────────────────── */
   "crash.title": "这个界面显示不出来",
-  "crash.body": "当前线程的内容渲染失败了。您的对话都还在，可以重试，或者切换到别的线程。",
+  "crash.body": "当前对话的内容显示失败了。您的记录都还在，可以重试，或者切换到别的对话。",
   "crash.retry": "重试",
   "crash.reload": "重新加载应用",
 
   /* ── New thread view ─────────────────────────────── */
-  "newThread.promptLabel": "新线程提示词",
+  "newThread.promptLabel": "新对话输入框",
   "newThread.placeholder": "向 pi 提问，使用 / 调用命令和技能",
   "newThread.letsBuild": "开始吧",
   "newThread.workspaceSrOnly": "工作区",
-  "newThread.startThread": "启动线程",
+  "newThread.startThread": "开始对话",
   "newThread.openFolderToBegin": "先打开一个文件夹",
   "newThread.openFolderToBeginBody": "先从侧边栏选择一个文件夹，然后开始新的对话。",
 
   /* ── Conversation / timeline ─────────────────────── */
   "timeline.newActivityBelow": "下方有新活动",
   "timeline.runRetrying": "连接出错，正在自动重试…",
-  "timeline.promptsInThread": "此线程中的提示词",
+  "timeline.promptsInThread": "此对话中的提问",
   "timeline.prompts": "提示词",
   "timeline.prompt": "提示",
   "timeline.loadingTranscript": "正在加载记录……",
@@ -183,7 +183,7 @@ const zhMessages: Record<MessageKey, string> = {
   "diff.noPreviewAvailable": "没有可用的预览。",
   "diff.binaryPreviewUnavailable": "二进制或目录预览不可用。",
   "diff.previewTruncated": "[预览已截断]",
-  "diff.currentThread": "当前线程",
+  "diff.currentThread": "当前对话",
   "diff.worktree": "工作树 {branch}",
   "diff.noWorkspaceSelected": "未选择工作区",
 
@@ -197,7 +197,7 @@ const zhMessages: Record<MessageKey, string> = {
   "terminal.hideTerminal": "隐藏终端",
 
   /* ── Thread search ───────────────────────────────── */
-  "search.placeholder": "搜索线程……",
+  "search.placeholder": "搜索对话……",
   "search.results": "{count} 条结果",
   "search.previous": "上一个匹配",
   "search.next": "下一个匹配",
@@ -307,7 +307,7 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.general.integratedShellDesc": "留空以使用默认登录 Shell。",
   "settings.general.integratedShellPlaceholder": "/bin/zsh",
   "settings.general.shortcuts": "快捷键",
-  "settings.general.shortcutNewThread": "新建线程",
+  "settings.general.shortcutNewThread": "新建对话",
   "settings.general.shortcutOpenSettings": "打开设置",
   "settings.general.shortcutToggleTerminal": "切换终端",
   "settings.general.shortcutNewTerminalTab": "新建终端标签页",
@@ -377,7 +377,7 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.notifications.backgroundCompletionDesc": "后台会话完成时通知我。",
   "settings.notifications.backgroundFailuresDesc": "后台会话失败时通知我。",
   "settings.notifications.needsInputDesc": "需要你输入才能继续时通知我。",
-  "settings.notifications.grantedDesc": "macOS 已允许 {product} 就后台线程的进展显示桌面通知。",
+  "settings.notifications.grantedDesc": "macOS 已允许 {product} 就后台对话的进展显示桌面通知。",
   "settings.notifications.deniedDesc":
     "macOS 已禁止 {product} 发送通知。请在系统设置中允许，才能收到后台完成提醒。",
   "settings.notifications.defaultDesc": "{product} 尚未向 macOS 申请桌面通知权限。",
@@ -443,6 +443,50 @@ const zhMessages: Record<MessageKey, string> = {
   "thinking.high": "高",
   "thinking.xhigh": "极高",
   "thinking.max": "最大",
+  "thinking.lowDesc": "回答快，思考较浅",
+  "thinking.mediumDesc": "兼顾速度与思考深度，适合日常任务",
+  "thinking.highDesc": "思考更深入，适合复杂问题",
+  "thinking.xhighDesc": "更深入的思考，适合特别复杂的问题",
+  "thinking.maxDesc": "支持的模型上使用最深的思考",
+
+  /* ── Slash menu ──────────────────────────────────── */
+  "slash.section.runtime": "技能命令",
+  "slash.section.host": "常用操作",
+  "slash.model": "模型",
+  "slash.modelDesc": "为本对话选择模型",
+  "slash.thinking": "思考深度",
+  "slash.thinkingDesc": "设置本对话的思考深度",
+  "slash.tree": "分支",
+  "slash.treeDesc": "浏览并跳转到本对话的各个分支",
+  "slash.status": "状态",
+  "slash.statusDesc": "在记录里显示本对话的当前设置",
+  "slash.login": "登录",
+  "slash.loginDesc": "为此工作区登录一个模型服务",
+  "slash.logout": "退出登录",
+  "slash.logoutDesc": "移除此工作区的一个模型服务登录",
+  "slash.settings": "设置",
+  "slash.settingsDesc": "打开模型、技能和通知设置",
+  "slash.scopedModels": "已启用模型",
+  "slash.scopedModelsDesc": "选择哪些模型出现在选择器中",
+  "slash.session": "会话",
+  "slash.sessionDesc": "在记录里显示本对话的详细信息",
+  "slash.name": "重命名",
+  "slash.nameDesc": "重命名当前对话",
+  "slash.nameTemplate": "/name 新的对话标题",
+  "slash.compact": "压缩",
+  "slash.compactDesc": "立即压缩对话上下文",
+  "slash.reload": "重新加载",
+  "slash.reloadDesc": "重新加载提示词、技能和会话资源",
+  "slash.modelEmptyTitle": "没有可用的模型",
+  "slash.modelEmptyDesc": "打开设置启用一个模型，或登录一个模型服务。",
+  "slash.incomplete.compact": "可在 /compact 后面补充说明，或直接从菜单发送。",
+  "slash.incomplete.login": "发送 /login 前，请先从菜单选择一个模型服务。",
+  "slash.incomplete.logout": "发送 /logout 前，请先从菜单选择一个已登录的模型服务。",
+  "slash.incomplete.model": "发送 /model 前，请先从菜单选择模型服务和模型。",
+  "slash.incomplete.name": "请在 /name 后面写上对话标题。",
+  "slash.incomplete.scopedModels": "请从菜单或设置里打开「已启用模型」。",
+  "slash.incomplete.settings": "请从菜单或按 Cmd+, 打开设置。",
+  "slash.incomplete.thinking": "发送 /thinking 前，请先从菜单选择思考深度。",
 
   /* ── Model selector ──────────────────────────────── */
   "model.chooseModel": "选择模型",
@@ -468,13 +512,13 @@ const zhMessages: Record<MessageKey, string> = {
   "onboarding.allModelsDisabled": "所有可用模型当前都被禁用了。打开设置 → 模型，启用模型。",
   "onboarding.connectProviderFirst": "请先在设置 → 模型服务里连接一个服务，然后再选择模型或设置默认值。",
   "onboarding.selectedUnavailableUpdateDefault":
-    "本线程选中的模型已不可用。请另选一个模型，然后打开设置 → 模型更新默认值。",
+    "本对话选中的模型已不可用。请另选一个模型，然后打开设置 → 模型更新默认值。",
   "onboarding.selectedUnavailableChooseDefault":
-    "本线程选中的模型已不可用。请另选一个模型，然后打开设置 → 模型指定应用默认值。",
+    "本对话选中的模型已不可用。请另选一个模型，然后打开设置 → 模型指定应用默认值。",
   "onboarding.setDefaultHint": "请在设置 → 模型里设置一个默认模型。",
   "onboarding.defaultUnavailableUpdate": "你保存的默认模型（{model}）已不可用。打开设置 → 模型更新它。",
   "onboarding.defaultUnavailableChooseThenUpdate":
-    "你保存的默认模型（{model}）已不可用。请先为本线程选一个模型，然后打开设置 → 模型更新它。",
+    "你保存的默认模型（{model}）已不可用。请先为本对话选一个模型，然后打开设置 → 模型更新它。",
 
   /* ── Extensions ──────────────────────────────────── */
   "extensions.title": "扩展",
@@ -535,16 +579,16 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Fork modal ──────────────────────────────────── */
   "fork.title": "派生对话",
-  "fork.startNewThread": "启动新线程",
+  "fork.startNewThread": "开始新对话",
   "fork.close": "关闭派生弹窗",
   "fork.sameWorktree": "相同工作树",
   "fork.newWorktree": "新工作树",
   "fork.cantCreateWorktree": "此工作区无法创建工作树。",
-  "fork.freshWorktreeHint": "将创建一个全新的工作树，派生线程会在其中打开。",
-  "fork.sameFolderHint": "派生线程会在与原始线程相同的文件夹中打开。",
+  "fork.freshWorktreeHint": "将创建一个全新的工作树，分支对话会在其中打开。",
+  "fork.sameFolderHint": "分支对话会在与原对话相同的文件夹中打开。",
   "fork.forking": "正在派生……",
-  "fork.forkThread": "派生线程",
-  "fork.body": "将对话复制到并包括此响应为止，放入一个新的侧边栏线程，并配以空输入框，这样你可以在不同的方向上继续。原始线程保持不变。",
+  "fork.forkThread": "从这里分支",
+  "fork.body": "把对话复制到这条回复为止，放进侧边栏的一个新对话里，你可以从这里换个方向继续聊。原对话保持不变。",
   "fork.environmentAria": "派生环境",
 
   /* ── Tree modal ──────────────────────────────────── */
@@ -651,9 +695,9 @@ const zhMessages: Record<MessageKey, string> = {
 
   /* ── Empty states (main canvas) ──────────────────── */
   "empty.workspaceHeader": "工作区",
-  "empty.addFolderBeforeThread": "创建新线程前，请先添加一个项目文件夹。",
-  "empty.createThreadForFolder": "为此文件夹创建一个线程，然后从侧边栏在会话之间切换。",
-  "empty.addFoldersAndGroup": "添加项目文件夹，在其下分组会话，并从侧边栏在线程之间切换。",
+  "empty.addFolderBeforeThread": "开始新对话前，请先添加一个文件夹。",
+  "empty.createThreadForFolder": "为此文件夹开始一个对话，之后可以在侧边栏切换。",
+  "empty.addFoldersAndGroup": "添加文件夹，对话会按文件夹分组，可以在侧边栏切换。",
 };
 
 export default zhMessages;

@@ -4,7 +4,6 @@ import type { ComposerAttachment, NewThreadEnvironment, WorkspaceRecord } from "
 import type { MentionOption } from "./hooks/use-mention-menu";
 import { ArrowUpIcon, PiLogoMark, PlusIcon } from "./icons";
 import {
-  MODEL_OPTIONS_EMPTY_TITLE,
   type ComposerSlashCommand,
   type ComposerSlashCommandSection,
   type ComposerSlashOption,
@@ -291,7 +290,7 @@ function NewThreadComposerFooter({
               dropdownPlacement="below"
               showEmptyModelControl
               unselectedModelLabel={modelOnboarding.unselectedModelLabel}
-              emptyModelLabel={MODEL_OPTIONS_EMPTY_TITLE}
+              emptyModelLabel={t("slash.modelEmptyTitle")}
               emptyModelTitle={modelOnboarding.emptyModelTitle}
               onSetModel={onSetModel}
               onSetThinking={onSetThinking}

@@ -6,6 +6,7 @@ import type {
   RuntimeSnapshot,
 } from "@pi-gui/session-driver/runtime-types";
 import type { ExtensionCommandCompatibilityRecord } from "./desktop-state";
+import { tGlobal, type MessageKey, type Translator } from "./i18n";
 import { titleCase } from "./string-utils";
 
 export type ComposerSlashCommandKind =
@@ -63,9 +64,6 @@ export interface ComposerProviderOption extends ComposerSlashOption {
   readonly providerId: string;
 }
 
-export const MODEL_OPTIONS_EMPTY_TITLE = "No models available";
-export const MODEL_OPTIONS_EMPTY_DESCRIPTION = "Open Settings to enable a model or log in to a provider.";
-
 export type ParsedComposerCommand =
   | { type: "model"; provider: string; modelId: string }
   | { type: "thinking"; thinkingLevel: string }
@@ -76,167 +74,156 @@ export type ParsedComposerCommand =
   | { type: "compact"; customInstructions?: string }
   | { type: "name"; title: string };
 
-const INCOMPLETE_COMMAND_MESSAGES: Readonly<Record<string, string>> = {
-  "/compact": "Add optional instructions after /compact or send it directly from the slash menu.",
-  "/login": "Choose a provider from the slash menu before sending /login.",
-  "/logout": "Choose a connected provider from the slash menu before sending /logout.",
-  "/model": "Choose a provider and model from the slash menu before sending /model.",
-  "/name": "Add a thread title after /name.",
-  "/scoped-models": "Open Enabled models from the slash menu or Settings.",
-  "/settings": "Open Settings from the slash menu or Cmd+,.",
-  "/thinking": "Choose a reasoning level from the slash menu before sending /thinking.",
+const INCOMPLETE_COMMAND_MESSAGES: Readonly<Record<string, MessageKey>> = {
+  "/compact": "slash.incomplete.compact",
+  "/login": "slash.incomplete.login",
+  "/logout": "slash.incomplete.logout",
+  "/model": "slash.incomplete.model",
+  "/name": "slash.incomplete.name",
+  "/scoped-models": "slash.incomplete.scopedModels",
+  "/settings": "slash.incomplete.settings",
+  "/thinking": "slash.incomplete.thinking",
 } as const;
 
-const HOST_ACTION_SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
-  {
-    id: "host:model",
-    kind: "model",
-    command: "/model",
-    template: "/model",
-    title: "Model",
-    description: "Choose the model for this session",
-    submitMode: "pick-option",
-    section: "host",
-  },
-  {
-    id: "host:thinking",
-    kind: "thinking",
-    command: "/thinking",
-    template: "/thinking",
-    title: "Reasoning",
-    description: "Set thinking level for this session",
-    submitMode: "pick-option",
-    section: "host",
-  },
-  {
-    id: "host:tree",
-    kind: "tree",
-    command: "/tree",
-    template: "/tree",
-    title: "Tree",
-    description: "Browse and jump between branches in this session",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:status",
-    kind: "status",
-    command: "/status",
-    template: "/status",
-    title: "Status",
-    description: "Show current session overrides in the timeline",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:login",
-    kind: "login",
-    command: "/login",
-    template: "/login",
-    title: "Login",
-    description: "Authenticate a provider for this workspace",
-    submitMode: "pick-option",
-    section: "host",
-  },
-  {
-    id: "host:logout",
-    kind: "logout",
-    command: "/logout",
-    template: "/logout",
-    title: "Logout",
-    description: "Remove a provider login from this workspace",
-    submitMode: "pick-option",
-    section: "host",
-  },
-  {
-    id: "host:settings",
-    kind: "settings",
-    command: "/settings",
-    template: "/settings",
-    title: "Settings",
-    description: "Open model, skill, and notification settings",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:scoped-models",
-    kind: "scoped-models",
-    command: "/scoped-models",
-    template: "/scoped-models",
-    title: "Enabled models",
-    description: "Choose which models appear in pickers",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:session",
-    kind: "session",
-    command: "/session",
-    template: "/session",
-    title: "Session",
-    description: "Show current session details in the timeline",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:name",
-    kind: "name",
-    command: "/name",
-    template: "/name New thread title",
-    title: "Rename",
-    description: "Rename the current session",
-    submitMode: "prefill",
-    section: "host",
-  },
-  {
-    id: "host:compact",
-    kind: "compact",
-    command: "/compact",
-    template: "/compact",
-    title: "Compact",
-    description: "Compact session context now",
-    submitMode: "immediate",
-    section: "host",
-  },
-  {
-    id: "host:reload",
-    kind: "reload",
-    command: "/reload",
-    template: "/reload",
-    title: "Reload",
-    description: "Reload prompts, skills, and session resources",
-    submitMode: "immediate",
-    section: "host",
-  },
-] as const;
+/**
+ * The `/command` token stays English: it is what the user types and what the
+ * runtime parses. Only the title and description shown beside it are localized,
+ * so the table is built per call with the active translator.
+ */
+function hostActionSlashCommands(t: Translator): readonly ComposerSlashCommand[] {
+  return [
+    {
+      id: "host:model",
+      kind: "model",
+      command: "/model",
+      template: "/model",
+      title: t("slash.model"),
+      description: t("slash.modelDesc"),
+      submitMode: "pick-option",
+      section: "host",
+    },
+    {
+      id: "host:thinking",
+      kind: "thinking",
+      command: "/thinking",
+      template: "/thinking",
+      title: t("slash.thinking"),
+      description: t("slash.thinkingDesc"),
+      submitMode: "pick-option",
+      section: "host",
+    },
+    {
+      id: "host:tree",
+      kind: "tree",
+      command: "/tree",
+      template: "/tree",
+      title: t("slash.tree"),
+      description: t("slash.treeDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:status",
+      kind: "status",
+      command: "/status",
+      template: "/status",
+      title: t("slash.status"),
+      description: t("slash.statusDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:login",
+      kind: "login",
+      command: "/login",
+      template: "/login",
+      title: t("slash.login"),
+      description: t("slash.loginDesc"),
+      submitMode: "pick-option",
+      section: "host",
+    },
+    {
+      id: "host:logout",
+      kind: "logout",
+      command: "/logout",
+      template: "/logout",
+      title: t("slash.logout"),
+      description: t("slash.logoutDesc"),
+      submitMode: "pick-option",
+      section: "host",
+    },
+    {
+      id: "host:settings",
+      kind: "settings",
+      command: "/settings",
+      template: "/settings",
+      title: t("slash.settings"),
+      description: t("slash.settingsDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:scoped-models",
+      kind: "scoped-models",
+      command: "/scoped-models",
+      template: "/scoped-models",
+      title: t("slash.scopedModels"),
+      description: t("slash.scopedModelsDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:session",
+      kind: "session",
+      command: "/session",
+      template: "/session",
+      title: t("slash.session"),
+      description: t("slash.sessionDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:name",
+      kind: "name",
+      command: "/name",
+      template: t("slash.nameTemplate"),
+      title: t("slash.name"),
+      description: t("slash.nameDesc"),
+      submitMode: "prefill",
+      section: "host",
+    },
+    {
+      id: "host:compact",
+      kind: "compact",
+      command: "/compact",
+      template: "/compact",
+      title: t("slash.compact"),
+      description: t("slash.compactDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+    {
+      id: "host:reload",
+      kind: "reload",
+      command: "/reload",
+      template: "/reload",
+      title: t("slash.reload"),
+      description: t("slash.reloadDesc"),
+      submitMode: "immediate",
+      section: "host",
+    },
+  ];
+}
 
-export const THINKING_OPTIONS: readonly ComposerSlashOption[] = [
-  {
-    value: "low",
-    label: "Low",
-    description: "Fast responses with lighter reasoning",
-  },
-  {
-    value: "medium",
-    label: "Medium",
-    description: "Balances speed and reasoning depth for everyday tasks",
-  },
-  {
-    value: "high",
-    label: "High",
-    description: "Greater reasoning depth for complex problems",
-  },
-  {
-    value: "xhigh",
-    label: "Extra High",
-    description: "Extra high reasoning depth for complex problems",
-  },
-  {
-    value: "max",
-    label: "Max",
-    description: "Maximum reasoning depth for supported models",
-  },
-] as const;
+export function thinkingOptions(t: Translator): readonly ComposerSlashOption[] {
+  return [
+    { value: "low", label: t("thinking.low"), description: t("thinking.lowDesc") },
+    { value: "medium", label: t("thinking.medium"), description: t("thinking.mediumDesc") },
+    { value: "high", label: t("thinking.high"), description: t("thinking.highDesc") },
+    { value: "xhigh", label: t("thinking.xhigh"), description: t("thinking.xhighDesc") },
+    { value: "max", label: t("thinking.max"), description: t("thinking.maxDesc") },
+  ];
+}
 
 export function buildSlashCommandSections(
   query: string,
@@ -246,6 +233,7 @@ export function buildSlashCommandSections(
   options: {
     readonly allowTreeCommand?: boolean;
   } = {},
+  t: Translator = tGlobal,
 ): readonly ComposerSlashCommandSection[] {
   const normalizedQuery = query.trim().toLowerCase();
   const availableRuntimeCommands = resolveRuntimeCommands(runtime, sessionCommands);
@@ -268,7 +256,7 @@ export function buildSlashCommandSections(
     }))
     .filter((command) => matchesCommand(command, normalizedQuery));
   const allowTreeCommand = options.allowTreeCommand ?? true;
-  const hostMatches = HOST_ACTION_SLASH_COMMANDS.filter(
+  const hostMatches = hostActionSlashCommands(t).filter(
     (command) => (allowTreeCommand || command.kind !== "tree") && matchesCommand(command, normalizedQuery),
   );
 
@@ -283,12 +271,12 @@ export function buildSlashCommandSections(
   );
   const runtimeSection: ComposerSlashCommandSection = {
     id: "runtime",
-    title: runtimeMatches.length > 0 ? "Runtime Commands" : undefined,
+    title: runtimeMatches.length > 0 ? t("slash.section.runtime") : undefined,
     items: runtimeMatches,
   };
   const hostSection: ComposerSlashCommandSection = {
     id: "host",
-    title: hostMatches.length > 0 ? "Host Actions" : undefined,
+    title: hostMatches.length > 0 ? t("slash.section.host") : undefined,
     items: hostMatches,
   };
   const sections: ComposerSlashCommandSection[] =
@@ -429,13 +417,14 @@ export function buildModelOptions(
 export function slashOptionsForCommand(
   command: ComposerSlashCommand | undefined,
   runtime?: RuntimeSnapshot,
+  t: Translator = tGlobal,
 ): readonly ComposerSlashOption[] {
   if (!command) {
     return [];
   }
 
   if (command.kind === "thinking") {
-    return THINKING_OPTIONS;
+    return thinkingOptions(t);
   }
   if (command.kind === "model") {
     return buildModelOptions(runtime);
@@ -456,6 +445,7 @@ export function slashOptionsForCommand(
 export function slashOptionEmptyState(
   command: ComposerSlashCommand | undefined,
   runtime?: RuntimeSnapshot,
+  t: Translator = tGlobal,
 ): ComposerSlashOptionEmptyState | undefined {
   if (!command) {
     return undefined;
@@ -463,8 +453,8 @@ export function slashOptionEmptyState(
 
   if (command.kind === "model" && buildModelOptions(runtime).length === 0) {
     return {
-      title: MODEL_OPTIONS_EMPTY_TITLE,
-      description: MODEL_OPTIONS_EMPTY_DESCRIPTION,
+      title: t("slash.modelEmptyTitle"),
+      description: t("slash.modelEmptyDesc"),
     };
   }
 
@@ -671,7 +661,10 @@ export function incompleteComposerCommandMessage(value: string): string | undefi
   }
 
   const [command] = trimmed.split(/\s+/);
-  return INCOMPLETE_COMMAND_MESSAGES[command as keyof typeof INCOMPLETE_COMMAND_MESSAGES];
+  const key = INCOMPLETE_COMMAND_MESSAGES[command as keyof typeof INCOMPLETE_COMMAND_MESSAGES];
+  // Called from the main process, which has no React context — tGlobal tracks
+  // the locale the store last set.
+  return key ? tGlobal(key) : undefined;
 }
 
 export function isExactSlashCommand(query: string, command: ComposerSlashCommand): boolean {
