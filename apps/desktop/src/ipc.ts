@@ -41,6 +41,24 @@ export interface CustomProviderModelConfig {
   readonly contextWindow?: number;
 }
 
+/**
+ * A custom endpoint as the renderer sees it. The API key is never sent to the
+ * renderer, not even as a mask: `hasApiKey` reports whether one is stored.
+ *
+ * A displayed mask used to double as the "unchanged" signal on save, which meant
+ * the only copy of a legacy plaintext key could be overwritten by the mask.
+ */
+export interface CustomProviderView {
+  readonly providerId: string;
+  readonly baseUrl: string;
+  readonly hasApiKey: boolean;
+  readonly models?: readonly CustomProviderModelConfig[];
+}
+
+/**
+ * A save. `apiKey` omitted or empty means "keep whatever is stored" — the
+ * renderer has no key to echo back, so it cannot destroy one by saving.
+ */
 export interface CustomProviderConfig {
   readonly providerId: string;
   readonly baseUrl: string;
@@ -51,6 +69,12 @@ export interface CustomProviderConfig {
 export interface CustomProviderProbeInput {
   readonly baseUrl: string;
   readonly apiKey?: string;
+  /**
+   * When set and no `apiKey` is given, the probe authenticates with this
+   * endpoint's stored credential — "Detect models" must work without making the
+   * user retype a key the app already holds.
+   */
+  readonly providerId?: string;
 }
 
 export type CustomProviderProbeResult =
@@ -427,7 +451,7 @@ export interface PiDesktopApi {
   loginProvider(workspaceId: string, providerId: string): Promise<DesktopAppState>;
   logoutProvider(workspaceId: string, providerId: string): Promise<DesktopAppState>;
   setProviderApiKey(workspaceId: string, providerId: string, apiKey: string): Promise<DesktopAppState>;
-  listCustomProviders(): Promise<readonly CustomProviderConfig[]>;
+  listCustomProviders(): Promise<readonly CustomProviderView[]>;
   setCustomProvider(workspaceId: string, config: CustomProviderConfig): Promise<DesktopAppState>;
   deleteCustomProvider(workspaceId: string, providerId: string): Promise<DesktopAppState>;
   probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult>;

@@ -37,15 +37,17 @@ import {
   listModels,
   loginProvider,
   logoutProvider,
-  removeRuntimeApiKey,
+  persistApiKey,
+  removePersistedApiKey,
   resolveProviderAuth,
-  setRuntimeApiKey,
 } from "./pi-compat/index.js";
 import {
   BUILT_IN_PROVIDER_IDS,
+  CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
   CustomProviderStore,
   type CustomProviderEntry,
   type CustomProviderInput,
+  type CustomProviderSummary,
 } from "./custom-provider-store.js";
 
 export {
@@ -54,7 +56,12 @@ export {
   isValidHttpBaseUrl,
   OPENAI_COMPLETIONS_API,
 } from "./custom-provider-store.js";
-export type { CustomProviderEntry, CustomProviderInput, CustomProviderModelInput } from "./custom-provider-store.js";
+export type {
+  CustomProviderEntry,
+  CustomProviderInput,
+  CustomProviderModelInput,
+  CustomProviderSummary,
+} from "./custom-provider-store.js";
 
 interface ModelSettingsSnapshot {
   readonly defaultProvider?: string;
@@ -172,24 +179,48 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       throw new Error(`API key setup is not supported for ${providerId}.`);
     }
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await setRuntimeApiKey(runtime, providerId, normalized);
+    await persistApiKey(runtime, providerId, normalized);
     await registry.refresh();
     await context.resourceLoader.reload();
     await this.autoEnableModelsForAuthenticatedProviders(context, [providerId]);
     return this.buildSnapshot(context);
   }
 
-  async listCustomProviders(): Promise<readonly CustomProviderEntry[]> {
+  async listCustomProviders(): Promise<readonly CustomProviderSummary[]> {
     const entries = await this.customProviderStore.list();
-    // The API key lives in auth storage, not models.json; report whether one
-    // is configured so the UI can reflect the custom endpoint's key state.
     const runtime = await this.modelRuntime;
-    const records = await Promise.all(entries.map(async (entry) => {
-      const credential = await resolveProviderAuth(runtime, entry.providerId);
-      const hasKey = Boolean(credential?.auth.apiKey || credential?.auth.headers);
-      return hasKey ? { ...entry, apiKey: REDACTED_API_KEY } : entry;
-    }));
-    return records;
+    return Promise.all(
+      entries.map(async (entry) => ({
+        providerId: entry.providerId,
+        baseUrl: entry.baseUrl,
+        models: entry.models,
+        hasApiKey: await this.hasRealApiKey(runtime, entry),
+      })),
+    );
+  }
+
+  /**
+   * Whether a usable credential exists for a custom endpoint.
+   *
+   * models.json carries the literal placeholder for every managed endpoint and
+   * the SDK reports that through `getAuth`, so a placeholder-blind check calls
+   * every endpoint "configured" — including one that has no key at all, which is
+   * exactly the state the user needs to see.
+   */
+  private async hasRealApiKey(
+    runtime: Awaited<RuntimeSupervisor["modelRuntime"]>,
+    entry: CustomProviderEntry,
+  ): Promise<boolean> {
+    const credential = await resolveProviderAuth(runtime, entry.providerId);
+    const key = credential?.auth.apiKey;
+    if (typeof key === "string" && key && key !== CUSTOM_PROVIDER_PLACEHOLDER_API_KEY) {
+      return true;
+    }
+    if (credential?.auth.headers) {
+      return true;
+    }
+    // A pre-encryption build may still hold the only copy in models.json.
+    return Boolean(entry.apiKey);
   }
 
   async setCustomProvider(workspace: WorkspaceRef, input: CustomProviderInput): Promise<RuntimeSnapshot> {
@@ -201,29 +232,56 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
       );
     }
     const context = await this.ensureContext(workspace);
+
+    // Rescue a legacy plaintext key *before* the write below replaces it with
+    // the placeholder. For such an endpoint models.json holds the only copy, so
+    // saving an unrelated edit (a base URL, a model list) would otherwise destroy
+    // the credential and leave the runtime authenticating with "unused".
+    const existing = (await this.customProviderStore.list()).find(
+      (entry) => entry.providerId === input.providerId,
+    );
+    // An omitted or empty apiKey means "keep what is stored": the renderer never
+    // receives the secret, so it has nothing to echo back.
+    const incomingKey = input.apiKey?.trim();
+    const keyToStore = incomingKey || existing?.apiKey?.trim();
+
     await this.customProviderStore.set(input);
+    // Refresh before storing the key: `login` resolves the provider through the
+    // runtime, and a newly written endpoint is not known to it until the model
+    // catalog is re-read.
+    await registry.refresh();
     // The API key is stored in the (optionally encrypted) auth storage rather
     // than in models.json, so custom-endpoint keys never land in plaintext.
     // Store it under the provider's own id so ModelRuntime resolves it at
     // session time.
-    const trimmedKey = input.apiKey?.trim();
-    // The UI sends back the redaction sentinel when the key was left unchanged
-    // on edit; treat it as "keep the existing key" instead of overwriting the
-    // stored credential with the literal sentinel.
-    if (trimmedKey && trimmedKey !== REDACTED_API_KEY) {
-      await setRuntimeApiKey(runtime, input.providerId, trimmedKey);
+    if (keyToStore) {
+      await persistApiKey(runtime, input.providerId, keyToStore);
     }
-    await registry.refresh();
     await context.resourceLoader.reload();
     await this.autoEnableModelsForAuthenticatedProviders(context, [input.providerId]);
     return this.buildSnapshot(context);
+  }
+
+  /**
+   * The stored credential for a custom endpoint, for callers that must actually
+   * authenticate (the "Detect models" probe) rather than just report state.
+   */
+  async getCustomProviderApiKey(providerId: string): Promise<string | undefined> {
+    const runtime = await this.modelRuntime;
+    const credential = await resolveProviderAuth(runtime, providerId);
+    const key = credential?.auth.apiKey;
+    if (typeof key === "string" && key && key !== CUSTOM_PROVIDER_PLACEHOLDER_API_KEY) {
+      return key;
+    }
+    const entry = (await this.customProviderStore.list()).find((item) => item.providerId === providerId);
+    return entry?.apiKey?.trim() || undefined;
   }
 
   async deleteCustomProvider(workspace: WorkspaceRef, providerId: string): Promise<RuntimeSnapshot> {
     const context = await this.ensureContext(workspace);
     await this.customProviderStore.delete(providerId);
     const [runtime, registry] = await Promise.all([this.modelRuntime, this.modelRegistry]);
-    await removeRuntimeApiKey(runtime, providerId);
+    await removePersistedApiKey(runtime, providerId);
     await registry.refresh();
     await context.resourceLoader.reload();
     return this.buildSnapshot(context);
@@ -950,7 +1008,6 @@ async function readPackageMetadata(packageRoot: string): Promise<PackageMetadata
 }
 
 /** Sentinel the UI receives for a stored custom-endpoint key (never the real value). */
-const REDACTED_API_KEY = "••••••••";
 
 const DESKTOP_API_KEY_PROVIDER_IDS = new Set([
   "azure-openai-responses",

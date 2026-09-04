@@ -1629,7 +1629,7 @@ app.whenReady().then(async () => {
     runWindowScopedForEvent(event, () => store.deleteCustomProvider(workspaceId, providerId)),
   );
   ipcMain.handle(desktopIpc.probeCustomProviderModels, (_event, input: CustomProviderProbeInput) =>
-    probeCustomProviderModels(input),
+    probeCustomProviderModels(input, (providerId) => store.getCustomProviderApiKey(providerId)),
   );
   ipcMain.handle(desktopIpc.getWebToolsSettings, readWebToolsSettingsView);
   ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
@@ -2335,7 +2335,10 @@ function toWebToolsSettingsView(settings: WebToolsSettings, keySource: WebSearch
   };
 }
 
-async function probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult> {
+async function probeCustomProviderModels(
+  input: CustomProviderProbeInput,
+  resolveStoredKey?: (providerId: string) => Promise<string | undefined>,
+): Promise<CustomProviderProbeResult> {
   const baseUrl = input.baseUrl?.trim();
   if (!baseUrl || !isValidHttpBaseUrl(baseUrl)) {
     // Same sentence the renderer shows for the field; localize it here too, since
@@ -2343,7 +2346,11 @@ async function probeCustomProviderModels(input: CustomProviderProbeInput): Promi
     return { ok: false, error: tGlobal("settings.endpoints.baseUrlInvalid") };
   }
   const target = `${baseUrl.replace(/\/+$/, "")}/models`;
-  const apiKey = input.apiKey?.trim();
+  // Fall back to the stored credential: the dialog leaves the key field empty
+  // for a saved endpoint, and probing an authenticated endpoint with no key
+  // fails for a reason that has nothing to do with the base URL.
+  const typedKey = input.apiKey?.trim();
+  const apiKey = typedKey || (input.providerId ? await resolveStoredKey?.(input.providerId) : undefined);
   try {
     const response = await net.fetch(target, {
       method: "GET",

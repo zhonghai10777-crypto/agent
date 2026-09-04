@@ -12,7 +12,12 @@ import {
   type CustomProviderModelInput,
 } from "./custom-provider-types.js";
 
-export type { CustomProviderEntry, CustomProviderInput, CustomProviderModelInput } from "./custom-provider-types.js";
+export type {
+  CustomProviderEntry,
+  CustomProviderInput,
+  CustomProviderModelInput,
+  CustomProviderSummary,
+} from "./custom-provider-types.js";
 export {
   BUILT_IN_PROVIDER_IDS,
   CUSTOM_PROVIDER_ID_PATTERN,

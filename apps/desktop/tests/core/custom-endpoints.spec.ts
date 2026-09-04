@@ -277,3 +277,83 @@ test("custom endpoint dialog blocks colliding provider IDs and invalid base URLs
     await harness.close();
   }
 });
+
+/**
+ * Regression: an endpoint with no credential must not claim to have one.
+ *
+ * models.json carries the literal placeholder "unused" for every managed
+ * endpoint, and the SDK reports it through getAuth. The key-state check did not
+ * exclude it, so every endpoint looked configured and the dialog prefilled a
+ * mask. That mask then doubled as the "unchanged" signal on save, so the user
+ * saw a key, saved, and nothing was ever stored — leaving the runtime to
+ * authenticate with the literal string "unused" and every request 401ing.
+ */
+test("an endpoint with no stored key does not display one", async () => {
+  test.setTimeout(60_000);
+  const userDataDir = await makeUserDataDir();
+  const agentDir = join(userDataDir, "agent");
+  const workspacePath = await makeWorkspace("custom-endpoints-nokey-workspace");
+  await seedAgentDir(agentDir, { enabledModels: [], withCustomProvider: false });
+
+  // Exactly the on-disk state of an endpoint whose key was never stored: the
+  // placeholder in models.json and nothing in the credential store.
+  const seeded = await readModelsJson(agentDir);
+  seeded.providers = {
+    ...(seeded.providers as Record<string, unknown> | undefined),
+    "keyless": {
+      baseUrl: "http://localhost:11434/v1",
+      api: "openai-completions",
+      apiKey: "unused",
+      piGuiCustomEndpoint: true,
+      models: [{ id: "llama3.1" }],
+    },
+  };
+  await writeFile(join(agentDir, "models.json"), `${JSON.stringify(seeded, null, 2)}\n`, "utf8");
+
+  const harness = await launchDesktop(userDataDir, {
+    agentDir,
+    initialWorkspaces: [workspacePath],
+    scrubProviderEnv: true,
+    testMode: "background",
+  });
+
+  try {
+    const window = await harness.firstWindow();
+    await openProvidersSettings(window);
+
+    // Scope to the custom endpoints section: the id also appears in the
+    // connected-providers list above it.
+    const customEndpoints = window.locator(".settings-section", {
+      has: window.locator(".settings-section__title", { hasText: "Custom endpoints" }),
+    });
+    const entryRow = customEndpoints.locator(".settings-row", {
+      has: window.locator(".settings-row__title", { hasText: /^keyless$/ }),
+    });
+    await entryRow.getByRole("button", { name: "Edit", exact: true }).click();
+    const dialog = window.getByTestId("custom-endpoint-dialog");
+    await expect(dialog).toBeVisible();
+
+    // The field is empty and offers to take a key, rather than showing a mask
+    // that implies one is already configured.
+    const keyInput = dialog.getByLabel("API key");
+    await expect(keyInput).toHaveValue("");
+    await expect(keyInput).toHaveAttribute("placeholder", "vLLM: pass through; Ollama: leave blank");
+
+    // Typing one stores it for real.
+    await keyInput.fill("sk-typed-by-user");
+    await dialog.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    const secure = JSON.parse(
+      await readFile(join(userDataDir, "secure-keys.json"), "utf8"),
+    ) as Record<string, string>;
+    expect(Object.keys(secure)).toContain("keyless");
+
+    // models.json still only ever holds the placeholder.
+    const saved = await readModelsJson(agentDir);
+    const savedProviders = saved.providers as Record<string, Record<string, unknown>>;
+    expect(savedProviders["keyless"]).toMatchObject({ apiKey: "unused" });
+  } finally {
+    await harness.close();
+  }
+});

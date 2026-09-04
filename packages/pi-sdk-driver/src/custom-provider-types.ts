@@ -13,7 +13,23 @@ export interface CustomProviderInput {
 export interface CustomProviderEntry {
   readonly providerId: string;
   readonly baseUrl: string;
+  /**
+   * A plaintext key left in models.json by a pre-encryption build. Absent for
+   * the placeholder. Callers must treat this as the only copy of that key.
+   */
   readonly apiKey?: string;
+  readonly models: readonly CustomProviderModelInput[];
+}
+
+/**
+ * What the UI is told about an endpoint. Deliberately carries no key material:
+ * reporting a mask instead let the mask be echoed back on save and stored as the
+ * literal credential.
+ */
+export interface CustomProviderSummary {
+  readonly providerId: string;
+  readonly baseUrl: string;
+  readonly hasApiKey: boolean;
   readonly models: readonly CustomProviderModelInput[];
 }
 

@@ -417,6 +417,7 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.endpoints.baseUrlHint":
     "需要包含 /v1 后缀。Ollama：http://localhost:11434/v1，vLLM：http://localhost:8000/v1。",
   "settings.endpoints.apiKeyPlaceholder": "vLLM：填服务端的 key；Ollama：留空",
+  "settings.endpoints.apiKeyStoredPlaceholder": "已保存密钥——留空则不改动",
   "settings.endpoints.apiKeyHint":
     "存储格式要求此字段。若 vLLM 启动时带了 --api-key，请填入该密钥；Ollama 等无需鉴权的服务器留空即可，会自动存入一个占位值。",
   "settings.endpoints.toolCallingHint":
