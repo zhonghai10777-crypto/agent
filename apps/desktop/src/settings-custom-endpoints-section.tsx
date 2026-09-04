@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { CUSTOM_PROVIDER_ID_PATTERN, isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver/custom-provider-types";
-import type { CustomProviderConfig, CustomProviderModelConfig } from "./ipc";
+import type { CustomProviderConfig, CustomProviderModelConfig, CustomProviderView } from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import type { Translator } from "./i18n";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
@@ -11,7 +11,7 @@ interface SettingsCustomEndpointsSectionProps {
   readonly onDeleteCustomProvider: (providerId: string) => Promise<string | undefined>;
 }
 
-type DialogMode = { kind: "closed" } | { kind: "create" } | { kind: "edit"; original: CustomProviderConfig };
+type DialogMode = { kind: "closed" } | { kind: "create" } | { kind: "edit"; original: CustomProviderView };
 
 export function SettingsCustomEndpointsSection({
   existingProviderIds,
@@ -19,7 +19,7 @@ export function SettingsCustomEndpointsSection({
   onDeleteCustomProvider,
 }: SettingsCustomEndpointsSectionProps) {
   const { t } = useI18n();
-  const [entries, setEntries] = useState<readonly CustomProviderConfig[]>([]);
+  const [entries, setEntries] = useState<readonly CustomProviderView[]>([]);
   const [loadError, setLoadError] = useState<string | undefined>();
   const [dialog, setDialog] = useState<DialogMode>({ kind: "closed" });
   const [reloadKey, setReloadKey] = useState(0);
@@ -146,7 +146,7 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
   const initial = mode.kind === "edit" ? mode.original : undefined;
   const [providerId, setProviderId] = useState(initial?.providerId ?? "");
   const [baseUrl, setBaseUrl] = useState(initial?.baseUrl ?? "");
-  const [apiKey, setApiKey] = useState(initial?.apiKey ?? "");
+  const [apiKey, setApiKey] = useState("");
   const [models, setModels] = useState<CustomProviderModelConfig[]>(
     initial ? [...(initial.models ?? [])] : [],
   );
@@ -179,9 +179,12 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
       return api.probeCustomProviderModels({
         baseUrl: targetUrl.trim(),
         apiKey: targetKey.trim() ? targetKey.trim() : undefined,
+        // Lets main authenticate with the saved key when the field is empty,
+        // which is the normal state when editing an existing endpoint.
+        ...(isEdit && initial ? { providerId: initial.providerId } : {}),
       });
     },
-    [t],
+    [t, isEdit, initial],
   );
 
   const handleProbe = async () => {
@@ -313,7 +316,11 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
             aria-label={t("settings.endpoints.apiKey")}
             className="settings-search"
             disabled={savePending}
-            placeholder={t("settings.endpoints.apiKeyPlaceholder")}
+            placeholder={
+              isEdit && initial?.hasApiKey
+                ? t("settings.endpoints.apiKeyStoredPlaceholder")
+                : t("settings.endpoints.apiKeyPlaceholder")
+            }
             type="password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}

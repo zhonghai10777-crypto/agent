@@ -11,6 +11,8 @@ export {
   logoutProvider,
   removeRuntimeApiKey,
   resolveModelAuth,
+  persistApiKey,
+  removePersistedApiKey,
   resolveProviderAuth,
   setRuntimeApiKey,
 } from "./auth-adapter.js";

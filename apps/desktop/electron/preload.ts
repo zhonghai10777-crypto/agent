@@ -3,6 +3,7 @@ import { PRELOAD_DEV_RELOAD_MARKER } from "./dev-reload-preload-probe";
 import {
   desktopIpc,
   type CustomProviderConfig,
+  type CustomProviderView,
   type CustomProviderProbeInput,
   type CustomProviderProbeResult,
   type ChangedFilesResult,
@@ -208,7 +209,7 @@ contextBridge.exposeInMainWorld("piApp", {
   setProviderApiKey: (workspaceId: string, providerId: string, apiKey: string) =>
     ipcRenderer.invoke(desktopIpc.setProviderApiKey, workspaceId, providerId, apiKey) as Promise<DesktopAppState>,
   listCustomProviders: () =>
-    ipcRenderer.invoke(desktopIpc.listCustomProviders) as Promise<readonly CustomProviderConfig[]>,
+    ipcRenderer.invoke(desktopIpc.listCustomProviders) as Promise<readonly CustomProviderView[]>,
   setCustomProvider: (workspaceId: string, config: CustomProviderConfig) =>
     ipcRenderer.invoke(desktopIpc.setCustomProvider, workspaceId, config) as Promise<DesktopAppState>,
   deleteCustomProvider: (workspaceId: string, providerId: string) =>

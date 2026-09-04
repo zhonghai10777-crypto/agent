@@ -109,7 +109,7 @@ import {
   toSessionQueuedMessages,
   toSessionRef,
 } from "./app-store-utils";
-import type { CustomProviderConfig } from "../src/ipc";
+import type { CustomProviderConfig, CustomProviderView } from "../src/ipc";
 import { resolveRepoWorkspaceId } from "../src/workspace-roots";
 import { SessionStateMap, type QueuedComposerEditState } from "./session-state-map";
 import { createEmptyExtensionUiState, serializeExtensionUiState } from "./session-state-map";
@@ -1092,18 +1092,23 @@ export class DesktopAppStore implements AppStoreInternals {
     );
   }
 
-  async listCustomProviders(): Promise<readonly CustomProviderConfig[]> {
+  async listCustomProviders(): Promise<readonly CustomProviderView[]> {
     await this.initialize();
     const entries = await this.driver.runtimeSupervisor.listCustomProviders();
     return entries.map((entry) => ({
       providerId: entry.providerId,
       baseUrl: entry.baseUrl,
-      ...(entry.apiKey !== undefined ? { apiKey: entry.apiKey } : {}),
+      hasApiKey: entry.hasApiKey,
       models: entry.models.map((model) => ({
         id: model.id,
         ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
       })),
     }));
+  }
+
+  /** The stored key for an endpoint, so "Detect models" can authenticate. */
+  getCustomProviderApiKey(providerId: string): Promise<string | undefined> {
+    return this.driver.runtimeSupervisor.getCustomProviderApiKey(providerId);
   }
 
   async setCustomProvider(workspaceId: string, config: CustomProviderConfig): Promise<DesktopAppState> {

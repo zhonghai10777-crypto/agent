@@ -420,6 +420,7 @@ const enMessages = {
   "settings.endpoints.baseUrlHint":
     "Include the /v1 suffix. Ollama: http://localhost:11434/v1. vLLM: http://localhost:8000/v1.",
   "settings.endpoints.apiKeyPlaceholder": "vLLM: pass through; Ollama: leave blank",
+  "settings.endpoints.apiKeyStoredPlaceholder": "A key is saved — leave blank to keep it",
   "settings.endpoints.apiKeyHint":
     "Required by the storage format. For vLLM started with --api-key, enter that key. For Ollama or other servers without auth, leave blank and a placeholder is saved.",
   "settings.endpoints.toolCallingHint":
