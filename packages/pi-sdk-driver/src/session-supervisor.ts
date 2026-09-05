@@ -107,6 +107,7 @@ import {
   type AgentEventNormalizer,
   type CompatAgentSessionOptions,
 } from "./pi-compat/index.js";
+import { windowsPowerShellEncodingExtensionFactory } from "./windows-powershell-encoding.js";
 import { LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "./windows-shell.js";
 
 export interface PiSdkDriverOptions {
@@ -234,6 +235,14 @@ export class SessionSupervisor {
       (options.catalogFilePath
         ? new JsonCatalogStore({ catalogFilePath: options.catalogFilePath })
         : new JsonCatalogStore());
+    // The powershell tool Windows sessions run needs its encoding preamble
+    // wherever it executes, so the factory is merged here rather than left to
+    // every host to remember. It resolves to undefined off Windows.
+    const extensionFactories: ExtensionFactory[] = options.extensionFactories ? [...options.extensionFactories] : [];
+    const windowsPowerShellEncoding = windowsPowerShellEncodingExtensionFactory();
+    if (windowsPowerShellEncoding) {
+      extensionFactories.push(windowsPowerShellEncoding);
+    }
     this.createAgentSessionRuntimeImpl =
       options.createAgentSessionRuntimeImpl ??
       ((createOptions) =>
@@ -241,7 +250,7 @@ export class SessionSupervisor {
           ...createOptions,
           resourceLoaderOptions: {
             ...(createOptions as CompatAgentSessionOptions | undefined)?.resourceLoaderOptions,
-            ...(options.extensionFactories ? { extensionFactories: [...options.extensionFactories] } : {}),
+            ...(extensionFactories.length > 0 ? { extensionFactories } : {}),
             ...(options.noExtensions ? { noExtensions: true } : {}),
             ...(options.noSkills ? { noSkills: true } : {}),
           },
