@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMouseEvent, type RefObject, type SetStateAction } from "react";
 import type { DesktopAppState, WorkspaceRecord, WorktreeRecord } from "../desktop-state";
+import { useI18n } from "../i18n/I18nProvider";
 import type { PiDesktopApi } from "../ipc";
 import { PRODUCT } from "../product";
 
@@ -43,6 +44,7 @@ export interface WorkspaceMenuState {
 
 export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuState {
   const { api, setSnapshot, updateSnapshot } = params;
+  const { t } = useI18n();
 
   const [workspaceMenuId, setWorkspaceMenuId] = useState<string | null>(null);
   const [workspaceRenameId, setWorkspaceRenameId] = useState<string | null>(null);
@@ -135,7 +137,7 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   };
 
   const removeWorkspace = (workspace: WorkspaceRecord) => {
-    const confirmed = window.confirm(`Remove ${workspace.name} from ${PRODUCT.name}? This will not delete any files.`);
+    const confirmed = window.confirm(t("sidebar.removeWorkspaceConfirm", { name: workspace.name, product: PRODUCT.name }));
     setWorkspaceMenuId(null);
     setWorkspaceRenameId(null);
     if (!confirmed || !api) {
@@ -171,7 +173,7 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   };
 
   const removeWorktree = (workspaceId: string, worktree: WorktreeRecord) => {
-    const confirmed = window.confirm(`Remove worktree ${worktree.name}? This removes the git worktree from disk.`);
+    const confirmed = window.confirm(t("sidebar.removeWorktreeConfirm", { name: worktree.name }));
     setEnvironmentMenuOpen(false);
     if (!confirmed || !api) {
       return;

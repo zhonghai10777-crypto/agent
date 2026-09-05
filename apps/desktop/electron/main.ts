@@ -1536,6 +1536,9 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.reorderWorkspaces, (event, order: readonly string[]) =>
     runWindowScopedForEvent(event, () => store.reorderWorkspaces(order)),
   );
+  ipcMain.handle(desktopIpc.dismissStartupDiagnostics, (event) =>
+    runWindowScopedForEvent(event, () => store.dismissStartupDiagnostics()),
+  );
   ipcMain.handle(desktopIpc.reorderPinnedSessions, (event, order: readonly string[]) =>
     runWindowScopedForEvent(event, () => store.reorderPinnedSessions(order)),
   );

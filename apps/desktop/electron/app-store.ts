@@ -63,6 +63,7 @@ import {
   type ThemeMode,
   type ThemePresetId,
   type TranscriptMessage,
+  type WorkspaceRecord,
   type WorkspaceSessionTarget,
   type RuntimeMode,
   isRuntimeMode,
@@ -849,6 +850,24 @@ export class DesktopAppStore implements AppStoreInternals {
       revision: this.state.revision + 1,
     };
     await this.persistUiState();
+    return this.emit();
+  }
+
+  /**
+   * Dismiss the startup diagnostics banner. Not persisted: a fresh launch
+   * re-detects whatever is still broken, and the user should hear about it
+   * again then.
+   */
+  async dismissStartupDiagnostics(): Promise<DesktopAppState> {
+    await this.initialize();
+    if (this.state.startupDiagnostics.length === 0) {
+      return structuredClone(this.state);
+    }
+    this.state = {
+      ...this.state,
+      startupDiagnostics: [],
+      revision: this.state.revision + 1,
+    };
     return this.emit();
   }
 
@@ -1671,6 +1690,7 @@ export class DesktopAppStore implements AppStoreInternals {
         composerAttachments: this.resolveComposerAttachments(selectedWorkspaceId, selectedSessionId),
         queuedComposerMessages: this.resolveQueuedComposerMessages(selectedWorkspaceId, selectedSessionId),
         editingQueuedMessageId: this.resolveEditingQueuedMessageId(selectedWorkspaceId, selectedSessionId),
+        startupDiagnostics: pruneStartupDiagnostics(this.state.startupDiagnostics, workspaces),
         lastError: this.resolveSelectedSessionError(selectedWorkspaceId, selectedSessionId, options.clearLastError),
         revision: this.state.revision + 1,
       };
@@ -3748,6 +3768,37 @@ function reconcilePinnedSessionOrder(
       return rightPinnedAt.localeCompare(leftPinnedAt);
     });
   return [...ordered, ...missing];
+}
+
+/**
+ * Drop workspace-scoped startup diagnostics whose workspace is no longer in the
+ * list — e.g. the user removed the folder entry the diagnostic was complaining
+ * about. Without this the banner would linger until the app restarts, with
+ * nothing left in the UI that it refers to. Application-scoped diagnostics have
+ * no workspace to disappear, so they survive until dismissed.
+ */
+function pruneStartupDiagnostics(
+  diagnostics: readonly StartupDiagnostic[],
+  workspaces: readonly WorkspaceRecord[],
+): readonly StartupDiagnostic[] {
+  if (diagnostics.length === 0) {
+    return diagnostics;
+  }
+  const livePaths = new Set(workspaces.map((workspace) => normalizeWorkspacePathKey(workspace.path)));
+  const remaining = diagnostics.filter(
+    (diagnostic) => !diagnostic.workspacePath || livePaths.has(normalizeWorkspacePathKey(diagnostic.workspacePath)),
+  );
+  return remaining.length === diagnostics.length ? diagnostics : remaining;
+}
+
+/**
+ * A comparison key for workspace paths. On Windows the same folder can be
+ * spelled with either separator and in any case, so compare case-insensitively
+ * with separators unified; elsewhere the path is already canonical.
+ */
+function normalizeWorkspacePathKey(workspacePath: string): string {
+  const resolved = resolve(workspacePath);
+  return process.platform === "win32" ? resolved.replaceAll("/", "\\").toLowerCase() : resolved;
 }
 
 function formatCapabilityLabel(capability: string): string {

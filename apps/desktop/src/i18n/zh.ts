@@ -51,6 +51,8 @@ const zhMessages: Record<MessageKey, string> = {
   "sidebar.removeWorktree": "移除工作树",
   "sidebar.createPermanentWorktree": "创建永久工作树",
   "sidebar.editName": "编辑名称",
+  "sidebar.removeWorkspaceConfirm": "把「{name}」从 {product} 里移除？不会删除任何文件。",
+  "sidebar.removeWorktreeConfirm": "移除工作树「{name}」？这会把该 git worktree 从磁盘上删除。",
 
   /* ── Sidebar aria labels ─────────────────────────── */
   "aria.workspaceActionsFor": "对 {name} 的工作区操作",
@@ -76,7 +78,7 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.label": "输入框",
   "composer.placeholder": "向 pi 提问，或让它查资料、整理文档、制作表格……",
   "composer.enterToSend": "Enter 发送 · Shift+Enter 换行",
-  "composer.enterToQueue": "{runningLabel} · Enter 排队 · Cmd+Enter 引导",
+  "composer.enterToQueue": "{runningLabel} · Enter 排队 · {steerShortcut} 引导",
   "composer.attachFiles": "附加文件",
   "composer.permission.auto": "可写",
   "composer.permission.plan": "只读",
@@ -486,7 +488,7 @@ const zhMessages: Record<MessageKey, string> = {
   "slash.incomplete.model": "发送 /model 前，请先从菜单选择模型服务和模型。",
   "slash.incomplete.name": "请在 /name 后面写上对话标题。",
   "slash.incomplete.scopedModels": "请从菜单或设置里打开「已启用模型」。",
-  "slash.incomplete.settings": "请从菜单或按 Cmd+, 打开设置。",
+  "slash.incomplete.settings": "请从斜杠菜单里选择「设置」打开。",
   "slash.incomplete.thinking": "发送 /thinking 前，请先从菜单选择思考深度。",
 
   /* ── Model selector ──────────────────────────────── */
@@ -688,8 +690,11 @@ const zhMessages: Record<MessageKey, string> = {
   "running.forMinutesSeconds": "工作了 {minutes} 分 {seconds} 秒",
 
   /* ── Startup diagnostics / schema skew ───────────── */
-  "diagnostics.title": "部分已保存的工作区无法刷新。",
-  "diagnostics.unavailable": "{workspaceName} 不可用。",
+  "diagnostics.title": "有文件夹打不开了。",
+  "diagnostics.unavailable": "找不到「{workspaceName}」，它可能被删除、改名或移到别处了。",
+  "diagnostics.hint": "如果不再需要它，在左侧列表里点它的「…」菜单，选择移除即可。",
+  "diagnostics.dismiss": "忽略",
+  "diagnostics.dismissAria": "忽略提示",
   "schemaSkew.title": "此会话由更新版本的 pi 写入——部分内容可能无法显示。请更新 Agent（或用 pi CLI 打开）以查看全部内容。",
   "schemaSkew.dismiss": "忽略",
   "schemaSkew.dismissAria": "忽略提示",

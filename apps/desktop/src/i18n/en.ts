@@ -52,6 +52,8 @@ const enMessages = {
   "sidebar.removeWorktree": "Remove worktree",
   "sidebar.createPermanentWorktree": "Create permanent worktree",
   "sidebar.editName": "Edit name",
+  "sidebar.removeWorkspaceConfirm": "Remove “{name}” from {product}? This will not delete any files.",
+  "sidebar.removeWorktreeConfirm": "Remove worktree “{name}”? This removes the git worktree from disk.",
 
   /* ── Sidebar aria labels ─────────────────────────── */
   "aria.workspaceActionsFor": "Workspace actions for {name}",
@@ -77,7 +79,7 @@ const enMessages = {
   "composer.label": "Composer",
   "composer.placeholder": "Ask pi to inspect the repo, run a fix, or continue the current thread...",
   "composer.enterToSend": "Enter to send · Shift+Enter for newline",
-  "composer.enterToQueue": "{runningLabel} · Enter to queue · Cmd+Enter to steer",
+  "composer.enterToQueue": "{runningLabel} · Enter to queue · {steerShortcut} to steer",
   "composer.attachFiles": "Attach files",
   "composer.permission.auto": "Writable",
   "composer.permission.plan": "Read-only",
@@ -489,7 +491,7 @@ const enMessages = {
   "slash.incomplete.model": "Choose a provider and model from the slash menu before sending /model.",
   "slash.incomplete.name": "Add a thread title after /name.",
   "slash.incomplete.scopedModels": "Open Enabled models from the slash menu or Settings.",
-  "slash.incomplete.settings": "Open Settings from the slash menu or Cmd+,.",
+  "slash.incomplete.settings": "Open Settings from the slash menu.",
   "slash.incomplete.thinking": "Choose a reasoning level from the slash menu before sending /thinking.",
 
   /* ── Model selector ──────────────────────────────── */
@@ -694,8 +696,11 @@ const enMessages = {
   "running.forMinutesSeconds": "Working for {minutes}m {seconds}s",
 
   /* ── Startup diagnostics / schema skew ───────────── */
-  "diagnostics.title": "Some saved workspaces could not be refreshed.",
-  "diagnostics.unavailable": "{workspaceName} is unavailable.",
+  "diagnostics.title": "Some folders could not be opened.",
+  "diagnostics.unavailable": "“{workspaceName}” is missing — it may have been deleted, renamed, or moved.",
+  "diagnostics.hint": "If you no longer need it, open its “…” menu in the sidebar and choose Remove.",
+  "diagnostics.dismiss": "Dismiss",
+  "diagnostics.dismissAria": "Dismiss notice",
   "schemaSkew.title": "This session was written by a newer version of pi — some content may not display. Update Agent (or open it with the pi CLI) to see everything.",
   "schemaSkew.dismiss": "Dismiss",
   "schemaSkew.dismissAria": "Dismiss notice",

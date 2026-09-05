@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { DesktopAppState, Locale, ModelSettingsScopeMode, RuntimeMode } from "./desktop-state";
 import { useI18n } from "./i18n/I18nProvider";
+import { getShortcutLabel } from "./ipc";
 import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
 
 interface SettingsGeneralSectionProps {
@@ -168,12 +169,15 @@ export function SettingsGeneralSection({
       </SettingsGroup>
 
       <SettingsGroup title={t("settings.general.shortcuts")}>
-        <SettingsInfoRow label={t("settings.general.shortcutNewThread")} value="Cmd+Shift+O" />
-        <SettingsInfoRow label={t("settings.general.shortcutOpenSettings")} value="Cmd+," />
+        <SettingsInfoRow
+          label={t("settings.general.shortcutNewThread")}
+          value={getShortcutLabel("O", { shift: true })}
+        />
+        <SettingsInfoRow label={t("settings.general.shortcutOpenSettings")} value={getShortcutLabel(",")} />
         {capabilities.terminal ? (
           <>
-            <SettingsInfoRow label={t("settings.general.shortcutToggleTerminal")} value="Cmd+J" />
-            <SettingsInfoRow label={t("settings.general.shortcutNewTerminalTab")} value="Cmd+T" />
+            <SettingsInfoRow label={t("settings.general.shortcutToggleTerminal")} value={getShortcutLabel("J")} />
+            <SettingsInfoRow label={t("settings.general.shortcutNewTerminalTab")} value={getShortcutLabel("T")} />
           </>
         ) : null}
         <SettingsInfoRow label={t("settings.general.shortcutSendMessage")} value="Enter" />

@@ -544,6 +544,13 @@ function AppShell({
   }, []);
   const sidebarToggleShortcutLabel = api ? getDesktopShortcutLabel(api.platform, "B") : "";
 
+  const dismissStartupDiagnostics = useCallback(() => {
+    if (!api) {
+      return;
+    }
+    void updateSnapshot(api, setSnapshot, () => api.dismissStartupDiagnostics());
+  }, [api]);
+
   useEffect(() => {
     const handleCommand = (command: PiDesktopCommand): boolean => {
       if (command === desktopCommands.openSettings) {
@@ -914,6 +921,18 @@ function AppShell({
                 })
                 .join(" ")}
             </span>
+            {snapshot.startupDiagnostics.some((diagnostic) => diagnostic.workspacePath) ? (
+              <span className="startup-diagnostics__hint">{t("diagnostics.hint")}</span>
+            ) : null}
+            <button
+              type="button"
+              className="startup-diagnostics__dismiss"
+              aria-label={t("diagnostics.dismissAria")}
+              data-testid="startup-diagnostics-dismiss"
+              onClick={dismissStartupDiagnostics}
+            >
+              {t("diagnostics.dismiss")}
+            </button>
           </div>
         ) : null}
 

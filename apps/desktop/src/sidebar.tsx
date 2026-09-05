@@ -16,7 +16,7 @@ import { arrayMove, SortableContext, useSortable, verticalListSortingStrategy } 
 import { CSS } from "@dnd-kit/utilities";
 import type { AppView, SessionRecord, WorkspaceRecord, WorktreeRecord } from "./desktop-state";
 import { ArchiveIcon, ChevronDownIcon, ExtensionIcon, FolderIcon, PinIcon, PlusIcon, RestoreIcon, SettingsIcon, SkillIcon, WorktreeIcon } from "./icons";
-import type { PiDesktopApi } from "./ipc";
+import { getShortcutLabel, type PiDesktopApi } from "./ipc";
 import type { WorkspaceMenuState } from "./hooks/use-workspace-menu";
 import { useThreadMenu, type ThreadMenuState } from "./hooks/use-thread-menu";
 import { comparePinnedThreads, sessionThreadKey, type ThreadGroup, type ThreadListEntry } from "./thread-groups";
@@ -51,8 +51,7 @@ interface SidebarProps {
   readonly onUnarchiveSession: (target: { workspaceId: string; sessionId: string }) => void;
 }
 
-const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
-const RENAME_THREAD_SHORTCUT_HINT = IS_MAC ? "⇧⌘R" : "Ctrl+Shift+R";
+const RENAME_THREAD_SHORTCUT_HINT = getShortcutLabel("R", { shift: true });
 
 export function Sidebar(props: SidebarProps) {
   const { t } = useI18n();
