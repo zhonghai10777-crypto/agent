@@ -10,6 +10,7 @@ import type {
 } from "../src/ipc";
 import { desktopIpc } from "../src/ipc";
 import { appendTerminalReplay } from "../src/terminal-model";
+import { windowsGitBashPath } from "@pi-gui/pi-sdk-driver";
 
 type NodePty = typeof import("node-pty");
 type IPty = import("node-pty").IPty;
@@ -415,7 +416,12 @@ export class TerminalService {
 
   private resolveShell(): string {
     const configuredShell = this.options.getIntegratedTerminalShell()?.trim();
-    const shellPath = configuredShell || process.env.SHELL || defaultShellForPlatform();
+    // On Windows `SHELL` is only ever set by MSYS/Cygwin parent shells, and to
+    // POSIX paths (/usr/bin/bash) that node-pty cannot spawn, so Windows skips
+    // the inheritance the other platforms rely on.
+    const shellPath =
+      configuredShell ||
+      (process.platform === "win32" ? defaultShellForPlatform() : process.env.SHELL || defaultShellForPlatform());
     if (process.platform !== "win32" && !path.isAbsolute(shellPath)) {
       throw new Error(`Integrated terminal shell must be an absolute path: ${shellPath}`);
     }
@@ -462,7 +468,13 @@ function ensureExecutable(shellPath: string): void {
 
 function defaultShellForPlatform(): string {
   if (process.platform === "win32") {
-    return process.env.ComSpec || "cmd.exe";
+    // Match the shell the agent itself runs: Git Bash when installed, else the
+    // OS-bundled Windows PowerShell. Both read and display UTF-8 far better
+    // than cmd.exe, the previous default.
+    return (
+      windowsGitBashPath() ??
+      path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    );
   }
   if (process.platform === "darwin") {
     return "/bin/zsh";

@@ -22,6 +22,8 @@ export { RUNTIME_SCHEMA_VERSION } from "./session-schema.js";
 export type { SessionSchemaInfo } from "./session-schema.js";
 export { sessionKey } from "./session-supervisor-utils.js";
 export type { GenerateThreadTitleOptions } from "./thread-title-generator.js";
+export { findGitBashWindows, windowsGitBashPath } from "./windows-git-bash.js";
+export type { GitBashProbe } from "./windows-git-bash.js";
 export type {
   SessionTranscriptAttachment,
   SessionTranscriptItem,
