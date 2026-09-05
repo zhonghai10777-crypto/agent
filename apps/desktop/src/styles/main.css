@@ -829,6 +829,7 @@
 .startup-diagnostics {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px 12px;
   padding: 8px 14px;
   border-bottom: 1px solid var(--danger-tint-border);
@@ -836,6 +837,32 @@
   color: var(--error-ink);
   font-size: 12px;
   line-height: 1.4;
+}
+
+.startup-diagnostics__hint {
+  color: var(--muted-strong);
+}
+
+.startup-diagnostics__dismiss {
+  flex-shrink: 0;
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.startup-diagnostics__dismiss:hover {
+  text-decoration: underline;
+}
+
+.startup-diagnostics__dismiss:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
 }
 
 .composer__slash-intent-meta {

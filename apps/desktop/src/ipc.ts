@@ -154,6 +154,7 @@ export const desktopIpc = {
   renameWorkspace: "pi-gui:rename-workspace",
   removeWorkspace: "pi-gui:remove-workspace",
   reorderWorkspaces: "pi-gui:reorder-workspaces",
+  dismissStartupDiagnostics: "pi-gui:dismiss-startup-diagnostics",
   reorderPinnedSessions: "pi-gui:reorder-pinned-sessions",
   openWorkspaceInFinder: "pi-gui:open-workspace-in-finder",
   createWorktree: "pi-gui:create-worktree",
@@ -259,8 +260,40 @@ export const desktopCommands = {
   toggleSidebar: "toggle-sidebar",
 } as const;
 
-export function getDesktopShortcutLabel(platform: NodeJS.Platform, key: string): string {
-  return `${platform === "darwin" ? "⌘" : "Ctrl+"}${key.toUpperCase()}`;
+export interface ShortcutLabelOptions {
+  readonly shift?: boolean;
+}
+
+export function getDesktopShortcutLabel(
+  platform: NodeJS.Platform,
+  key: string,
+  options: ShortcutLabelOptions = {},
+): string {
+  const label = key.length === 1 ? key.toUpperCase() : key;
+  return platform === "darwin"
+    ? `${options.shift ? "⇧" : ""}⌘${label}`
+    : `Ctrl+${options.shift ? "Shift+" : ""}${label}`;
+}
+
+/**
+ * The platform as the renderer sees it. Prefer `api.platform` where a component
+ * already receives it; this exists for components too deep in the tree to thread
+ * it through, and falls back to user-agent sniffing before the preload bridge
+ * lands (and in unit tests that render without it). Shortcut labels only ever
+ * branch on darwin, so the non-mac fallback picks any non-darwin value.
+ */
+export function getRendererPlatform(): NodeJS.Platform {
+  const bridgePlatform = typeof window === "undefined" ? undefined : window.piApp?.platform;
+  if (bridgePlatform) {
+    return bridgePlatform;
+  }
+  const looksLikeMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
+  return looksLikeMac ? "darwin" : "win32";
+}
+
+/** Shortcut label for components that don't receive `api` as a prop. */
+export function getShortcutLabel(key: string, options?: ShortcutLabelOptions): string {
+  return getDesktopShortcutLabel(getRendererPlatform(), key, options);
 }
 
 export type PiDesktopStateListener = (state: DesktopAppState) => void;
@@ -402,6 +435,7 @@ export interface PiDesktopApi {
   renameWorkspace(workspaceId: string, displayName: string): Promise<DesktopAppState>;
   removeWorkspace(workspaceId: string): Promise<DesktopAppState>;
   reorderWorkspaces(workspaceOrder: readonly string[]): Promise<DesktopAppState>;
+  dismissStartupDiagnostics(): Promise<DesktopAppState>;
   reorderPinnedSessions(pinnedSessionOrder: readonly string[]): Promise<DesktopAppState>;
   openWorkspaceInFinder(workspaceId: string): Promise<void>;
   createWorktree(input: CreateWorktreeInput): Promise<DesktopAppState>;

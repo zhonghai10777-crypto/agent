@@ -568,6 +568,66 @@ test("preserves durable ui state when one startup workspace is unavailable", asy
   }
 });
 
+test("lets the user dismiss the startup diagnostics banner and clears it when the folder is removed", async () => {
+  test.setTimeout(120_000);
+  const userDataDir = await makeUserDataDir();
+  const healthyWorkspacePath = await makeWorkspace("dismissible-healthy-workspace");
+  const missingWorkspacePath = await makeWorkspace("dismissible-missing-workspace");
+
+  const firstRun = await launchDesktop(userDataDir, {
+    initialWorkspaces: [healthyWorkspacePath, missingWorkspacePath],
+    testMode: "background",
+  });
+  let missingWorkspaceId = "";
+  try {
+    const window = await firstRun.firstWindow();
+    const state = await getDesktopState(window);
+    missingWorkspaceId = state.workspaces.find((entry) => entry.path === missingWorkspacePath)?.id ?? "";
+    expect(missingWorkspaceId).not.toBe("");
+    await expect(window.getByTestId("startup-diagnostics")).toHaveCount(0);
+  } finally {
+    await firstRun.close();
+  }
+
+  // Simulate the user deleting the project folder outside the app.
+  await rename(missingWorkspacePath, `${missingWorkspacePath}-moved-away`);
+
+  const secondRun = await launchDesktop(userDataDir, { testMode: "background" });
+  try {
+    const window = await secondRun.firstWindow();
+    const banner = window.getByTestId("startup-diagnostics");
+    await expect(banner).toContainText("dismissible-missing-workspace");
+
+    await window.getByTestId("startup-diagnostics-dismiss").click();
+    await expect(banner).toHaveCount(0);
+    expect((await getDesktopState(window)).startupDiagnostics).toEqual([]);
+  } finally {
+    await secondRun.close();
+  }
+
+  // Dismissal is per-launch: the folder is still gone, so the next launch says so
+  // again — and removing the dead entry clears the banner without a restart.
+  const thirdRun = await launchDesktop(userDataDir, { testMode: "background" });
+  try {
+    const window = await thirdRun.firstWindow();
+    const banner = window.getByTestId("startup-diagnostics");
+    await expect(banner).toContainText("dismissible-missing-workspace");
+
+    const afterRemoval = await window.evaluate(async (workspaceId) => {
+      const app = window.piApp;
+      if (!app) {
+        throw new Error("piApp IPC bridge is unavailable");
+      }
+      return app.removeWorkspace(workspaceId);
+    }, missingWorkspaceId);
+    expect(afterRemoval.startupDiagnostics).toEqual([]);
+    expect(afterRemoval.workspaces.some((entry) => entry.id === missingWorkspaceId)).toBe(false);
+    await expect(banner).toHaveCount(0);
+  } finally {
+    await thirdRun.close();
+  }
+});
+
 test("migrates legacy inline attachment persistence and drops legacy inline transcripts", async () => {
   test.setTimeout(90_000);
   const userDataDir = await makeUserDataDir();

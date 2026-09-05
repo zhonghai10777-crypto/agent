@@ -11,6 +11,7 @@ import type {
   ComposerSlashOptionEmptyState,
 } from "./composer-commands";
 import { ComposerSurface } from "./composer-surface";
+import { getShortcutLabel } from "./ipc";
 import { ModelOnboardingNoticeBanner } from "./model-onboarding-notice";
 import type { ModelOnboardingState, ModelOnboardingSettingsSection } from "./model-onboarding";
 import { ModelSelector } from "./model-selector";
@@ -179,7 +180,7 @@ export function ComposerPanel({
               <div className="composer__footer-row">
                 <div className="composer__hint">
                   {selectedSession.status === "running"
-                    ? t("composer.enterToQueue", { runningLabel })
+                    ? t("composer.enterToQueue", { runningLabel, steerShortcut: getShortcutLabel("Enter") })
                     : t("composer.enterToSend")}
                   {" · "}
                   <ModelSelector

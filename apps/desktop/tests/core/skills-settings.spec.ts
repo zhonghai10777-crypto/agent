@@ -45,6 +45,14 @@ Use this skill when the user wants a short demo workflow.
     await expect(window.locator(".settings-view")).toBeVisible();
     await expect(window.getByText("Notifications", { exact: true })).toBeVisible();
     await expect(window.locator(".settings-view")).toContainText("Enable skill slash commands");
+    // Shortcut hints must name the keys this platform actually uses, not Mac's
+    // Cmd on every OS.
+    await expect(window.locator(".settings-view")).toContainText(
+      process.platform === "darwin" ? "⇧⌘O" : "Ctrl+Shift+O",
+    );
+    await expect(window.locator(".settings-view")).toContainText(
+      process.platform === "darwin" ? "⌘," : "Ctrl+,",
+    );
     const skillCommandsToggle = window.getByRole("checkbox", { name: "Enable skill slash commands" });
     await expect(skillCommandsToggle).toBeChecked();
     await skillCommandsToggle.click();
