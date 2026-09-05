@@ -1848,6 +1848,9 @@ app.whenReady().then(async () => {
   ipcMain.on(desktopIpc.readClipboardImage, (event) => {
     event.returnValue = readClipboardImageAttachment();
   });
+  ipcMain.on(desktopIpc.readClipboardText, (event) => {
+    event.returnValue = clipboard.readText();
+  });
   ipcMain.handle(desktopIpc.addComposerAttachments, async (event, attachments: readonly ComposerAttachment[]) => {
     const validated = attachments.flatMap(validateComposerAttachmentPayload);
     const enriched = await withExtractionMetadata(validated);

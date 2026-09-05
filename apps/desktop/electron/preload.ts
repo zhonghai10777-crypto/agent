@@ -293,6 +293,7 @@ contextBridge.exposeInMainWorld("piApp", {
   },
   pickComposerAttachments: () => ipcRenderer.invoke(desktopIpc.pickComposerAttachments) as Promise<DesktopAppState>,
   readClipboardImage: () => ipcRenderer.sendSync(desktopIpc.readClipboardImage) as ComposerImageAttachment | null,
+  readClipboardText: () => ipcRenderer.sendSync(desktopIpc.readClipboardText) as string,
   addComposerAttachments: (attachments: readonly ComposerAttachment[]) =>
     ipcRenderer.invoke(desktopIpc.addComposerAttachments, attachments) as Promise<DesktopAppState>,
   removeComposerAttachment: (attachmentId: string) =>

@@ -224,6 +224,25 @@ export function TerminalPanel({
         void createTerminal();
         return false;
       }
+      // A terminal reads Ctrl+V as the literal 0x16 control code (readline's
+      // quoted-insert), so xterm consumes the key and Chromium's native paste
+      // never runs: off macOS the clipboard never arrived and the shell got a
+      // junk control character instead. Paste explicitly, for both Ctrl+V and
+      // the Ctrl+Shift+V terminal convention. macOS needs none of this — Cmd is
+      // not a terminal modifier, so the browser's own paste still reaches
+      // xterm's textarea. Alt is excluded so AltGr layouts keep typing.
+      if (api.platform !== "darwin" && event.ctrlKey && !event.altKey && key === "v") {
+        // Returning false only tells xterm to skip the key; the browser would
+        // still paste into its hidden textarea and send the text a second time.
+        event.preventDefault();
+        const clipboardText = api.readClipboardText();
+        if (clipboardText) {
+          // `paste` honours bracketed-paste mode rather than shoving raw bytes
+          // at the pty, and reaches the pty through the same `onData` hook.
+          terminal.paste(clipboardText);
+        }
+        return false;
+      }
       if (api.platform === "darwin" && event.metaKey) {
         const sequence = macTerminalSequenceForEvent(event);
         if (sequence) {

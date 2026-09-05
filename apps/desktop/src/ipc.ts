@@ -226,6 +226,7 @@ export const desktopIpc = {
   notificationPermissionStatusChanged: "pi-gui:notification-permission-status-changed",
   pickComposerAttachments: "pi-gui:pick-composer-attachments",
   readClipboardImage: "pi-gui:read-clipboard-image",
+  readClipboardText: "pi-gui:read-clipboard-text",
   addComposerAttachments: "pi-gui:add-composer-attachments",
   removeComposerAttachment: "pi-gui:remove-composer-attachment",
   editQueuedComposerMessage: "pi-gui:edit-queued-composer-message",
@@ -545,6 +546,7 @@ export interface PiDesktopApi {
   ): () => void;
   pickComposerAttachments(): Promise<DesktopAppState>;
   readClipboardImage(): ComposerImageAttachment | null;
+  readClipboardText(): string;
   addComposerAttachments(attachments: readonly ComposerAttachment[]): Promise<DesktopAppState>;
   removeComposerAttachment(attachmentId: string): Promise<DesktopAppState>;
   editQueuedComposerMessage(messageId: string, currentDraft?: string): Promise<DesktopAppState>;

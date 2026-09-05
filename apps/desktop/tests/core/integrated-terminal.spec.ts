@@ -223,6 +223,52 @@ test("writes an oversized terminal paste in chunks instead of dropping it", asyn
   }
 });
 
+test("keeps control keys working after the paste shortcut is intercepted", async () => {
+  test.skip(process.platform === "darwin", "Cmd is not a terminal modifier on macOS, so no interception happens there");
+  test.setTimeout(90_000);
+  const userDataDir = await makeUserDataDir();
+  const workspacePath = await makeWorkspace("terminal-control-keys");
+  const harness = await launchDesktop(userDataDir, {
+    initialWorkspaces: [workspacePath],
+    testMode: "background",
+  });
+
+  try {
+    const window = await harness.firstWindow();
+    await waitForWorkspaceByPath(window, workspacePath);
+    await createNamedThread(window, "Terminal control keys thread");
+
+    await window.getByLabel("Toggle terminal").click();
+    const terminal = window.getByTestId("integrated-terminal");
+    await expect(terminal).toBeVisible();
+    await terminal.locator(".xterm").click();
+    await expect(terminal.locator(".xterm-rows")).toContainText(
+      new RegExp(`${escapeRegExp(basename(workspacePath))}|[#$%]\\s*$`),
+      { timeout: 15_000 },
+    );
+
+    // Ctrl+V must reach the shell as a paste, not as readline's quoted-insert
+    // (0x16), which is what xterm does with the key by default.
+    await harness.electronApp.evaluate(({ clipboard }) => {
+      clipboard.writeText("echo PI_CONTROL_KEY_PROBE");
+    });
+    await window.keyboard.press("Control+V");
+    await window.keyboard.press("Enter");
+    await expect(terminal.locator(".xterm-rows")).toContainText("PI_CONTROL_KEY_PROBE", { timeout: 15_000 });
+
+    // Intercepting Ctrl+V must not swallow the other control keys: Ctrl+C still
+    // has to interrupt a running foreground command.
+    await window.keyboard.type("sleep 60");
+    await window.keyboard.press("Enter");
+    await window.keyboard.press("Control+C");
+    await window.keyboard.type("echo PI_AFTER_INTERRUPT");
+    await window.keyboard.press("Enter");
+    await expect(terminal.locator(".xterm-rows")).toContainText("PI_AFTER_INTERRUPT", { timeout: 15_000 });
+  } finally {
+    await harness.close();
+  }
+});
+
 function countOccurrences(value: string, needle: string): number {
   let count = 0;
   let index = value.indexOf(needle);
