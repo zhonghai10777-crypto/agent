@@ -122,6 +122,9 @@ importers:
       '@smithy/util-utf8':
         specifier: ^2.3.0
         version: 2.3.0
+      '@xmldom/xmldom':
+        specifier: 0.8.12
+        version: 0.8.12
       '@xterm/addon-clipboard':
         specifier: ^0.2.0
         version: 0.2.0
