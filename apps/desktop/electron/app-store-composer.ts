@@ -64,13 +64,14 @@ export async function addComposerAttachments(
   const key = sessionKey(sessionRef);
   const existing = store.sessionState.composerAttachmentsBySession.get(key) ?? [];
   const next = [...existing, ...attachments];
+  await store.attachmentStore.write(key, cloneComposerAttachments(next));
   store.sessionState.composerAttachmentsBySession.set(key, next);
   store.state = {
     ...store.state,
     composerAttachments: cloneComposerAttachments(next),
     revision: store.state.revision + 1,
   };
-  await store.persistComposerAttachments(key, next);
+  await store.persistUiState();
   return store.emit();
 }
 
@@ -87,6 +88,7 @@ export async function removeComposerAttachment(
   const key = sessionKey(sessionRef);
   const existing = store.sessionState.composerAttachmentsBySession.get(key) ?? [];
   const next = existing.filter((attachment) => attachment.id !== attachmentId);
+  await store.attachmentStore.write(key, cloneComposerAttachments(next));
   if (next.length > 0) {
     store.sessionState.composerAttachmentsBySession.set(key, next);
   } else {
@@ -97,7 +99,7 @@ export async function removeComposerAttachment(
     composerAttachments: cloneComposerAttachments(next),
     revision: store.state.revision + 1,
   };
-  await store.persistComposerAttachments(key, next);
+  await store.persistUiState();
   return store.emit();
 }
 

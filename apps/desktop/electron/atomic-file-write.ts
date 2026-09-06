@@ -1,167 +1,168 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, unlink } from "node:fs/promises";
-import { dirname } from "node:path";
+import * as fs from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 
-const writeQueueByPath = new Map<string, Promise<void>>();
+const operationQueue = new Map<string, Promise<unknown>>();
+const RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
+
+/** Filesystem boundary shared by production writes and fault-injection tests. */
+export type AtomicFileIO = Pick<typeof fs, "mkdir" | "open" | "readFile" | "rename" | "unlink">;
 
 /**
- * Write a file durably via temp-file + rename, serializing concurrent writes to
- * the same path. The temp file is fsync'd before it is renamed into place and
- * the containing directory is fsync'd afterwards, so a crash or power loss can
- * never leave a renamed-but-empty target that later reads back as `{}`. The
- * previous good version is promoted to a `<path>.bak` sibling before the new
- * bytes take its place, so {@link readJsonWithBackup} can recover from it if the
- * primary file is ever found truncated or corrupt.
+ * Stage and sync valid JSON, then atomically replace the primary. A valid old
+ * primary is staged separately as the backup. Failed renames never unlink the
+ * destination: either the old primary or the last good backup remains readable.
  */
-export async function writeFileAtomicQueued(filePath: string, contents: string): Promise<void> {
-  await enqueueWrite(filePath, async () => {
+export async function writeFileAtomicQueued(
+  filePath: string,
+  contents: string,
+  io: AtomicFileIO = fs,
+): Promise<void> {
+  await serialize(filePath, async () => {
+    JSON.parse(contents);
     const dir = dirname(filePath);
-    await mkdir(dir, { recursive: true });
-    const tmpPath = `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-
-    const handle = await open(tmpPath, "w");
+    await io.mkdir(dir, { recursive: true });
+    const tempPath = siblingPath(filePath, "tmp");
     try {
-      await handle.writeFile(contents, "utf8");
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-
-    try {
-      await promoteToTarget(tmpPath, filePath);
+      await writeSynced(tempPath, contents, io);
+      await refreshBackup(filePath, io);
+      await withRetry(() => io.rename(tempPath, filePath));
     } catch (error) {
-      await cleanupTempFile(tmpPath);
+      await cleanup(tempPath, io);
       throw error;
     }
-
-    await fsyncDir(dir);
+    await syncDirectory(dir, io);
   });
 }
 
 export interface AtomicReadResult<T> {
-  /** Parsed value, or undefined when neither the primary nor the backup was usable. */
   readonly value: T | undefined;
-  /** The primary file existed but failed to parse. */
   readonly corrupted: boolean;
-  /** The value was recovered from the `.bak` sibling because the primary was missing or corrupt. */
   readonly recovered: boolean;
 }
 
-/**
- * Read and JSON-parse a file written by {@link writeFileAtomicQueued},
- * transparently recovering from the `.bak` sibling when the primary file is
- * missing (e.g. a crash between promoting the backup and renaming the new
- * temp into place) or corrupt. A missing primary with no backup is the normal
- * "never written" case and is reported without the `corrupted` flag so callers
- * do not log noise on first run.
- */
-export async function readJsonWithBackup<T>(filePath: string): Promise<AtomicReadResult<T>> {
-  const primary = await tryReadParse<T>(filePath);
-  if (primary.status === "ok") {
-    return { value: primary.value, corrupted: false, recovered: false };
-  }
-
-  const backup = await tryReadParse<T>(`${filePath}.bak`);
-  if (backup.status === "ok") {
-    return { value: backup.value, corrupted: primary.status === "corrupt", recovered: true };
-  }
-
-  return { value: undefined, corrupted: primary.status === "corrupt", recovered: false };
+/** Recovery is queued with writes so it cannot quarantine a newly saved primary. */
+export async function readJsonWithBackup<T>(
+  filePath: string,
+  io: AtomicFileIO = fs,
+): Promise<AtomicReadResult<T>> {
+  return serialize(filePath, async () => {
+    const primary = await readJson<T>(filePath, io);
+    if (primary.status === "ok") {
+      return { value: primary.value, corrupted: false, recovered: false };
+    }
+    const backup = await readJson<T>(filePath + ".bak", io);
+    if (backup.status === "ok") {
+      if (primary.status === "corrupt") {
+        const quarantine = siblingPath(filePath, "corrupt");
+        try {
+          // Unique names retain previous corruption evidence, including long names.
+          await withRetry(() => io.rename(filePath, quarantine));
+        } catch (error) {
+          console.warn("[atomic-file-write] could not isolate " + filePath, error);
+        }
+      }
+      return { value: backup.value, corrupted: primary.status !== "missing", recovered: true };
+    }
+    return { value: undefined, corrupted: primary.status !== "missing", recovered: false };
+  });
 }
 
-type ReadParseResult<T> =
-  | { readonly status: "ok"; readonly value: T }
-  | { readonly status: "missing" }
-  | { readonly status: "corrupt" };
+type JsonRead<T> =
+  | { status: "ok"; value: T; raw: string }
+  | { status: "missing" | "unreadable" | "corrupt" };
 
-async function tryReadParse<T>(filePath: string): Promise<ReadParseResult<T>> {
+async function readJson<T>(filePath: string, io: AtomicFileIO): Promise<JsonRead<T>> {
   let raw: string;
   try {
-    raw = await readFile(filePath, "utf8");
+    raw = await withRetry(() => io.readFile(filePath, "utf8"));
   } catch (error) {
-    return isMissingFileError(error) ? { status: "missing" } : { status: "corrupt" };
+    return { status: errorCode(error) === "ENOENT" ? "missing" : "unreadable" };
   }
-
   try {
-    return { status: "ok", value: JSON.parse(raw) as T };
+    return { status: "ok", value: JSON.parse(raw) as T, raw };
   } catch {
     return { status: "corrupt" };
   }
 }
 
-async function promoteToTarget(tmpPath: string, filePath: string): Promise<void> {
-  // Preserve the current good file as a `.bak` before overwriting so a truncated
-  // or corrupt target can be recovered on read. On the first write there is no
-  // target yet, so a missing-file error here is expected and ignored.
-  try {
-    await renameReplace(filePath, `${filePath}.bak`);
-  } catch (error) {
-    if (!isMissingFileError(error)) {
-      throw error;
-    }
-  }
+async function refreshBackup(filePath: string, io: AtomicFileIO): Promise<void> {
+  const primary = await readJson<unknown>(filePath, io);
+  if (primary.status !== "ok") return;
 
-  await renameReplace(tmpPath, filePath);
+  const backupPath = filePath + ".bak";
+  const stagePath = siblingPath(backupPath, "tmp");
+  try {
+    await writeSynced(stagePath, primary.raw, io);
+    await withRetry(() => io.rename(stagePath, backupPath));
+  } catch (error) {
+    // The primary has not moved and the previous backup has not been truncated.
+    await cleanup(stagePath, io);
+    console.warn("[atomic-file-write] could not refresh backup " + backupPath, error);
+  }
 }
 
-async function renameReplace(src: string, dest: string): Promise<void> {
-  try {
-    await rename(src, dest);
-    return;
-  } catch (error) {
-    if (!isReplaceRenameError(error)) {
-      throw error;
-    }
-  }
-
-  // Windows rename cannot atomically replace an existing file; remove the
-  // destination first, then rename into the now-free path.
-  await cleanupTempFile(dest);
-  await rename(src, dest);
+function siblingPath(filePath: string, extension: "tmp" | "corrupt"): string {
+  return join(dirname(filePath), "." + basename(filePath).slice(0, 24) + "." + randomUUID() + "." + extension);
 }
 
-async function fsyncDir(dir: string): Promise<void> {
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
+async function writeSynced(filePath: string, contents: string, io: AtomicFileIO): Promise<void> {
+  const handle = await io.open(filePath, "wx");
   try {
-    handle = await open(dir, "r");
+    await handle.writeFile(contents, "utf8");
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
+async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (delay === undefined || !["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"].includes(errorCode(error) ?? "")) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+}
+
+async function syncDirectory(dir: string, io: AtomicFileIO): Promise<void> {
+  let handle: fs.FileHandle | undefined;
+  try {
+    handle = await io.open(dir, "r");
     await handle.sync();
   } catch {
-    // Directory fsync is a best-effort durability barrier. Some platforms
-    // (notably Windows) reject opening a directory for fsync; that must never
-    // fail the write, only weaken the crash guarantee on those platforms.
+    // Windows may not support directory fsync. The file replacement still succeeded.
   } finally {
-    await handle?.close();
+    await handle?.close().catch(() => undefined);
   }
 }
 
-function isMissingFileError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
-}
-
-function isReplaceRenameError(error: unknown): boolean {
-  return typeof error === "object" && error !== null && "code" in error && (error.code === "EEXIST" || error.code === "EPERM");
-}
-
-async function cleanupTempFile(filePath: string): Promise<void> {
+async function cleanup(filePath: string, io: AtomicFileIO): Promise<void> {
   try {
-    await unlink(filePath);
+    await io.unlink(filePath);
   } catch (error) {
-    if (!isMissingFileError(error)) {
-      throw error;
+    if (errorCode(error) !== "ENOENT") {
+      console.warn("[atomic-file-write] could not remove temporary file " + filePath, error);
     }
   }
 }
 
-async function enqueueWrite(filePath: string, write: () => Promise<void>): Promise<void> {
-  const previous = writeQueueByPath.get(filePath) ?? Promise.resolve();
-  const next = previous.catch(() => undefined).then(write);
-  writeQueueByPath.set(filePath, next);
+function errorCode(error: unknown): string | undefined {
+  return (error as NodeJS.ErrnoException | undefined)?.code;
+}
 
+async function serialize<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+  const previous = operationQueue.get(filePath) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(operation);
+  operationQueue.set(filePath, next);
   try {
-    await next;
+    return await next;
   } finally {
-    if (writeQueueByPath.get(filePath) === next) {
-      writeQueueByPath.delete(filePath);
-    }
+    if (operationQueue.get(filePath) === next) operationQueue.delete(filePath);
   }
 }
