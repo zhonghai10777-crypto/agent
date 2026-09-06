@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
@@ -50,10 +50,10 @@ test("clears mixed attachment chips on submit after paste and file attach", asyn
   }
 });
 
-test("persists attachments separately from ui state and restores the current draft", async () => {
+test("persists attachments separately from ui state and restores the current draft", async ({}, testInfo) => {
   test.setTimeout(90_000);
   const userDataDir = await makeUserDataDir();
-  const workspacePath = await makeWorkspace("persistence-workspace");
+  const workspacePath = await makeWorkspace(join("中文用户名", "工程资料", "项目审查", "系统开发", "需求文档", "技术方案"));
   const filePath = join(workspacePath, "persisted-notes.txt");
   await writeTextFile(filePath, "persisted file attachment");
 
@@ -108,7 +108,8 @@ test("persists attachments separately from ui state and restores the current dra
     expect(uiState.transcripts).toBeUndefined();
     expect(uiState.composerAttachmentsBySession).toBeUndefined();
 
-    const attachmentPath = join(userDataDir, "attachments", encodeURIComponent(`${workspaceId}:${sessionId}`) + ".json");
+    const { attachmentPath, encodedSessionKey } = persistedSessionDataPaths(userDataDir, { workspaceId: workspaceId!, sessionId: sessionId! });
+    expect(encodedSessionKey.length).toBeGreaterThan(255);
     await expect
       .poll(async () => {
         try {
@@ -147,8 +148,44 @@ test("persists attachments separately from ui state and restores the current dra
       .toMatchObject({
         attachments: 2,
       });
+    await window.screenshot({ path: testInfo.outputPath("chinese-attachments-restored.png") });
   } finally {
     await secondRun.close();
+  }
+});
+
+test("attachment save failure leaves composer state unchanged and permits retry", async ({}, testInfo) => {
+  const userDataDir = await makeUserDataDir("attachment-save-failure-");
+  const workspacePath = await makeWorkspace("attachment-save-failure");
+  const filePath = join(workspacePath, "retry-notes.txt");
+  await writeTextFile(filePath, "retry succeeds");
+  const harness = await launchDesktop(userDataDir, { initialWorkspaces: [workspacePath], testMode: "background" });
+  try {
+    const window = await harness.firstWindow();
+    await createNamedThread(window, "Attachment failure session");
+    const state = await getDesktopState(window);
+    const { attachmentPath } = persistedSessionDataPaths(userDataDir, {
+      workspaceId: state.selectedWorkspaceId!, sessionId: state.selectedSessionId!,
+    });
+    // A directory at the target filename injects an actual filesystem save failure.
+    await mkdir(attachmentPath, { recursive: true });
+    await stubNextOpenDialog(harness, [filePath]);
+    await window.getByRole("button", { name: "Attach files", exact: true }).click();
+    await expect.poll(async () => (await getDesktopState(window)).lastError ?? "").not.toBe("");
+    const failed = await getDesktopState(window);
+    expect(failed.composerAttachments).toEqual([]);
+    await expect(window.locator(".composer-attachment")).toHaveCount(0);
+    await expect(window.getByText(failed.lastError!, { exact: true })).toBeVisible();
+    await window.screenshot({ path: testInfo.outputPath("attachment-save-failed.png") });
+
+    await rename(attachmentPath, `${attachmentPath}.blocked-fixture`);
+    await stubNextOpenDialog(harness, [filePath]);
+    await window.getByRole("button", { name: "Attach files", exact: true }).click();
+    await expect(window.locator(".composer-attachment")).toHaveCount(1);
+    expect((await getDesktopState(window)).lastError).toBeUndefined();
+    expect((JSON.parse(await readFile(attachmentPath, "utf8")) as { data: unknown[] }).data).toHaveLength(1);
+  } finally {
+    await harness.close();
   }
 });
 
@@ -692,7 +729,7 @@ test("migrates legacy inline attachment persistence and drops legacy inline tran
   ]);
 
   const uiState = JSON.parse(uiStateRaw) as Record<string, unknown>;
-  await unlink(attachmentPath);
+  await rename(attachmentPath, `${attachmentPath}.before-inline-migration`);
   await writeFile(
     join(userDataDir, "ui-state.json"),
     `${JSON.stringify(
@@ -704,7 +741,7 @@ test("migrates legacy inline attachment persistence and drops legacy inline tran
           ],
         },
         composerAttachmentsBySession: {
-          [rawSessionKey]: JSON.parse(attachmentRaw),
+          [rawSessionKey]: JSON.parse(attachmentRaw).data,
         },
       },
       null,
