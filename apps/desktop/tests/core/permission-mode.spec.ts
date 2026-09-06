@@ -14,7 +14,7 @@ import {
 //  - the composer toggle renders and flips the projected state to `plan`
 //  - the IPC path (window.piApp.setPermissionMode) also works and stays in sync
 //  - toggling back returns to `auto` and clears the non-default entry
-test("permission mode toggle renders in the composer and flips plan/auto", async () => {
+test("permission mode toggle renders in the composer and flips plan/auto", async ({}, testInfo) => {
   test.setTimeout(60_000);
   const userDataDir = await makeUserDataDir();
   const agentDir = join(userDataDir, "agent");
@@ -55,7 +55,7 @@ test("permission mode toggle renders in the composer and flips plan/auto", async
     expect(state2.permissionModeBySession[sessionKey] ?? "auto").toBe("auto");
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
-    await window.screenshot({ path: "permission-mode-toggle.png" });
+    await window.screenshot({ path: testInfo.outputPath("permission-mode-toggle.png") });
   } finally {
     await harness.electronApp.close();
   }

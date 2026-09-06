@@ -77,9 +77,10 @@ export function findGitBashWindows(
     return override;
   }
 
+  // Program Files contains the Git install root; registry entries already name it.
   const installRoots = [
-    env.ProgramFiles,
-    env["ProgramFiles(x86)"],
+    env.ProgramFiles ? join(env.ProgramFiles, "Git") : undefined,
+    env["ProgramFiles(x86)"] ? join(env["ProgramFiles(x86)"], "Git") : undefined,
     env.LocalAppData ? join(env.LocalAppData, "Programs", "Git") : undefined,
     ...probe.registryInstallPaths(),
   ];

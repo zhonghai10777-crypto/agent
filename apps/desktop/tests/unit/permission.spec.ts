@@ -4,7 +4,9 @@ import type {
   ExtensionContext,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
+import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES, sessionToolNames } from "@pi-gui/pi-sdk-driver/windows-shell";
 import { createChildThreadToolName } from "../../electron/orchestration-runtime";
+import { officeToolNames } from "../../electron/office-runtime";
 import { PLAN_BLOCKED_TOOLS, shouldBlockTool } from "../../electron/permission-mode";
 import { createPermissionModeExtension } from "../../electron/permission-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
@@ -24,6 +26,33 @@ test("shouldBlockTool: plan mode blocks mutating tools with a model-facing reaso
     // convention in document-runtime/web-runtime where ToolCallEventResult.reason
     // is aimed at the model, not the UI).
     expect(result!.reason).toContain(toolName);
+  }
+});
+
+test("shouldBlockTool: plan mode blocks every shell tool, not just bash", () => {
+  // Windows swaps pi's `bash` tool for `powershell` when no Git Bash is
+  // installed (`windows-shell.ts`). A blocklist that named only `bash` left
+  // plan mode letting commands run on exactly those machines.
+  for (const shell of ["bash", "powershell"]) {
+    expect(shouldBlockTool("plan", shell)?.block, `plan/${shell}`).toBe(true);
+  }
+  for (const name of [...SHELL_TOOL_NAMES, ...FILE_MUTATION_TOOL_NAMES]) {
+    expect(PLAN_BLOCKED_TOOLS.has(name), `plan must block ${name}`).toBe(true);
+  }
+});
+
+test("shouldBlockTool: plan blocks whatever tool the platform actually activates", () => {
+  // Ties the blocklist to the tool set a Windows session runs with: any active
+  // built-in that is not read-only must be blocked in plan mode.
+  const active = sessionToolNames({ registryInstallPaths: () => [], gitExecutableFromPath: () => undefined })
+    ?? ["read", "bash", "edit", "write"];
+  const unblocked = active.filter((name) => name !== "read" && !PLAN_BLOCKED_TOOLS.has(name));
+  expect(unblocked, "every mutating built-in a session activates must be blocked in plan mode").toEqual([]);
+});
+
+test("shouldBlockTool: plan mode blocks every Office writer", () => {
+  for (const name of officeToolNames) {
+    expect(shouldBlockTool("plan", name)?.block, `plan/${name}`).toBe(true);
   }
 });
 
@@ -79,19 +108,21 @@ function captureHandler(getMode: (ctx: ExtensionContext) => PermissionMode) {
   return registered;
 }
 
-test("createPermissionModeExtension: plan mode returns a block for write", () => {
+test("createPermissionModeExtension: plan blocks shell, file and Office writes", () => {
   const handler = captureHandler(() => "plan");
-  const result = handler(fakeToolCallEvent("write"), fakeCtx());
-  expect(result).toEqual({
-    block: true,
-    reason: expect.stringContaining("write"),
-  });
+  for (const name of ["bash", "powershell", "write", "edit", ...officeToolNames]) {
+    expect(handler(fakeToolCallEvent(name), fakeCtx())).toEqual({
+      block: true,
+      reason: expect.stringContaining(name),
+    });
+  }
 });
 
 test("createPermissionModeExtension: auto mode returns undefined (allow)", () => {
   const handler = captureHandler(() => "auto");
   expect(handler(fakeToolCallEvent("write"), fakeCtx())).toBeUndefined();
   expect(handler(fakeToolCallEvent("bash"), fakeCtx())).toBeUndefined();
+  expect(handler(fakeToolCallEvent("powershell"), fakeCtx())).toBeUndefined();
 });
 
 test("createPermissionModeExtension: read tools pass even in plan mode", () => {

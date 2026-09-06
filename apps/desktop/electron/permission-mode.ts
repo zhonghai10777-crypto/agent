@@ -17,23 +17,20 @@
  * (state projection), the main process (permission logic) and the extension
  * provider all read one source of truth for the default.
  */
+import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES } from "@pi-gui/pi-sdk-driver/windows-shell";
 import { createChildThreadToolName } from "./orchestration-runtime";
 import { officeToolNames } from "./office-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
 
 /**
- * Tool names blocked in `plan` mode. `write`/`edit`/`bash` are pi's built-in
- * tool `toolName` values (`tools/write|edit|bash.d.ts`); `create_child_thread`
- * is the orchestration tool registered in `orchestration-runtime.ts` — pulled
- * from its constant rather than restated so the two stay in sync. Read-only
- * tools (`read`, `grep`, `find`, `ls`, `read_document`, `web_search`,
- * `web_fetch`, `list_threads`, `read_thread`) stay available so the agent can
- * still investigate.
+ * Tool names blocked in `plan` mode.
+ *
+ * Names come from the owning modules, including both shells because Windows
+ * can substitute PowerShell for Bash. Read-only tools remain available.
  */
 export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
-  "write",
-  "edit",
-  "bash",
+  ...SHELL_TOOL_NAMES,
+  ...FILE_MUTATION_TOOL_NAMES,
   createChildThreadToolName,
   ...officeToolNames,
 ]);

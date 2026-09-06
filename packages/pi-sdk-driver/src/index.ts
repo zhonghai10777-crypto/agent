@@ -24,6 +24,12 @@ export { sessionKey } from "./session-supervisor-utils.js";
 export type { GenerateThreadTitleOptions } from "./thread-title-generator.js";
 export { findGitBashWindows, windowsGitBashPath } from "./windows-git-bash.js";
 export type { GitBashProbe } from "./windows-git-bash.js";
+export {
+  FILE_MUTATION_TOOL_NAMES,
+  LIGHT_MODE_EXCLUDED_TOOLS,
+  SHELL_TOOL_NAMES,
+  sessionToolNames,
+} from "./windows-shell.js";
 export type {
   SessionTranscriptAttachment,
   SessionTranscriptItem,
