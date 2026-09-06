@@ -2,6 +2,7 @@ import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import ExcelJS from "exceljs";
+import { unzipSync, zipSync } from "fflate";
 import {
   createNamedThread,
   getDesktopState,
@@ -75,6 +76,53 @@ test("light mode creates Word and edits Excel through the controlled office runt
       }
     }, unregisteredPath);
     expect(openError).toContain("not a result created by this app session");
+  } finally {
+    await harness.close();
+  }
+});
+
+test("Office repairs preserve explicit Excel values and replace Word text across runs in Electron", async ({}, testInfo) => {
+  const workspacePath = await makeWorkspace("office-repair-workspace");
+  const userDataDir = await makeUserDataDir("office-repair-");
+  const excelPath = join(workspacePath, "values.xlsx");
+  const wordPath = join(workspacePath, "contract.docx");
+  await writeFile(excelPath, await createExcelDocument("数据", [[99, 99, 99, 99], [99, 99, 99, 99]]));
+  const wordFiles = unzipSync(createWordDocument(undefined, ["合同金额"]));
+  wordFiles["word/document.xml"] = new TextEncoder().encode(new TextDecoder().decode(wordFiles["word/document.xml"])
+    .replace("合同金额", '合同</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>金额'));
+  const originalWord = zipSync(wordFiles);
+  await writeFile(wordPath, originalWord);
+  const harness = await launchDesktop(userDataDir, {
+    initialWorkspaces: [workspacePath], testMode: "background", envOverrides: { PI_APP_DEFAULT_RUNTIME_MODE: "light" },
+  });
+  try {
+    const window = await harness.firstWindow();
+    await createNamedThread(window, "Office repair session");
+    const state = await getDesktopState(window);
+    const session = { workspaceId: state.selectedWorkspaceId!, sessionId: state.selectedSessionId! };
+    // The existing Office harness invokes registered tools in the real main
+    // process; deterministic model output and native Save As are outside this proof.
+    const excel = await runOfficeRuntimeTool(harness, session, "excel_fill_range", {
+      sourcePath: excelPath, sheet: "数据", range: "A1:D2", values: [[10, 0, false, ""], [null, 0, false, ""]],
+    }) as { details: { outputPath: string; changedItems: number } };
+    expect(excel.details.changedItems).toBe(8);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(excel.details.outputPath);
+    expect(["A2", "B2", "C2", "D2"].map((cell) => workbook.getWorksheet("数据")?.getCell(cell).value)).toEqual([null, 0, false, ""]);
+
+    const word = await runOfficeRuntimeTool(harness, session, "word_replace", {
+      sourcePath: wordPath, search: "合同金额", replacement: "结算金额",
+    }) as { details: { outputPath: string; changedItems: number } };
+    expect(word.details.changedItems).toBe(1);
+    const edited = new TextDecoder().decode(unzipSync(await readFile(word.details.outputPath))["word/document.xml"]);
+    expect(edited).toContain("结算金额");
+    expect(edited).toContain("<w:b/>");
+    expect(new Uint8Array(await readFile(wordPath))).toEqual(originalWord);
+    const missing = await runOfficeRuntimeTool(harness, session, "word_replace", {
+      sourcePath: wordPath, search: "不存在的内容", replacement: "new",
+    });
+    expect(missing).toMatchObject({ details: { error: expect.stringContaining("未在文档中找到") } });
+    await window.screenshot({ path: testInfo.outputPath("office-repair-session.png") });
   } finally {
     await harness.close();
   }
