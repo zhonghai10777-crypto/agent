@@ -14,6 +14,10 @@ export default defineConfig(({ command }) => {
   return {
     main: {
       plugins: [tsconfigPaths({ projects: [pathsProject] })],
+      define: {
+        // Only the public repository identifier is embedded; runtime tokens never are.
+        "process.env.PI_APP_BUILD_UPDATE_REPOSITORY": JSON.stringify(process.env.PI_APP_UPDATE_REPOSITORY ?? ""),
+      },
       build: {
         outDir: "out/main",
         emptyOutDir: cleanOutputs,

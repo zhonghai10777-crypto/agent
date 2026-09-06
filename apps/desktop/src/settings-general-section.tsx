@@ -4,6 +4,7 @@ import type { DesktopAppState, Locale, ModelSettingsScopeMode, RuntimeMode } fro
 import { useI18n } from "./i18n/I18nProvider";
 import { getShortcutLabel } from "./ipc";
 import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
+import { SettingsUpdatesRow } from "./settings-updates-row";
 
 interface SettingsGeneralSectionProps {
   readonly runtime?: RuntimeSnapshot;
@@ -51,6 +52,7 @@ export function SettingsGeneralSection({
   return (
     <>
       <SettingsGroup title={t("settings.section.general")}>
+        <SettingsUpdatesRow />
         <SettingsRow
           title={t("settings.general.runtimeMode")}
           description={t("settings.general.runtimeModeDesc")}

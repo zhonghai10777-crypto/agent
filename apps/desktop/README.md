@@ -55,6 +55,30 @@ On Windows, `package:win*` routes through `scripts/package-windows.mjs`, which p
 
 Live agent tests use your existing `pi` runtime and provider auth. If local `pi` runs do not work, the `live` lane will not be meaningful either.
 
+## Update distribution
+
+Settings → General → Application updates provides manual update checks on Windows,
+macOS and Linux. Automatic checks still run in the main process. The UI distinguishes
+current versions, unavailable/private sources, network failures and rate limits.
+
+Set `PI_APP_UPDATE_REPOSITORY=owner/release-repo` when building to embed a separate
+GitHub distribution repository. Users can override the repository with the same
+environment variable when launching the app. Only the repository name is embedded;
+the source repository and its visibility are unchanged. Publish version tags and
+their downloadable installers to that distribution repository before distributing
+the configured app. This setting does not create or publish a repository.
+
+For private distribution, each user can supply their own fine-grained GitHub token
+through `PI_APP_UPDATE_TOKEN` when launching. Restrict it to the distribution repo
+with **Contents: read-only** access. Tokens are used only by the main process for
+GitHub API requests, never returned through IPC or included in builds. Do not ship
+a maintainer's token. Download links open GitHub in the user's browser, which needs
+its own signed-in session for private release assets.
+
+The default repository remains `zhonghai10777-crypto/agent` for existing users.
+Anonymous updates require a publicly readable distribution repository; without
+one, private-repository checks report an access error rather than “up to date”.
+
 ## Test Lanes
 
 Use the smallest lane that matches the changed surface.

@@ -7,3 +7,6 @@ export const PRODUCT = {
 
 export const PRODUCT_REPOSITORY_URL =
   `https://github.com/${PRODUCT.githubOwner}/${PRODUCT.githubRepo}`;
+
+/** Distribution can point at a public binary-only repo while source stays private. */
+export const PRODUCT_UPDATE_REPOSITORY = "zhonghai10777-crypto/agent";

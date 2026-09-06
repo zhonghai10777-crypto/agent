@@ -81,6 +81,7 @@ contextBridge.exposeInMainWorld("piApp", {
   platform: process.platform,
   versions: process.versions,
   ping: () => ipcRenderer.invoke(desktopIpc.ping) as Promise<string>,
+  checkForUpdates: () => ipcRenderer.invoke(desktopIpc.checkForUpdates) as Promise<import("../src/update-state").UpdateCheckResult>,
   getState: () => ipcRenderer.invoke(desktopIpc.stateRequest) as Promise<DesktopAppState>,
   onStateChanged: (listener: (state: DesktopAppState) => void) => {
     const handle = (_event: Electron.IpcRendererEvent, state: DesktopAppState) => {
