@@ -23,6 +23,18 @@ function fixtureInstallRoot(): string {
   return root;
 }
 
+/**
+ * A fixture `%ProgramFiles%`-shaped directory holding a stock `Git` install.
+ * Returns both halves so a test can assert the `Git` level is not skipped.
+ */
+function fixtureProgramFiles(): { readonly programFiles: string; readonly installRoot: string } {
+  const programFiles = mkdtempSync(join(tmpdir(), "git-bash-programfiles-"));
+  const installRoot = join(programFiles, "Git");
+  mkdirSync(join(installRoot, "bin"), { recursive: true });
+  writeFileSync(join(installRoot, "bin", "bash.exe"), "");
+  return { programFiles, installRoot };
+}
+
 /** Environment whose well-known roots all miss, so only `probe` can find anything. */
 function envWithoutGitBash(): NodeJS.ProcessEnv {
   const emptyRoot = mkdtempSync(join(tmpdir(), "git-bash-empty-"));
@@ -33,13 +45,32 @@ function envWithoutGitBash(): NodeJS.ProcessEnv {
   } as NodeJS.ProcessEnv;
 }
 
-test("detection walks the well-known install roots first", () => {
-  const root = fixtureInstallRoot();
+test("detection finds a stock install under %ProgramFiles%\\Git", () => {
+  const { programFiles, installRoot } = fixtureProgramFiles();
   const bash = findGitBashWindows(
-    { ...envWithoutGitBash(), ProgramFiles: root } as NodeJS.ProcessEnv,
+    { ...envWithoutGitBash(), ProgramFiles: programFiles } as NodeJS.ProcessEnv,
     noProbe,
   );
-  assert.equal(bash, join(root, "bin", "bash.exe"));
+  assert.equal(bash, join(installRoot, "bin", "bash.exe"));
+});
+
+test("detection finds a 32-bit install under %ProgramFiles(x86)%\\Git", () => {
+  const { programFiles, installRoot } = fixtureProgramFiles();
+  const bash = findGitBashWindows(
+    { ...envWithoutGitBash(), "ProgramFiles(x86)": programFiles } as NodeJS.ProcessEnv,
+    noProbe,
+  );
+  assert.equal(bash, join(installRoot, "bin", "bash.exe"));
+});
+
+test("ProgramFiles is treated as the parent of the install root, not the root", () => {
+  // Guards the off-by-one-directory regression: probing
+  // `%ProgramFiles%\bin\bash.exe` never hits a real install.
+  const root = fixtureInstallRoot();
+  assert.equal(
+    findGitBashWindows({ ...envWithoutGitBash(), ProgramFiles: root } as NodeJS.ProcessEnv, noProbe),
+    undefined,
+  );
 });
 
 test("detection checks the per-user install root under LocalAppData", () => {

@@ -20,7 +20,7 @@ import { shouldBlockTool } from "./permission-mode";
 export type PermissionModeProvider = (ctx: ExtensionContext) => PermissionMode;
 
 /**
- * Extension that gates mutating tools (write/edit/bash/create_child_thread) in
+ * Extension that gates mutating tools (including Bash, PowerShell and Office) in
  * `plan` mode by subscribing to pi's pre-execution `tool_call` event.
  *
  * Uses pi's native `block`/`reason` result rather than `setActiveTools` /

@@ -13,14 +13,17 @@ import { windowsGitBashAvailable, type GitBashProbe } from "./windows-git-bash.j
 /** pi's built-in selection when a session passes no explicit tool list. */
 const PI_DEFAULT_TOOL_NAMES = ["read", "bash", "edit", "write"] as const;
 
-/** Built-in tools that run arbitrary commands, on any platform. */
-const SHELL_TOOL_NAMES = ["bash", "powershell"] as const;
+/** Shared by session tool selection and desktop permission gates on every platform. */
+export const SHELL_TOOL_NAMES: readonly string[] = ["bash", "powershell"];
 
-/**
- * Built-in tools light mode must never expose. Both shells are listed so light
- * mode stays command-free whichever shell the platform activates.
- */
-export const LIGHT_MODE_EXCLUDED_TOOLS: readonly string[] = [...SHELL_TOOL_NAMES, "edit", "write"];
+/** Built-in tools that mutate files without going through a shell. */
+export const FILE_MUTATION_TOOL_NAMES: readonly string[] = ["edit", "write"];
+
+/** Built-in command and file-writing tools excluded from light mode. */
+export const LIGHT_MODE_EXCLUDED_TOOLS: readonly string[] = [
+  ...SHELL_TOOL_NAMES,
+  ...FILE_MUTATION_TOOL_NAMES,
+];
 
 /**
  * Explicit built-in tool list for a new session, or `undefined` to let pi apply
