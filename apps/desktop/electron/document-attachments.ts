@@ -45,7 +45,8 @@ export async function withExtractionMetadata(
       result.push(attachment);
       continue;
     }
-    result.push({ ...attachment, extraction: toAttachmentExtraction(await getDocumentExtraction(attachment.fsPath)) });
+    const extraction = await getDocumentExtraction(attachment.fsPath, { retryFailures: true });
+    result.push({ ...attachment, extraction: toAttachmentExtraction(extraction) });
   }
   return result;
 }
