@@ -251,6 +251,7 @@ export const desktopIpc = {
   setRuntimeMode: "pi-gui:set-runtime-mode",
   themeChanged: "pi-gui:theme-changed",
   ping: "app:ping",
+  checkForUpdates: "app:check-for-updates",
   openExternal: "app:open-external",
 } as const;
 
@@ -568,6 +569,7 @@ export interface PiDesktopApi {
   stageFile(workspaceId: string, filePath: string, stagingSourcePath?: string): Promise<void>;
   toggleWindowMaximize(): Promise<void>;
   openExternal(url: string): Promise<void>;
+  checkForUpdates(): Promise<import("./update-state").UpdateCheckResult>;
   getThemeMode(): Promise<"system" | "light" | "dark">;
   getResolvedTheme(): Promise<"light" | "dark">;
   setThemeMode(mode: "system" | "light" | "dark"): Promise<DesktopAppState>;

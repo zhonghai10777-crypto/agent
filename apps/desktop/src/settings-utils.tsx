@@ -111,13 +111,15 @@ export function SettingsRow({
   title,
   description,
   children,
+  className,
 }: {
   readonly title: string;
   readonly description?: string;
   readonly children?: ReactNode;
+  readonly className?: string;
 }) {
   return (
-    <div className="settings-row">
+    <div className={className ? `settings-row ${className}` : "settings-row"}>
       <div className="settings-row__label">
         <div className="settings-row__title">{title}</div>
         {description ? <div className="settings-row__description">{description}</div> : null}

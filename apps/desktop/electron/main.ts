@@ -1507,6 +1507,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.setRuntimeMode, (event, mode: RuntimeMode) =>
     runWindowScopedForEvent(event, () => store.setRuntimeMode(mode)),
   );
+  ipcMain.handle(desktopIpc.checkForUpdates, () => checkForUpdate());
   ipcMain.handle(desktopIpc.openExternal, (_event, url: string) => {
     const parsed = parseExternalWebUrl(url);
     if (!parsed) {

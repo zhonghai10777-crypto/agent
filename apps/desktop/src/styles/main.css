@@ -2059,6 +2059,15 @@
   flex-shrink: 0;
 }
 
+.settings-row--updates .settings-row__control {
+  flex: 0 1 360px;
+  min-width: 0;
+}
+
+.settings-row--updates .settings-pill-row {
+  justify-content: flex-end;
+}
+
 .settings-row__actions {
   display: flex;
   flex-wrap: wrap;

@@ -1,30 +1,38 @@
 import { app, net, Notification, shell } from "electron";
-import { PRODUCT, PRODUCT_REPOSITORY_URL } from "../src/product";
+import { PRODUCT, PRODUCT_UPDATE_REPOSITORY } from "../src/product";
+import type { UpdateCheckResult } from "../src/update-state";
+export type { UpdateCheckResult } from "../src/update-state";
 
-const RELEASES_URL =
-  `https://api.github.com/repos/${PRODUCT.githubOwner}/${PRODUCT.githubRepo}/releases?per_page=1`;
-const RELEASES_PAGE = `${PRODUCT_REPOSITORY_URL}/releases`;
+const BUNDLED_UPDATE_REPOSITORY = process.env.PI_APP_BUILD_UPDATE_REPOSITORY || PRODUCT_UPDATE_REPOSITORY;
 
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 const INITIAL_DELAY_MS = 15_000; // 15 seconds after launch
 const FETCH_TIMEOUT_MS = 10_000; // give up on a hung request
 
-export type UpdateCheckResult =
-  | { status: "up-to-date"; currentVersion: string; latestVersion: string }
-  | {
-      status: "update-available";
-      currentVersion: string;
-      latestVersion: string;
-      releaseUrl: string;
-    }
-  | { status: "error"; message: string };
+export interface UpdateSource {
+  readonly repository: string;
+  readonly token?: string;
+}
+
+export function resolveUpdateSource(env: NodeJS.ProcessEnv = process.env): UpdateSource {
+  const repository = env.PI_APP_UPDATE_REPOSITORY?.trim() || BUNDLED_UPDATE_REPOSITORY;
+  if (!/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/.test(repository) || [".", ".."].includes(repository.split("/")[1]!)) {
+    throw new Error("The update repository must use the owner/repository format.");
+  }
+  const token = env.PI_APP_UPDATE_TOKEN?.trim();
+  if (token && /[\r\n]/.test(token)) throw new Error("The update credential is invalid.");
+  return { repository, ...(token ? { token } : {}) };
+}
+
+const releasesPageFor = (repository: string) => `https://github.com/${repository}/releases`;
 
 export type GitHubRelease = {
   tag_name?: string;
   html_url?: string;
+  draft?: boolean;
 };
 
-export function openReleasesPage(releaseUrl = RELEASES_PAGE): Promise<void> {
+export function openReleasesPage(releaseUrl = releasesPageFor(resolveUpdateSource().repository)): Promise<void> {
   return shell.openExternal(releaseUrl);
 }
 
@@ -51,68 +59,75 @@ export function showUpdateNotification(
  * never shows UI. Callers decide how to surface the result (auto path shows a
  * deduped notification, the manual menu path shows a dialog).
  */
-export async function checkForUpdate(): Promise<UpdateCheckResult> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  let res: Response;
+interface UpdateCheckOptions {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly currentVersion?: string;
+  readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
+  readonly timeoutMs?: number;
+}
+
+export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<UpdateCheckResult> {
+  let source: UpdateSource;
   try {
-    res = await net.fetch(RELEASES_URL, {
-      headers: { Accept: "application/vnd.github.v3+json" },
+    source = resolveUpdateSource(options.env);
+  } catch (error) {
+    return { status: "error", code: "configuration", message: (error as Error).message };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? FETCH_TIMEOUT_MS);
+  const fetchRelease = options.fetch ?? ((url, init) => net.fetch(url, init));
+  try {
+    const res = await fetchRelease(`https://api.github.com/repos/${source.repository}/releases?per_page=10`, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
+      },
+      redirect: "error",
       signal: controller.signal,
     });
-  } catch (error) {
-    const message =
-      error instanceof Error && error.name === "AbortError"
-        ? "The update check timed out."
-        : error instanceof Error
-          ? error.message
-          : "The update check could not reach GitHub.";
-    return { status: "error", message };
+    if (!res.ok) {
+      if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) {
+        return { status: "error", code: "rate-limited", message: "GitHub's request limit was reached. Please try again later." };
+      }
+      if ([401, 403, 404].includes(res.status)) {
+        return { status: "error", code: "access-denied", message: "The update repository is unavailable or requires access. Use your own read-only credential or ask the publisher for a public update source." };
+      }
+      return { status: "error", code: "http", message: `The update service returned HTTP ${res.status}.` };
+    }
+    let payload: unknown;
+    try {
+      payload = await res.json();
+    } catch (error) {
+      if (controller.signal.aborted) throw error;
+      return { status: "error", code: "invalid-response", message: "The update service returned an unreadable response." };
+    }
+    if (!Array.isArray(payload)) {
+      return { status: "error", code: "invalid-response", message: "The update service returned an unexpected response." };
+    }
+    const release = payload.find((item): item is GitHubRelease & { tag_name: string } =>
+      typeof item === "object" && item !== null && item.draft !== true && typeof item.tag_name === "string");
+    if (!release) {
+      return { status: "error", code: "no-releases", message: "The update source has no published versions yet." };
+    }
+    const latest = release.tag_name.replace(/^v/, "");
+    const current = options.currentVersion ?? app.getVersion();
+    if (!parseSemver(latest) || !parseSemver(current)) {
+      return { status: "error", code: "invalid-response", message: "The update service returned an invalid version." };
+    }
+    if (compareSemver(latest, current) > 0) {
+      return { status: "update-available", currentVersion: current, latestVersion: latest, releaseUrl: releaseUrlFor(release, source.repository) };
+    }
+    return { status: "up-to-date", currentVersion: current, latestVersion: latest };
+  } catch {
+    return {
+      status: "error",
+      code: controller.signal.aborted ? "timeout" : "network",
+      message: controller.signal.aborted ? "The update check timed out." : "Could not reach the update service. Please check your connection.",
+    };
   } finally {
     clearTimeout(timeout);
   }
-
-  if (!res.ok) {
-    return {
-      status: "error",
-      message: `GitHub Releases returned ${res.status}.`,
-    };
-  }
-
-  let releases: GitHubRelease[];
-  try {
-    releases = (await res.json()) as GitHubRelease[];
-  } catch {
-    return { status: "error", message: "GitHub Releases returned an unreadable response." };
-  }
-
-  const release = releases[0];
-  if (!release?.tag_name) {
-    return {
-      status: "error",
-      message: "GitHub Releases did not return any published versions.",
-    };
-  }
-
-  const latest = release.tag_name.replace(/^v/, "");
-  const current = app.getVersion();
-
-  // Only an actually newer published version counts as an update — a proper
-  // semver compare avoids misfiring on prereleases or newer-local dev builds.
-  if (compareSemver(latest, current) > 0) {
-    return {
-      status: "update-available",
-      currentVersion: current,
-      latestVersion: latest,
-      releaseUrl: releaseUrlFor(release),
-    };
-  }
-
-  return {
-    status: "up-to-date",
-    currentVersion: current,
-    latestVersion: latest,
-  };
 }
 
 export function initUpdateChecker(): () => void {
@@ -140,13 +155,14 @@ export function initUpdateChecker(): () => void {
   };
 }
 
-export function releaseUrlFor(release: GitHubRelease): string {
+export function releaseUrlFor(release: GitHubRelease, repository = resolveUpdateSource().repository): string {
+  const releasesPage = releasesPageFor(repository);
   const tag = release.tag_name;
   if (!tag) {
-    return RELEASES_PAGE;
+    return releasesPage;
   }
 
-  const canonicalUrl = `${RELEASES_PAGE}/tag/${encodeURIComponent(tag)}`;
+  const canonicalUrl = `${releasesPage}/tag/${encodeURIComponent(tag)}`;
   if (!release.html_url) {
     return canonicalUrl;
   }
@@ -196,7 +212,7 @@ export function compareSemver(a: string, b: string): number {
 }
 
 function parseSemver(version: string): { nums: [number, number, number]; pre: string[] } | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?/.exec(version.trim());
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version.trim());
   if (!match) {
     return undefined;
   }
