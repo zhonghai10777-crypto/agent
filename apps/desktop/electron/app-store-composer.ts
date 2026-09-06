@@ -64,11 +64,17 @@ export async function addComposerAttachments(
   const key = sessionKey(sessionRef);
   const existing = store.sessionState.composerAttachmentsBySession.get(key) ?? [];
   const next = [...existing, ...attachments];
-  await store.attachmentStore.write(key, cloneComposerAttachments(next));
+  try {
+    await store.attachmentStore.write(key, cloneComposerAttachments(next));
+  } catch (error) {
+    return store.withSessionError(sessionRef, error);
+  }
+  store.sessionState.sessionErrorsBySession.delete(key);
   store.sessionState.composerAttachmentsBySession.set(key, next);
   store.state = {
     ...store.state,
     composerAttachments: cloneComposerAttachments(next),
+    lastError: undefined,
     revision: store.state.revision + 1,
   };
   await store.persistUiState();
@@ -88,7 +94,12 @@ export async function removeComposerAttachment(
   const key = sessionKey(sessionRef);
   const existing = store.sessionState.composerAttachmentsBySession.get(key) ?? [];
   const next = existing.filter((attachment) => attachment.id !== attachmentId);
-  await store.attachmentStore.write(key, cloneComposerAttachments(next));
+  try {
+    await store.attachmentStore.write(key, cloneComposerAttachments(next));
+  } catch (error) {
+    return store.withSessionError(sessionRef, error);
+  }
+  store.sessionState.sessionErrorsBySession.delete(key);
   if (next.length > 0) {
     store.sessionState.composerAttachmentsBySession.set(key, next);
   } else {
@@ -97,6 +108,7 @@ export async function removeComposerAttachment(
   store.state = {
     ...store.state,
     composerAttachments: cloneComposerAttachments(next),
+    lastError: undefined,
     revision: store.state.revision + 1,
   };
   await store.persistUiState();

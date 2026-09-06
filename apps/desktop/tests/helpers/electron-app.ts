@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { basename, delimiter, dirname, extname, join, resolve } from "node:path";
@@ -1737,7 +1738,7 @@ export function persistedSessionDataPaths(
   const encodedSessionKey = encodeURIComponent(rawSessionKey);
   return {
     transcriptPath: join(userDataDir, "transcripts", `${encodedSessionKey}.json`),
-    attachmentPath: join(userDataDir, "attachments", `${encodedSessionKey}.json`),
+    attachmentPath: join(userDataDir, "attachments", `${createHash("sha256").update(rawSessionKey).digest("hex")}.json`),
     encodedSessionKey,
     rawSessionKey,
   };
