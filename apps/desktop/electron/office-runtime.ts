@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { link, lstat, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { link, lstat, open, readFile, realpath, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { zipSync, unzipSync } from "fflate";
 import ExcelJS from "exceljs";
@@ -11,6 +11,7 @@ import type {
   ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import { stringParam, toolErrorMessage } from "./tool-params";
+import { replaceWordDocumentXml } from "./office-word-text";
 
 export type OfficeFormat = "docx" | "xlsx";
 export type OfficeOperation =
@@ -61,7 +62,7 @@ export interface ExcelFillRangeOperation {
   readonly sourcePath: string;
   readonly sheet: string;
   readonly range: string;
-  readonly values: readonly (readonly unknown[])[] | unknown;
+  readonly values: unknown;
 }
 export interface ExcelAddSheetOperation {
   readonly kind: "excel_add_sheet";
@@ -189,23 +190,14 @@ export function replaceWordText(buffer: Uint8Array, search: string, replacement:
   }
   const files = unzipSync(buffer);
   const document = readZipText(files, "word/document.xml");
-  const escapedSearch = escapeXml(search);
-  const escapedReplacement = escapeXml(replacement);
-  let count = 0;
-  const nextDocument = document.replace(
-    /(<w:t\b[^>]*>)([\s\S]*?)(<\/w:t>)/g,
-    (_match, open: string, text: string, close: string) => {
-      const occurrences = text.split(escapedSearch).length - 1;
-      count += occurrences;
-      return `${open}${text.split(escapedSearch).join(escapedReplacement)}${close}`;
-    },
-  );
-  if (count === 0) {
+  const result = replaceWordDocumentXml(document, search, replacement);
+  if (result.changedItems === 0) {
     return { buffer, changedItems: 0 };
   }
-  files["word/document.xml"] = new TextEncoder().encode(nextDocument);
-  return { buffer: zipSync(files), changedItems: count };
+  files["word/document.xml"] = new TextEncoder().encode(result.xml);
+  return { buffer: zipSync(files), changedItems: result.changedItems };
 }
+
 
 export function appendWordContent(
   buffer: Uint8Array,
@@ -261,18 +253,72 @@ export async function fillExcelRange(
   const worksheet = workbook.getWorksheet(operation.sheet);
   if (!worksheet) throw new Error(`Worksheet not found: ${operation.sheet}`);
   const range = parseRange(operation.range);
-  const matrix = Array.isArray(operation.values)
-    ? operation.values
-    : Array.from({ length: range.height }, () => Array.from({ length: range.width }, () => operation.values));
+  const matrix = resolveFillMatrix(operation.values, range, operation.range);
   let changedItems = 0;
   for (let row = 0; row < range.height; row += 1) {
     for (let column = 0; column < range.width; column += 1) {
-      const value = matrix[row]?.[column] ?? matrix[0]?.[column] ?? operation.values;
+      const value = (matrix[row] as readonly unknown[])[column];
       worksheet.getCell(range.startRow + row, range.startColumn + column).value = normalizeExcelValue(value);
       changedItems += 1;
     }
   }
   return { buffer: new Uint8Array(await workbook.xlsx.writeBuffer()), changedItems };
+}
+
+/**
+ * Expand `values` into exactly one value per cell of `range`.
+ *
+ * Three accepted shapes, all explicit: a scalar (repeated over the range), a
+ * matrix matching the range exactly, or a flat list for a single-row or
+ * single-column range. A matrix that does not match the range is an error
+ * rather than something to pad — the old "fall back to the first row" rule
+ * turned a deliberate `null` (clear this cell) into a copy of the cell above
+ * it, which is silently wrong data rather than a visible failure.
+ */
+function resolveFillMatrix(
+  values: unknown,
+  range: { readonly width: number; readonly height: number },
+  rangeText: string,
+): readonly (readonly unknown[])[] {
+  if (!Array.isArray(values)) {
+    if (values === undefined) throw new Error("values 缺少值；请用 null 明确清空单元格。");
+    return Array.from({ length: range.height }, () => Array.from({ length: range.width }, () => values));
+  }
+
+  const entries = values as readonly unknown[];
+  if (Array.from(entries).some((entry) => entry === undefined)) {
+    throw new Error("values 缺少值；请用 null 明确清空单元格。");
+  }
+  const rowCount = entries.filter((entry) => Array.isArray(entry)).length;
+  if (rowCount > 0 && rowCount !== entries.length) {
+    throw new Error(`excel_fill_range 的 values 不能混用单值和数组行；请传标量、完整二维数组，或一维列表。`);
+  }
+
+  if (rowCount > 0) {
+    if (entries.length !== range.height) {
+      throw new Error(`values 有 ${entries.length} 行，范围 ${rangeText} 需要 ${range.height} 行。`);
+    }
+    return entries.map((row, index) => {
+      const cells = row as readonly unknown[];
+      if (cells.length !== range.width) {
+        throw new Error(`values 第 ${index + 1} 行有 ${cells.length} 列，范围 ${rangeText} 需要 ${range.width} 列。`);
+      }
+      if (Array.from(cells).some((cell) => cell === undefined)) {
+        throw new Error(`values 第 ${index + 1} 行缺少值；请用 null 明确清空单元格。`);
+      }
+      return cells;
+    });
+  }
+
+  if (range.height === 1 && entries.length === range.width) {
+    return [entries];
+  }
+  if (range.width === 1 && entries.length === range.height) {
+    return entries.map((entry) => [entry]);
+  }
+  throw new Error(
+    `values 是 ${entries.length} 个值的一维列表，只能填充 1 行 ${range.width} 列或 ${range.height} 行 1 列的范围；范围 ${rangeText} 需要 ${range.height} 行 ${range.width} 列。`,
+  );
 }
 
 export async function addExcelSheet(
@@ -426,6 +472,11 @@ function createWordReplaceTool(options: OfficeRuntimeOptions): ToolDefinition<an
       if (!sourcePath || !search) return officeError("word_replace requires sourcePath and search.");
       return runOfficeWrite(options, ctx, "docx", sourcePath, async (outputPath, source) => {
         const result = replaceWordText(source ?? new Uint8Array(), search, replacement);
+        if (result.changedItems === 0) {
+          // Saving an untouched copy looks like a successful edit; say plainly
+          // that the text is not in the document instead.
+          throw new Error(`未在文档中找到“${search}”，没有可替换的内容，因此没有另存文件。`);
+        }
         return { buffer: result.buffer, changedItems: result.changedItems, summary: `替换 Word 文本 ${result.changedItems} 处`, outputPath };
       });
     },
@@ -761,23 +812,130 @@ async function chooseEditedOutputPath(sourcePath: string): Promise<string> {
   return candidate;
 }
 
-async function atomicOfficeWrite(outputPath: string, buffer: Uint8Array, format: OfficeFormat): Promise<void> {
-  const tempPath = path.join(path.dirname(outputPath), `.${path.basename(outputPath)}.${randomUUID()}.tmp`);
-  await writeFile(tempPath, buffer, { flag: "wx" });
-  let published = false;
+export type OfficeFileIO = Pick<typeof import("node:fs/promises"), "open" | "readFile" | "link" | "unlink" | "lstat">;
+const officeFileIO: OfficeFileIO = { open, readFile, link, unlink, lstat };
+
+export async function atomicOfficeWrite(
+  outputPath: string,
+  buffer: Uint8Array,
+  format: OfficeFormat,
+  io: OfficeFileIO = officeFileIO,
+): Promise<void> {
+  // A bounded temp name: appending to the full output name can overflow the
+  // 255-character limit on a single path component for a long Chinese filename.
+  const tempPath = path.join(path.dirname(outputPath), `.${path.basename(outputPath).slice(0, 24)}.${randomUUID()}.tmp`);
   try {
-    await validateOfficeBuffer(new Uint8Array(await readFile(tempPath)), format);
-    // A hard-link publish is atomic and exclusive on the same filesystem: a
-    // file created during the confirmation dialog cannot be overwritten.
-    await link(tempPath, outputPath);
-    published = true;
-    await unlink(tempPath);
+    const handle = await io.open(tempPath, "wx");
+    try {
+      await handle.writeFile(buffer);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await validateOfficeBuffer(new Uint8Array(await io.readFile(tempPath)), format);
+    await publishOfficeFile(tempPath, outputPath, buffer, io);
   } catch (error) {
-    if (!published) {
-      await unlink(tempPath).catch(() => undefined);
+    await io.unlink(tempPath).catch(() => undefined);
+    throw error;
+  }
+  // The save is already complete and validated at this point. A temp file we
+  // cannot delete (an antivirus scanner still holding it, say) is housekeeping,
+  // not a failed write, so it must not turn a saved document into an error.
+  await io.unlink(tempPath).catch((error) => {
+    console.warn(`[office-runtime] left a temp file behind at ${tempPath}`, error);
+  });
+}
+
+/**
+ * Publish the validated temp file as `outputPath` without ever overwriting an
+ * existing file — the target may have appeared while the confirmation dialog was
+ * open.
+ *
+ * A hard link is the first choice: it is atomic and it fails outright if the
+ * target exists. exFAT and FAT32 have no hard links at all (nor do most network
+ * shares), and on those volumes the whole save used to fail at the last step
+ * with the document already generated. The fallback creates the output with an
+ * exclusive open instead, which keeps the no-overwrite guarantee; it is not
+ * atomic in its contents. On failure, cleanup removes only the same file we
+ * exclusively opened; a competing process may have replaced the path meanwhile.
+ */
+export async function publishOfficeFile(
+  tempPath: string,
+  outputPath: string,
+  buffer: Uint8Array,
+  io: OfficeFileIO = officeFileIO,
+): Promise<void> {
+  try {
+    await io.link(tempPath, outputPath);
+    return;
+  } catch (error) {
+    if (isExistingTargetError(error)) {
+      throw new Error("目标文件在保存前已被创建，为避免覆盖已取消写入。");
+    }
+    if (!isUnsupportedLinkError(error)) {
+      throw error;
+    }
+  }
+
+  const handle = await openExclusive(outputPath, io);
+  let identity: Awaited<ReturnType<typeof handle.stat>> | undefined;
+  let writeError: unknown;
+  try {
+    identity = await handle.stat();
+    await handle.writeFile(buffer);
+    await handle.sync();
+  } catch (error) {
+    writeError = error;
+  } finally {
+    await handle.close().catch((error) => { writeError ??= error; });
+  }
+  if (writeError) {
+    try {
+      const current = await io.lstat(outputPath);
+      if (identity && !current.isSymbolicLink() && current.dev === identity.dev && current.ino === identity.ino) {
+        await io.unlink(outputPath);
+      }
+    } catch (error) {
+      if (errorCode(error) !== "ENOENT") {
+        throw new Error(`保存失败，未能清理不完整文件：${outputPath}`, { cause: writeError });
+      }
+    }
+    throw writeError;
+  }
+}
+
+async function openExclusive(outputPath: string, io: OfficeFileIO): Promise<Awaited<ReturnType<typeof open>>> {
+  try {
+    return await io.open(outputPath, "wx");
+  } catch (error) {
+    if (isExistingTargetError(error)) {
+      throw new Error("目标文件在保存前已被创建，为避免覆盖已取消写入。");
     }
     throw error;
   }
+}
+
+function isExistingTargetError(error: unknown): boolean {
+  return errorCode(error) === "EEXIST";
+}
+
+/** Filesystems without hard links report this in several shapes across platforms. */
+function isUnsupportedLinkError(error: unknown): boolean {
+  const code = errorCode(error);
+  return (
+    code === "EPERM" ||
+    code === "EACCES" ||
+    code === "ENOSYS" ||
+    code === "ENOTSUP" ||
+    code === "EOPNOTSUPP" ||
+    code === "EXDEV" ||
+    code === "EINVAL" ||
+    code === "EMLINK"
+  );
+}
+
+function errorCode(error: unknown): unknown {
+  return typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
 }
 
 async function validateOfficeBuffer(buffer: Uint8Array, format: OfficeFormat): Promise<void> {
@@ -834,6 +992,9 @@ function normalizeExcelValue(value: unknown): ExcelJS.CellValue {
     const result = (value as { result?: unknown }).result;
     return { formula: (value as { formula: string }).formula, ...(typeof result === "number" || typeof result === "string" ? { result } : {}) };
   }
+  // `null` and a missing value both mean "empty cell"; stringifying the latter
+  // would write the literal text "undefined" into the sheet.
+  if (value === undefined) return null;
   if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") return value;
   return String(value);
 }
