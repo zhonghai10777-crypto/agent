@@ -1,6 +1,6 @@
-import { readFile, stat } from "node:fs/promises";
-import { access } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import type { Stats } from "node:fs";
 import { Worker } from "node:worker_threads";
 import {
   extractDocument,
@@ -20,6 +20,9 @@ import {
  * otherwise re-read and re-parse the whole file for each page.
  *
  * The key includes mtime and size so editing a file in place invalidates it.
+ *
+ * I/O errors are not cached. Parse failures expire after a minute and an
+ * explicit reattachment retries immediately, even if file metadata is unchanged.
  */
 
 /** A document split into addressable parts: PDF pages, or text sections. */
@@ -33,13 +36,36 @@ interface CacheEntry {
   readonly extraction: DocumentExtraction;
   /** Filled on first read_document call; PDFs need a separate per-page parse. */
   parts?: DocumentParts | DocumentExtractionFailure;
+  /** Set for cached parse failures only; successes never expire on time. */
+  readonly expiresAt?: number;
 }
 
 /** Bounded by total extracted characters rather than entry count. */
 const MAX_CACHED_CHARS = 4_000_000;
+const MAX_CACHE_ENTRIES = 128;
+
+/** How long a parse failure stays cached. */
+export const FAILURE_TTL_MS = 60_000;
 
 const cache = new Map<string, CacheEntry>();
 let cachedChars = 0;
+
+/**
+ * File access, injectable so tests can exercise the transient-failure path
+ * (which is otherwise unreachable without a real lock on a real file).
+ */
+export interface DocumentCacheIo {
+  readonly stat: (fsPath: string) => Promise<Stats>;
+  readonly readFile: (fsPath: string) => Promise<Uint8Array>;
+}
+
+interface DocumentCacheOptions {
+  readonly io?: DocumentCacheIo;
+  readonly now?: () => number;
+  readonly retryFailures?: boolean;
+}
+
+const nodeIo: DocumentCacheIo = { stat, readFile: async (fsPath) => new Uint8Array(await readFile(fsPath)) };
 
 interface PendingWorkerRequest {
   readonly resolve: (value: DocumentExtraction) => void;
@@ -50,8 +76,8 @@ let extractionWorker: Worker | undefined;
 let workerRequestId = 0;
 const pendingWorkerRequests = new Map<number, PendingWorkerRequest>();
 
-export async function getDocumentExtraction(fsPath: string): Promise<DocumentExtraction> {
-  return (await load(fsPath)).extraction;
+export async function getDocumentExtraction(fsPath: string, options: DocumentCacheOptions = {}): Promise<DocumentExtraction> {
+  return (await load(fsPath, options)).extraction;
 }
 
 /**
@@ -59,8 +85,11 @@ export async function getDocumentExtraction(fsPath: string): Promise<DocumentExt
  * everything else is chunked on paragraph boundaries so the tool has the same
  * "fetch part N" shape for every format.
  */
-export async function getDocumentParts(fsPath: string): Promise<DocumentParts | DocumentExtractionFailure> {
-  const entry = await load(fsPath);
+export async function getDocumentParts(
+  fsPath: string,
+  options: DocumentCacheOptions = {},
+): Promise<DocumentParts | DocumentExtractionFailure> {
+  const entry = await load(fsPath, options);
   if (entry.parts) {
     return entry.parts;
   }
@@ -81,17 +110,40 @@ export async function getDocumentParts(fsPath: string): Promise<DocumentParts | 
   return entry.parts;
 }
 
-async function load(fsPath: string): Promise<CacheEntry> {
+/**
+ * Forget what is cached for `fsPath` (or everything). Use it when the user
+ * retries a document that failed: a parse failure otherwise stands until its TTL
+ * runs out, and a retry the user asked for should actually re-read the file.
+ */
+export function invalidateDocumentCache(fsPath?: string): void {
+  if (fsPath === undefined) {
+    cache.clear();
+    cachedChars = 0;
+    return;
+  }
+  const entry = cache.get(fsPath);
+  if (entry) {
+    cachedChars -= entrySize(entry);
+    cache.delete(fsPath);
+  }
+}
+
+async function load(fsPath: string, options: DocumentCacheOptions): Promise<CacheEntry> {
+  const io = options.io ?? nodeIo;
+  const now = options.now ?? Date.now;
   let key: string;
+  let stats: Stats;
   try {
-    const stats = await stat(fsPath);
+    stats = await io.stat(fsPath);
     key = `${fsPath}:${stats.mtimeMs}:${stats.size}`;
   } catch (error) {
+    // Not cached: the file may well be readable a moment later.
     return { key: "", extraction: { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) } };
   }
 
   const hit = cache.get(fsPath);
-  if (hit?.key === key) {
+  if (hit?.key === key && (hit.expiresAt === undefined || now() < hit.expiresAt) &&
+      !(options.retryFailures && !hit.extraction.ok)) {
     // Refresh recency so the eviction below drops the least recently used file.
     cache.delete(fsPath);
     cache.set(fsPath, hit);
@@ -100,7 +152,6 @@ async function load(fsPath: string): Promise<CacheEntry> {
 
   let extraction: DocumentExtraction;
   try {
-    const stats = await stat(fsPath);
     if (stats.size > MAX_DOCUMENT_BYTES) {
       extraction = {
         ok: false,
@@ -109,18 +160,22 @@ async function load(fsPath: string): Promise<CacheEntry> {
         detail: `${stats.size} bytes exceeds ${MAX_DOCUMENT_BYTES}`,
       };
     } else {
-      const buffer = new Uint8Array(await readFile(fsPath));
+      const buffer = await io.readFile(fsPath);
       extraction = await extractDocumentInWorker(buffer, fsPath);
     }
   } catch (error) {
-    extraction = { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) };
+    // The read itself failed, so this says nothing about the document. Drop any
+    // stale entry and return uncached, leaving the next attempt free to succeed.
+    invalidateDocumentCache(fsPath);
+    return { key: "", extraction: { ok: false, kind: "unknown", reason: "corrupt", detail: errorMessage(error) } };
   }
 
-  if (hit) {
-    cachedChars -= entrySize(hit);
-    cache.delete(fsPath);
-  }
-  const entry: CacheEntry = { key, extraction };
+  invalidateDocumentCache(fsPath);
+  const entry: CacheEntry = {
+    key,
+    extraction,
+    ...(extraction.ok ? {} : { expiresAt: now() + FAILURE_TTL_MS }),
+  };
   cache.set(fsPath, entry);
   cachedChars += entrySize(entry);
   evict();
@@ -204,7 +259,7 @@ function entrySize(entry: CacheEntry): number {
 
 function evict(): void {
   for (const [path, entry] of cache) {
-    if (cachedChars <= MAX_CACHED_CHARS || cache.size <= 1) {
+    if ((cachedChars <= MAX_CACHED_CHARS && cache.size <= MAX_CACHE_ENTRIES) || cache.size <= 1) {
       return;
     }
     cache.delete(path);
