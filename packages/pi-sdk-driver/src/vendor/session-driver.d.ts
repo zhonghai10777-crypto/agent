@@ -31,6 +31,7 @@ declare module "@pi-gui/session-driver" {
 
   export interface SessionQueuedMessage {
     readonly id: string;
+    readonly generation?: number;
     readonly mode: SessionMessageDeliveryMode;
     readonly text: string;
     readonly attachments?: readonly SessionAttachment[];
@@ -56,10 +57,12 @@ declare module "@pi-gui/session-driver" {
     readonly runningRunId?: RunId;
     readonly queuedMessages?: readonly SessionQueuedMessage[];
     readonly contextUsage?: SessionContextUsage;
+    readonly vision?: import("@pi-gui/session-driver/vision-types").VisionProgress;
   }
 
   export interface SessionImageAttachment {
     readonly kind: "image";
+    readonly id?: string;
     readonly mimeType: string;
     readonly data: string;
     readonly name?: string;
@@ -99,6 +102,8 @@ declare module "@pi-gui/session-driver" {
   }
 
   export interface SessionMessageInput {
+    readonly clientMessageId?: string;
+    readonly generation?: number;
     readonly text: string;
     readonly attachments?: readonly SessionAttachment[];
     readonly deliverAs?: SessionMessageDeliveryMode;

@@ -14,6 +14,10 @@
       "types": "./dist/types.d.ts",
       "default": "./dist/types.js"
     },
+    "./vision-types": {
+      "types": "./dist/vision-types.d.ts",
+      "default": "./dist/vision-types.js"
+    },
     "./runtime-types": {
       "types": "./dist/runtime-types.d.ts",
       "default": "./dist/runtime-types.js"
