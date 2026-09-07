@@ -79,6 +79,88 @@ The default repository remains `zhonghai10777-crypto/agent` for existing users.
 Anonymous updates require a publicly readable distribution repository; without
 one, private-repository checks report an access error rather than “up to date”.
 
+## DeepSeek image assistance
+
+Official DeepSeek `deepseek-v4-pro` and `deepseek-v4-flash` text sessions can analyze
+attached images with `deepseek-v4-flash-vision-exp`, then answer with the original
+primary model, thinking level, context and tools. Settings → Models controls
+**Automatic image analysis**, shows the auxiliary model and account source, and
+offers local configuration validation or a confirmed small-image connection test.
+The connection image test and normal image analysis add provider usage.
+
+Routing checks the selected provider configuration and the normalized official
+HTTPS endpoint. Credentials come from that same configuration. Auxiliary requests
+always go to `https://api.deepseek.com/chat/completions`; custom endpoints cannot
+borrow another provider's key. Image-capable primary models keep their native
+image path. Global Pi `images.blockImages` takes precedence. Disabled, unsupported,
+invalid, unauthorized or failed images block the text-model request and retain
+the original message for an explicit retry.
+
+Original images stay in the Pi session. Only the outgoing context is projected to
+validated textual evidence. Evidence, stable entry/image bindings, status and
+separate auxiliary usage are saved atomically under the profile's `vision-records`
+directory. Existing session JSONL and older snapshots remain readable. Opening a
+session never starts recognition; missing evidence is filled when a model request
+needs it. Restarted unfinished work is marked interrupted and requires an explicit
+retry, because the server may already have received the previous request.
+
+Queue edits are applied before recognition at dequeue time. Stop cancels waiting
+work, image HTTP requests and the primary-model handoff. Retry continues an
+accepted Pi turn without appending another user message. Models and thinking
+levels are frozen while a turn runs. Forks and tree navigation expose only images
+in the active branch. Manual/automatic compaction and branch summaries consume
+the same evidence; authorized originals remain available to `inspect_images`.
+This read-only tool supports a specific follow-up question and an optional
+normalized crop without allowing arbitrary paths or URLs. Plan and Light retain
+their existing restrictions on commands, file writes and child agents.
+
+Images are decoded in a cancellable worker after byte/header limits are checked.
+Supported static formats are PNG, JPEG, WebP and GIF; animated images require
+conversion to a static frame. Defaults are eight images per message, 10 MiB per
+image, 20 MiB per message, a 32 MiB serialized body, 8192 pixels per dimension and
+20 megapixels. Requests are serialized across sessions. A turn's automatic image
+work shares three total attempts and a 180-second deadline starting at its first
+recognition; each attempt is limited to 60 seconds. Structure repair and output
+expansion consume that same budget. Already saved evidence remains usable after
+the deadline. A very large backlog may require an explicit retry to fill its
+remaining images; successful partial work is retained. A distinct `inspect_images`
+call starts its own bounded operation.
+
+Compatibility remains pinned to Pi 0.84.4. Image routing wraps the session's
+existing stream function and preserves its payload transforms. Accepted-message
+retry uses the verified Pi runner through a version-guarded `pi-compat` adapter;
+upgrade this contract and its SDK tests together when changing Pi versions.
+
+Feature-scoped checks (no complete core suite):
+
+```bash
+pnpm --filter @pi-gui/desktop build
+pnpm --filter @pi-gui/desktop typecheck
+pnpm --filter @pi-gui/pi-sdk-driver exec node --test test/vision-client.test.mts test/vision-router.test.mts test/vision-stream-adapter.test.mts test/vision-sdk-contract.test.mts
+pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/unit/vision-store.spec.ts apps/desktop/tests/unit/vision-image.spec.ts
+pnpm --filter @pi-gui/desktop run test:e2e:runner -- apps/desktop/tests/core/vision-routing.spec.ts
+```
+
+The Electron tests use isolated profiles, synthetic credentials and a local HTTP
+server, validating real serialized provider bodies and the actual image worker.
+They do not prove live DeepSeek availability. The small-image live contract is
+skipped unless `PI_APP_TEST_LIVE_VISION=1` and a dedicated test account key is
+provided through `PI_APP_TEST_VISION_API_KEY`:
+
+```bash
+pnpm --filter @pi-gui/pi-sdk-driver exec node --test test/vision-live.test.mts
+```
+
+The manually dispatched **DeepSeek Vision Windows** workflow builds the actual
+Windows installer and portable package, checks packaged dependencies and launches
+`win-unpacked/agent.exe` from a Chinese path for image/Stop/retry/reopen coverage.
+It does not publish a release. A local Windows run uses `pnpm package:win`,
+`pnpm --dir apps/desktop run verify:packaged-runtime-deps:windows`, then the
+`tests/production/vision-routing-packaged.spec.ts` Playwright spec with
+`PI_APP_TEST_PACKAGED_VISION=1`. The packaged test retains its copied installation
+outside the report directory. Ordinary-user installation without development
+dependencies is a separate release acceptance step.
+
 ## Test Lanes
 
 Use the smallest lane that matches the changed surface.
