@@ -139,6 +139,12 @@ export class RuntimeSupervisor implements RuntimeResourceDriver {
     return this.buildSnapshot(context);
   }
 
+  async imagesAllowed(workspace: WorkspaceRef): Promise<boolean> {
+    const context = await this.ensureContext(workspace);
+    context.settingsManager.reload();
+    return !context.settingsManager.getBlockImages();
+  }
+
   async refreshRuntime(workspace: WorkspaceRef): Promise<RuntimeSnapshot> {
     const context = await this.ensureContext(workspace);
     context.settingsManager.reload();

@@ -78,3 +78,43 @@ test("reinstallation unwraps once; native vision streams retain identity", () =>
   dispose();
   assert.equal(session.agent.streamFunction, original);
 });
+
+test("original model error and mid-stream cancellation both terminate the wrapped SDK stream", async () => {
+  for (const cancel of [false, true]) {
+    const f = fixture();
+    const controller = new AbortController();
+    const message = { ...assistant(), stopReason: "error", errorMessage: "Primary provider rejected this request" };
+    const session = { agent: { streamFunction: () => {
+      const stream = createAssistantMessageEventStream();
+      stream.push({ type: "start", partial: message });
+      if (!cancel) stream.push({ type: "error", reason: "error", error: message });
+      return stream;
+    } } };
+    const dispose = installVisionStreamAdapter(session, f.router, f.binding);
+    const stream = await session.agent.streamFunction(model, { messages: [{ role: "user", content: "Only text", timestamp: 1 }] }, { signal: controller.signal });
+    const events = [];
+    for await (const event of stream) { events.push(event.type); if (cancel && event.type === "start") controller.abort(); }
+    assert.deepEqual(events, ["start", "error"]);
+    const result = await stream.result();
+    assert.equal(result.stopReason, cancel ? "aborted" : "error");
+    if (!cancel) assert.equal(result.errorMessage, message.errorMessage);
+    assert.equal(f.calls.length, 0);
+    dispose();
+  }
+});
+
+test("final onPayload transforms cannot reintroduce images before HTTP serialization", async () => {
+  const f = fixture();
+  let httpRequests = 0;
+  const session = { agent: { streamFunction: async (_model, context, options) => {
+    await options.onPayload({ messages: context.messages }, model);
+    httpRequests++;
+    return createAssistantMessageEventStream();
+  } } };
+  const dispose = installVisionStreamAdapter(session, f.router, f.binding);
+  const stream = await session.agent.streamFunction(model, { messages: [f.user()] }, { onPayload: (payload) => ({ ...payload, input: [], messages: [{ role: "user", content: [{ type: "input_image", file_id: "opaque-image" }] }] }) });
+  for await (const _ of stream) { /* consume to terminal */ }
+  assert.equal((await stream.result()).stopReason, "error");
+  assert.equal(httpRequests, 0);
+  dispose();
+});

@@ -34,6 +34,7 @@ export interface VisionClientInput {
   readonly budget: VisionRequestBudget;
   readonly signal: AbortSignal;
   readonly onAttempt?: (budget: VisionRequestBudget) => Promise<void>;
+  readonly onRequest?: () => void | Promise<void>;
   readonly onUsage?: (usage: VisionUsage | undefined) => Promise<void>;
 }
 
@@ -127,13 +128,18 @@ export class VisionClient {
       const attempt = combineVisionSignal([signal], Math.min(settings.attemptTimeoutMs, budget.deadline - this.now()));
       let failure: VisionError;
       try {
-        const response = await raceVisionAbort(this.fetchImpl(VISION_ENDPOINT, {
+        const pendingResponse = raceVisionAbort(this.fetchImpl(VISION_ENDPOINT, {
           method: "POST",
           headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
           body,
           signal: attempt.signal,
           redirect: "error",
         }), attempt.signal);
+        // Record attempted HTTP requests even if the connection later fails or
+        // is cancelled and the server's usage can no longer be determined.
+        void pendingResponse.catch(() => {});
+        await input.onRequest?.();
+        const response = await pendingResponse;
         if (!response.ok) {
           await response.body?.cancel();
           throw classifyVisionHttpError(response.status, response.headers.get("retry-after"), this.now());
