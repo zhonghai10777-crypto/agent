@@ -22,6 +22,38 @@ function gitBashProbe(): GitBashProbe {
   return { registryInstallPaths: () => [root], gitExecutableFromPath: () => undefined };
 }
 
+/**
+ * Repoints the well-known install roots at empty dirs so only `probe` decides
+ * detection. Detection falls back to the real `process.env`, so on a machine
+ * (or CI runner) with a stock `%ProgramFiles%\Git` install the "no Git Bash"
+ * expectations would otherwise see a real bash.exe no matter what the probe says.
+ */
+function withoutRealGitInstall(run: () => void): void {
+  const emptyRoot = mkdtempSync(join(tmpdir(), "no-real-git-install-"));
+  const saved: Array<[string, string | undefined]> = [
+    ["ProgramFiles", process.env.ProgramFiles],
+    ["ProgramFiles(x86)", process.env["ProgramFiles(x86)"]],
+    ["LocalAppData", process.env.LocalAppData],
+    ["PI_GIT_BASH", process.env.PI_GIT_BASH],
+  ];
+  process.env.ProgramFiles = emptyRoot;
+  process.env["ProgramFiles(x86)"] = join(emptyRoot, "x86");
+  process.env.LocalAppData = join(emptyRoot, "appdata");
+  delete process.env.PI_GIT_BASH;
+  try {
+    run();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = value;
+      }
+    }
+    resetGitBashDetectionCache();
+  }
+}
+
 /** `sessionToolNames` branches on `process.platform`, so both branches are reachable from any host. */
 function withPlatform(platform: string, run: () => void): void {
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
@@ -34,10 +66,12 @@ function withPlatform(platform: string, run: () => void): void {
 
 test("Windows sessions fall back to pi's powershell tool when no Git Bash exists", () => {
   withPlatform("win32", () => {
-    resetGitBashDetectionCache();
-    const names = sessionToolNames(noGitBashProbe);
-    assert.deepEqual(names, ["read", "powershell", "edit", "write"]);
-    assert.ok(!names?.includes("bash"), "without Git Bash a session must not activate the POSIX-only bash tool");
+    withoutRealGitInstall(() => {
+      resetGitBashDetectionCache();
+      const names = sessionToolNames(noGitBashProbe);
+      assert.deepEqual(names, ["read", "powershell", "edit", "write"]);
+      assert.ok(!names?.includes("bash"), "without Git Bash a session must not activate the POSIX-only bash tool");
+    });
   });
 });
 
@@ -69,10 +103,12 @@ test("light mode stays command-free whichever shell the platform activates", () 
 test("every tool name we activate is one pi registers", { skip: !onWindows }, () => {
   // Guards against pi renaming a tool: the string above would then silently
   // activate nothing, leaving Windows sessions with no shell at all.
-  resetGitBashDetectionCache();
-  const powershellNames = sessionToolNames(noGitBashProbe);
-  assert.equal(createPowerShellToolDefinition(process.cwd()).name, "powershell");
-  assert.ok(powershellNames?.includes("powershell"));
+  withoutRealGitInstall(() => {
+    resetGitBashDetectionCache();
+    const powershellNames = sessionToolNames(noGitBashProbe);
+    assert.equal(createPowerShellToolDefinition(process.cwd()).name, "powershell");
+    assert.ok(powershellNames?.includes("powershell"));
+  });
 
   resetGitBashDetectionCache();
   assert.equal(sessionToolNames(gitBashProbe()), undefined);
