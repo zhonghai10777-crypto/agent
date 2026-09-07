@@ -74,6 +74,7 @@
     "test:prod:open-folder-real": "pnpm build && cross-env PI_APP_TEST_MODE=foreground pnpm --dir ../.. exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/open-folder-real.spec.ts"
   },
   "dependencies": {
+    "@earendil-works/pi-ai": "0.84.4",
     "@anthropic-ai/sdk": "0.91.1",
     "@aws-crypto/sha256-browser": "5.2.0",
     "@aws-crypto/sha256-js": "5.2.0",

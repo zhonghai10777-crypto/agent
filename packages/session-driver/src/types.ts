@@ -1,3 +1,5 @@
+import type { VisionProgress } from "./vision-types.js";
+
 export type WorkspaceId = string;
 export type SessionId = string;
 export type RunId = string;
@@ -20,6 +22,7 @@ export type SessionMessageDeliveryMode = "steer" | "followUp";
 
 export interface SessionQueuedMessage {
   readonly id: string;
+  readonly generation?: number;
   readonly mode: SessionMessageDeliveryMode;
   readonly text: string;
   readonly attachments?: readonly SessionAttachment[];
@@ -50,10 +53,12 @@ export interface SessionSnapshot {
   readonly runningRunId?: RunId;
   readonly queuedMessages?: readonly SessionQueuedMessage[];
   readonly contextUsage?: SessionContextUsage;
+  readonly vision?: VisionProgress;
 }
 
 export interface SessionImageAttachment {
   readonly kind: "image";
+  readonly id?: string;
   readonly mimeType: string;
   readonly data: string;
   readonly name?: string;
@@ -160,6 +165,8 @@ export interface SessionModelSelection {
 }
 
 export interface SessionMessageInput {
+  readonly clientMessageId?: string;
+  readonly generation?: number;
   readonly text: string;
   readonly attachments?: readonly SessionAttachment[];
   readonly deliverAs?: SessionMessageDeliveryMode;

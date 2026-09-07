@@ -68,3 +68,4 @@ export type {
 } from "./runtime-types.js";
 
 export { DEFAULT_PERMISSION_MODE } from "./types.js";
+export * from "./vision-types.js";
