@@ -6,6 +6,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
   useState,
+  useRef,
 } from "react";
 import {
   type ComposerImageAttachment,
@@ -58,6 +59,7 @@ export function useSessionComposer(params: UseSessionComposerParams) {
   } = params;
 
   const [attachmentsClearedOnSubmit, setAttachmentsClearedOnSubmit] = useState(false);
+  const submitting = useRef(new Set<string>());
   const composerAttachments = attachmentsClearedOnSubmit ? [] : (snapshot?.composerAttachments ?? []);
 
   const submitComposerDraft = (options: { readonly deliverAs?: "steer" | "followUp" } = {}) => {
@@ -71,7 +73,8 @@ export function useSessionComposer(params: UseSessionComposerParams) {
       return;
     }
 
-    if (!hasComposerInput) {
+    const submissionKey = JSON.stringify([selectedSession.id, composerDraft, composerAttachments.map((attachment) => attachment.id)]);
+    if (!hasComposerInput || submitting.current.has(submissionKey)) {
       return;
     }
     if (requiresModelSelection) {
@@ -96,23 +99,25 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     }
 
     const previousDraft = composerDraft;
+    submitting.current.add(submissionKey);
     setComposerDraft("");
     setAttachmentsClearedOnSubmit(true);
     void (async () => {
       const nextState = await updateSnapshot(api, setSnapshot, () =>
-        api.submitComposer(previousDraft, selectedSession.status === "running" ? { deliverAs: options.deliverAs ?? "followUp" } : undefined),
+        api.submitComposer(previousDraft, { clientMessageId: crypto.randomUUID(), ...(selectedSession.status === "running" ? { deliverAs: options.deliverAs ?? "followUp" } : {}) }),
       );
       // Only apply the resolved draft if the user hasn't typed into the composer during the
       // in-flight submit; otherwise their new input would be clobbered.
       if (composerDraftRef.current === "") {
         setComposerDraft(nextState.composerDraft);
       }
-      setAttachmentsClearedOnSubmit(false);
     })().catch(() => {
       if (composerDraftRef.current === "") {
         setComposerDraft(previousDraft);
       }
-      setAttachmentsClearedOnSubmit(false);
+    }).finally(() => {
+      submitting.current.delete(submissionKey);
+      if (submitting.current.size === 0) setAttachmentsClearedOnSubmit(false);
     });
   };
 

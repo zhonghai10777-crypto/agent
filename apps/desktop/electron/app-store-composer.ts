@@ -278,6 +278,7 @@ export async function submitComposer(
   options: {
     readonly deliverAs?: "steer" | "followUp";
     readonly allowCommands?: boolean;
+    readonly clientMessageId?: string;
   } = {},
 ): Promise<DesktopAppState> {
   await store.initialize();
@@ -304,6 +305,7 @@ export async function submitComposerToSession(
   options: {
     readonly deliverAs?: "steer" | "followUp";
     readonly allowCommands?: boolean;
+    readonly clientMessageId?: string;
   } = {},
 ): Promise<DesktopAppState> {
   const text = textInput.trim();
@@ -359,6 +361,7 @@ export async function submitComposerToSession(
         text,
         attachments,
         mode: deliverAs,
+        clientMessageId: options.clientMessageId,
       });
       const nextQueuedMessages = editingState
         ? replaceQueuedComposerMessage(
@@ -390,7 +393,7 @@ export async function submitComposerToSession(
       });
     }
 
-    await sendMessageToSession(store, sessionRef, text, attachments);
+    await sendMessageToSession(store, sessionRef, text, attachments, { returnAfterStart: !resolvedRuntimeSlashCommand, clientMessageId: options.clientMessageId });
     const runtimeCommandOutcome = resolvedRuntimeSlashCommand
       ? store.finishRuntimeCommandExecution(sessionRef)
       : undefined;
@@ -483,6 +486,8 @@ export async function sendMessageToSession(
   attachments: readonly ComposerAttachment[],
   options: {
     readonly rollbackOptimisticMessageOnError?: boolean;
+    readonly returnAfterStart?: boolean;
+    readonly clientMessageId?: string;
   } = {},
 ): Promise<void> {
   const key = sessionKey(sessionRef);
@@ -498,6 +503,7 @@ export async function sendMessageToSession(
     sessionRef,
     text,
     toTranscriptAttachments(attachments),
+    options.clientMessageId,
   );
   store.publishSelectedTranscriptFor(sessionRef);
   clearActiveAssistantMessage(store.sessionState.activeAssistantMessageBySession, sessionRef);
@@ -506,10 +512,17 @@ export async function sendMessageToSession(
   store.sessionState.composerAttachmentsBySession.delete(key);
   await store.persistComposerAttachments(key, []);
   try {
-    await store.driver.sendUserMessage(sessionRef, {
+    const input = {
       text,
+      clientMessageId: optimisticMessageId,
       attachments: await withDocumentText(toSessionAttachments(attachments)),
-    });
+    };
+    if (options.returnAfterStart) {
+      const { completion } = await store.driver.startUserMessage(sessionRef, input);
+      void completion.catch((error) => store.withSessionError(sessionRef, error));
+    } else {
+      await store.driver.sendUserMessage(sessionRef, input);
+    }
   } catch (error) {
     if (rollbackOptimisticMessageOnError) {
       const transcript = store.sessionState.transcriptCache.get(key) ?? [];
@@ -528,13 +541,15 @@ function buildQueuedComposerMessage(options: {
   readonly attachments: readonly ComposerAttachment[];
   readonly mode: "steer" | "followUp";
   readonly existing?: QueuedComposerMessage;
+  readonly clientMessageId?: string;
 }): QueuedComposerMessage {
   const timestamp = new Date().toISOString();
   return {
-    id: options.existing?.id ?? randomUUID(),
+    id: options.existing?.id ?? options.clientMessageId ?? randomUUID(),
     text: options.text,
     mode: options.mode,
     attachments: cloneComposerAttachments(options.attachments),
+    generation: (options.existing?.generation ?? -1) + 1,
     createdAt: options.existing?.createdAt ?? timestamp,
     updatedAt: timestamp,
   };

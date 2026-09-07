@@ -10,6 +10,7 @@ import {
   type ComposerSlashOptionEmptyState,
 } from "./composer-commands";
 import { ComposerSurface } from "./composer-surface";
+import { VisionUploadNotice } from "./vision-ui";
 import { ModelOnboardingNoticeBanner } from "./model-onboarding-notice";
 import type { ModelOnboardingState, ModelOnboardingSettingsSection } from "./model-onboarding";
 import { ModelSelector } from "./model-selector";
@@ -166,7 +167,10 @@ export function NewThreadView({
               activeSlashCommand={activeSlashCommand}
               activeSlashCommandMeta={activeSlashCommandMeta}
               topNotice={(
+                <>
                 <ModelOnboardingNoticeBanner notice={modelOnboarding.notice} onOpenSettings={onOpenModelSettings} />
+                <VisionUploadNotice modelId={modelId} attachments={attachments} />
+                </>
               )}
               queuedMessages={[]}
               composerDraft={prompt}

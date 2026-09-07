@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
+import type { StoredVisionEvidence, VisionRoutingSettings, VisionSessionView } from "@pi-gui/session-driver/vision-types";
+import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
+import type { SessionRef } from "@pi-gui/session-driver";
 import { PRELOAD_DEV_RELOAD_MARKER } from "./dev-reload-preload-probe";
 import {
   desktopIpc,
@@ -221,6 +224,12 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.probeCustomProviderModels, input) as Promise<CustomProviderProbeResult>,
   getWebToolsSettings: () =>
     ipcRenderer.invoke(desktopIpc.getWebToolsSettings) as Promise<WebToolsSettingsView>,
+  getVisionSettings: () => ipcRenderer.invoke(desktopIpc.getVisionSettings) as Promise<VisionRoutingSettings>,
+  setVisionEnabled: (enabled: boolean) => ipcRenderer.invoke(desktopIpc.setVisionEnabled, enabled) as Promise<VisionRoutingSettings>,
+  getVisionSession: (target: SessionRef) => ipcRenderer.invoke(desktopIpc.getVisionSession, target) as Promise<VisionSessionView>,
+  getVisionEvidence: (target: SessionRef, evidenceId: string) => ipcRenderer.invoke(desktopIpc.getVisionEvidence, target, evidenceId) as Promise<StoredVisionEvidence>,
+  retryVision: (target: SessionRef, sourceMessageId: string) => ipcRenderer.invoke(desktopIpc.retryVision, target, sourceMessageId) as Promise<void>,
+  testVisionConnection: (input: VisionConnectionTestInput) => ipcRenderer.invoke(desktopIpc.testVisionConnection, input) as Promise<VisionConnectionTestResult>,
   setWebToolsSettings: (settings: WebToolsSettingsUpdate) =>
     ipcRenderer.invoke(desktopIpc.setWebToolsSettings, settings) as Promise<WebToolsSettingsView>,
   testWebSearch: (query: string) =>
@@ -309,7 +318,7 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.invoke(desktopIpc.steerQueuedComposerMessage, messageId) as Promise<DesktopAppState>,
   updateComposerDraft: (composerDraft: string) =>
     ipcRenderer.invoke(desktopIpc.updateComposerDraft, composerDraft) as Promise<DesktopAppState>,
-  submitComposer: (text: string, options?: { readonly deliverAs?: "steer" | "followUp" }) =>
+  submitComposer: (text: string, options?: { readonly deliverAs?: "steer" | "followUp"; readonly clientMessageId?: string }) =>
     ipcRenderer.invoke(desktopIpc.submitComposer, text, options) as Promise<DesktopAppState>,
   getSessionTree: (target: WorkspaceSessionTarget) =>
     ipcRenderer.invoke(desktopIpc.getSessionTree, target) as Promise<SessionTreeSnapshot>,

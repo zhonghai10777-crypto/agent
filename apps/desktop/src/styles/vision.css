@@ -1,0 +1,22 @@
+.vision-upload-notice {
+  margin: 4px 0 10px;
+  padding: 8px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+  border-left: 2px solid var(--border);
+}
+.vision-status { margin-top: 10px; font-size: 12px; line-height: 1.5; }
+.vision-status__line { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.vision-status .timeline-item__action { opacity: 1; font-size: 12px; }
+.vision-status__models, .vision-usage { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.vision-usage { margin: 4px 16px; text-align: right; }
+.vision-status__error, .vision-status--error { color: var(--muted-strong); margin: 6px 0; }
+.vision-evidence { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); max-height: 420px; overflow: auto; }
+.vision-evidence p { margin: 6px 0; }
+.vision-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.vision-evidence section + section { margin-top: 14px; border-top: 1px solid var(--border); }
+.vision-evidence__table { overflow-x: auto; }
+.vision-evidence table { border-collapse: collapse; text-align: left; }
+.vision-evidence th, .vision-evidence td { padding: 4px 8px; border: 1px solid var(--border); }
+.vision-evidence__uncertainties { margin-top: 8px; }

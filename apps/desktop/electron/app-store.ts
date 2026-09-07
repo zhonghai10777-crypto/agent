@@ -136,7 +136,7 @@ export interface DesktopAppStoreOptions {
   readonly shouldKeepSessionDialogs?: (sessionRef: SessionRef) => boolean;
   readonly driverOptions?: Pick<
     PiSdkDriverConfig,
-    "extensionFactories" | "inlineExtensionMetadata" | "credentialStore" | "noExtensions" | "noSkills" | "runtimeMode"
+    "extensionFactories" | "inlineExtensionMetadata" | "credentialStore" | "noExtensions" | "noSkills" | "runtimeMode" | "visionServices"
   >;
   readonly generateThreadTitleOverride?: (
     workspace: WorkspaceRef,
@@ -717,7 +717,7 @@ export class DesktopAppStore implements AppStoreInternals {
 
   async submitComposer(
     textInput: string,
-    options?: { readonly deliverAs?: "steer" | "followUp" },
+    options?: { readonly deliverAs?: "steer" | "followUp"; readonly clientMessageId?: string },
   ): Promise<DesktopAppState> {
     return composer.submitComposer(this, textInput, options);
   }
@@ -1599,6 +1599,7 @@ export class DesktopAppStore implements AppStoreInternals {
         this.sessionState.lastViewedAtBySession,
         this.sessionState.pinnedAtBySession,
         this.personalWorkspacePath,
+        this.sessionState.visionBySession,
       );
       const worktreesByWorkspace = buildWorktreeRecords(workspacesSnapshot.workspaces, worktreeEntries);
       const liveWorkspaceIds = new Set(workspaces.map((w) => w.id));
@@ -1760,6 +1761,7 @@ export class DesktopAppStore implements AppStoreInternals {
       snapshot = await this.driver.openSession(sessionRef);
       this.updateSessionConfig(sessionRef, snapshot.config);
       this.updateSessionContextUsage(sessionRef, snapshot.contextUsage);
+      if (snapshot.vision) this.sessionState.visionBySession.set(sessionKey(sessionRef), snapshot.vision);
     }
     await this.ensureSessionSubscribed(sessionRef);
     await this.refreshSessionCommands(sessionRef);
@@ -1771,6 +1773,7 @@ export class DesktopAppStore implements AppStoreInternals {
       const snapshot = await this.driver.openSession(sessionRef);
       this.updateSessionConfig(sessionRef, snapshot.config);
       this.updateSessionContextUsage(sessionRef, snapshot.contextUsage);
+      if (snapshot.vision) this.sessionState.visionBySession.set(sessionKey(sessionRef), snapshot.vision);
       this.updateQueuedComposerMessages(sessionRef, snapshot.queuedMessages);
     }
     await this.ensureSessionSubscribed(sessionRef);
@@ -2498,12 +2501,14 @@ export class DesktopAppStore implements AppStoreInternals {
         case "runCompleted":
           this.updateSessionConfig(event.sessionRef, event.snapshot.config);
           this.updateSessionContextUsage(event.sessionRef, event.snapshot.contextUsage);
+          if (event.snapshot.vision) this.sessionState.visionBySession.set(sessionKey(event.sessionRef), event.snapshot.vision);
           this.updateQueuedComposerMessages(event.sessionRef, event.snapshot.queuedMessages);
           await this.refreshSessionCommands(event.sessionRef);
           break;
         case "sessionUpdated":
           this.updateSessionConfig(event.sessionRef, event.snapshot.config);
           this.updateSessionContextUsage(event.sessionRef, event.snapshot.contextUsage);
+          if (event.snapshot.vision) this.sessionState.visionBySession.set(sessionKey(event.sessionRef), event.snapshot.vision);
           this.updateQueuedComposerMessages(event.sessionRef, event.snapshot.queuedMessages);
           if (event.snapshot.status !== "running") {
             this.refreshSessionCommandsCoalesced(event.sessionRef);

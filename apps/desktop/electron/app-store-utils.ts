@@ -46,6 +46,7 @@ export function buildWorkspaceRecords(
   lastViewedAtBySession: Map<string, string>,
   pinnedAtBySession: Map<string, string>,
   personalWorkspacePath?: string,
+  visionBySession?: ReadonlyMap<string, import("@pi-gui/session-driver/vision-types").VisionProgress>,
 ): WorkspaceRecord[] {
   const workspaceRoots = resolveWorkspaceRoots(workspaces, worktrees);
 
@@ -75,7 +76,7 @@ export function buildWorkspaceRecords(
       sessions: sessions
         .filter((session) => session.workspaceId === workspace.workspaceId)
         .map((session) =>
-          buildSessionRecord(
+          ({ ...buildSessionRecord(
             session,
             transcriptCache,
             runningSinceBySession,
@@ -83,7 +84,7 @@ export function buildWorkspaceRecords(
             contextUsageBySession,
             lastViewedAtBySession,
             pinnedAtBySession,
-          ),
+          ), ...(visionBySession?.has(sessionKey(session.sessionRef)) ? { vision: visionBySession.get(sessionKey(session.sessionRef)) } : {}) }),
         ),
     };
   });
@@ -352,6 +353,7 @@ export function toSessionQueuedMessages(
 ): SessionQueuedMessage[] {
   return messages.map((message) => ({
     id: message.id,
+    ...(message.generation !== undefined ? { generation: message.generation } : {}),
     mode: message.mode,
     text: message.text,
     ...(message.attachments.length > 0
@@ -377,6 +379,7 @@ export function mergeQueuedComposerMessages(
     const existing = previousById.get(message.id);
     return {
       id: message.id,
+      ...(message.generation !== undefined ? { generation: message.generation } : {}),
       mode: message.mode,
       text: message.text,
       attachments: mergeQueuedComposerAttachments(existing?.attachments, message.attachments, message.id),
@@ -395,12 +398,14 @@ export function toTranscriptAttachments(
 }
 
 function toImageAttachmentPayload({
+  id,
   data,
   mimeType,
   name,
 }: Extract<ComposerAttachment, { readonly kind: "image" }>) {
   return {
     kind: "image" as const,
+    id,
     data,
     mimeType,
     name,

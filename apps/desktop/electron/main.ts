@@ -16,6 +16,9 @@ import {
 } from "electron";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
+import { VisionService } from "./vision-service";
+import { createImageInspectionRuntimeExtension } from "./image-inspection-runtime";
+import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -1343,7 +1346,10 @@ app.whenReady().then(async () => {
   // models.json) into the encrypted store and scrub the plaintext. Safe no-op
   // once secure-keys.json already covers every provider.
   secureAuthStorageBackend.migratePlaintextKeys();
+  const visionService = new VisionService(configuredUserDataDir);
+  await visionService.initialize();
   const driverOptions = {
+    visionServices: visionService.dependencies,
     runtimeMode: initialRuntimeMode,
     noExtensions: initialRuntimeMode === "light",
     noSkills: initialRuntimeMode === "light",
@@ -1351,6 +1357,7 @@ app.whenReady().then(async () => {
       // Reads settings lazily on each tool call, so toggling web access or
       // changing the key takes effect without restarting the app.
       createWebRuntimeExtension(readWebToolsSettings),
+      createImageInspectionRuntimeExtension((ctx, input, signal) => store.driver.inspectImages(sessionRefFromExtensionContext(ctx), input, signal)),
       createLibraryRuntimeExtension(() => libraryStore.read(), libraryIndex),
       // Same lazy read, and scoped per call: extensions are built once per
       // workspace, so the calling session decides what is reachable.
@@ -1378,6 +1385,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Web access",
         description: "Search the web and read pages from the conversation",
+      },
+      {
+        displayName: "Image inspection",
+        description: "Read authorized images and cropped regions as visual evidence",
       },
       {
         displayName: "Document reading",
@@ -1636,6 +1647,46 @@ app.whenReady().then(async () => {
     probeCustomProviderModels(input, (providerId) => store.getCustomProviderApiKey(providerId)),
   );
   ipcMain.handle(desktopIpc.getWebToolsSettings, readWebToolsSettingsView);
+  const visionWindow = (event: IpcMainInvokeEvent) => {
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window || !canPublishToWindow(window)) throw new Error("The image request must come from an application window.");
+    return window;
+  };
+  const visionTarget = (event: IpcMainInvokeEvent, target: SessionRef): SessionRef => {
+    visionWindow(event);
+    const view = windowViews.get(event.sender.id);
+    if (!view || view.selectedWorkspaceId !== target?.workspaceId || view.selectedSessionId !== target?.sessionId) throw new Error("The image request does not belong to this window's selected session.");
+    return { workspaceId: target.workspaceId, sessionId: target.sessionId };
+  };
+  ipcMain.handle(desktopIpc.getVisionSettings, (event) => { visionWindow(event); return visionService.readSettings(); });
+  ipcMain.handle(desktopIpc.setVisionEnabled, (event, enabled: boolean) => { visionWindow(event); return visionService.setEnabled(enabled); });
+  ipcMain.handle(desktopIpc.getVisionSession, (event, target: SessionRef) => store.driver.getVisionSession(visionTarget(event, target)));
+  ipcMain.handle(desktopIpc.getVisionEvidence, (event, target: SessionRef, evidenceId: string) => {
+    if (typeof evidenceId !== "string" || evidenceId.length > 128) throw new Error("Invalid image evidence ID.");
+    return store.driver.getVisionEvidence(visionTarget(event, target), evidenceId);
+  });
+  ipcMain.handle(desktopIpc.retryVision, (event, target: SessionRef, sourceMessageId: string) => {
+    const ref = visionTarget(event, target);
+    if (typeof sourceMessageId !== "string" || sourceMessageId.length > 128) throw new Error("Invalid image message ID.");
+    // Capture the owner now; a later window/session selection cannot redirect it.
+    void store.driver.retryVision(ref, sourceMessageId).catch((error) => store.withSessionError(ref, error));
+  });
+  ipcMain.handle(desktopIpc.testVisionConnection, async (event, input: VisionConnectionTestInput): Promise<VisionConnectionTestResult> => {
+    const window = visionWindow(event);
+    let requestMade = false;
+    try {
+      if (!input || typeof input.provider !== "string" || typeof input.modelId !== "string") throw new Error("Select an official DeepSeek Pro or Flash model first.");
+      const workspaceId = windowViews.get(event.sender.id)?.selectedWorkspaceId;
+      const workspace = (await store.driver.listWorkspaces()).workspaces.find((entry) => entry.workspaceId === workspaceId);
+      if (!workspace || !await store.driver.runtimeSupervisor.imagesAllowed(workspace)) throw new Error("Image uploads are disabled in the runtime settings.");
+      await store.driver.validateVisionConnection(input);
+      if (!input.performRequest) return { ok: true, requestMade: false };
+      const confirmation = await dialog.showMessageBox(window, { type: "question", title: tGlobal("vision.testTitle"), message: tGlobal("vision.testConfirm"), buttons: [tGlobal("vision.testSend"), tGlobal("common.cancel")], defaultId: 1, cancelId: 1 });
+      if (confirmation.response !== 0) return { ok: true, requestMade: false };
+      const usage = await store.driver.testVisionConnection(input, () => { requestMade = true; });
+      return { ok: true, requestMade: true, ...(usage ? { usage } : {}) };
+    } catch (error) { return { ok: false, requestMade, error: error instanceof Error ? error.message : "Image connection test failed." }; }
+  });
   ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
     const current = webToolsStore.read();
     const incoming = (update ?? {}) as Record<string, unknown>;
@@ -1884,7 +1935,7 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle(
     desktopIpc.submitComposer,
-    (event, text: string, options?: { readonly deliverAs?: "steer" | "followUp" }) =>
+    (event, text: string, options?: { readonly deliverAs?: "steer" | "followUp"; readonly clientMessageId?: string }) =>
       runWindowScopedForEvent(event, () => store.submitComposer(text, options)),
   );
   ipcMain.handle(desktopIpc.getSessionTree, (_event, target: WorkspaceSessionTarget) =>

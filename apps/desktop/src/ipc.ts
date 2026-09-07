@@ -1,4 +1,5 @@
 import type { RuntimeSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
+import type { StoredVisionEvidence, VisionRoutingSettings, VisionSessionView, VisionUsage } from "@pi-gui/session-driver/vision-types";
 import type { WebSearchKeySource, WebSearchProvider } from "./web-search-providers";
 import type {
   NavigateSessionTreeOptions,
@@ -109,6 +110,19 @@ export type WebSearchTestResult =
   | { readonly ok: true; readonly resultCount: number; readonly topResultTitle?: string }
   | { readonly ok: false; readonly error: string };
 
+export interface VisionConnectionTestInput {
+  readonly provider: string;
+  readonly modelId: string;
+  readonly performRequest?: boolean;
+}
+
+export interface VisionConnectionTestResult {
+  readonly ok: boolean;
+  readonly requestMade: boolean;
+  readonly error?: string;
+  readonly usage?: VisionUsage;
+}
+
 export interface LibrarySettingsView {
   readonly enabled: boolean;
   readonly roots: readonly string[];
@@ -193,6 +207,12 @@ export const desktopIpc = {
   deleteCustomProvider: "pi-gui:delete-custom-provider",
   probeCustomProviderModels: "pi-gui:probe-custom-provider-models",
   getWebToolsSettings: "pi-gui:get-web-tools-settings",
+  getVisionSettings: "pi-gui:get-vision-settings",
+  setVisionEnabled: "pi-gui:set-vision-enabled",
+  getVisionSession: "pi-gui:get-vision-session",
+  getVisionEvidence: "pi-gui:get-vision-evidence",
+  retryVision: "pi-gui:retry-vision",
+  testVisionConnection: "pi-gui:test-vision-connection",
   setWebToolsSettings: "pi-gui:set-web-tools-settings",
   testWebSearch: "pi-gui:test-web-search",
   getLibrarySettings: "pi-gui:get-library-settings",
@@ -492,6 +512,12 @@ export interface PiDesktopApi {
   deleteCustomProvider(workspaceId: string, providerId: string): Promise<DesktopAppState>;
   probeCustomProviderModels(input: CustomProviderProbeInput): Promise<CustomProviderProbeResult>;
   getWebToolsSettings(): Promise<WebToolsSettingsView>;
+  getVisionSettings(): Promise<VisionRoutingSettings>;
+  setVisionEnabled(enabled: boolean): Promise<VisionRoutingSettings>;
+  getVisionSession(target: WorkspaceSessionTarget): Promise<VisionSessionView>;
+  getVisionEvidence(target: WorkspaceSessionTarget, evidenceId: string): Promise<StoredVisionEvidence>;
+  retryVision(target: WorkspaceSessionTarget, sourceMessageId: string): Promise<void>;
+  testVisionConnection(input: VisionConnectionTestInput): Promise<VisionConnectionTestResult>;
   setWebToolsSettings(settings: WebToolsSettingsUpdate): Promise<WebToolsSettingsView>;
   testWebSearch(query: string): Promise<WebSearchTestResult>;
   getLibrarySettings(): Promise<LibrarySettingsView>;
@@ -555,7 +581,7 @@ export interface PiDesktopApi {
   removeQueuedComposerMessage(messageId: string): Promise<DesktopAppState>;
   steerQueuedComposerMessage(messageId: string): Promise<DesktopAppState>;
   updateComposerDraft(composerDraft: string): Promise<DesktopAppState>;
-  submitComposer(text: string, options?: { readonly deliverAs?: "steer" | "followUp" }): Promise<DesktopAppState>;
+  submitComposer(text: string, options?: { readonly deliverAs?: "steer" | "followUp"; readonly clientMessageId?: string }): Promise<DesktopAppState>;
   getSessionTree(target: WorkspaceSessionTarget): Promise<SessionTreeSnapshot>;
   navigateSessionTree(
     target: WorkspaceSessionTarget,
