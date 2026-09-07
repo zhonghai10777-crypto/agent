@@ -28,6 +28,7 @@ import {
 import { RuntimeSupervisor, type RuntimeSupervisorOptions } from "./runtime-supervisor.js";
 import { createRuntimeDependencies } from "./runtime-deps.js";
 import { generateThreadTitle, type GenerateThreadTitleOptions } from "./thread-title-generator.js";
+import type { InspectImagesInput, StoredVisionEvidence, VisionSessionView, VisionUsage } from "@pi-gui/session-driver/vision-types";
 
 export interface PiSdkDriverConfig extends PiSdkDriverOptions, RuntimeSupervisorOptions {}
 
@@ -81,6 +82,16 @@ export class PiSdkDriver implements SessionDriver {
   sendUserMessage(sessionRef: SessionRef, input: SessionMessageInput): Promise<void> {
     return this.supervisor.sendUserMessage(sessionRef, input);
   }
+  startUserMessage(sessionRef: SessionRef, input: SessionMessageInput): Promise<{ completion: Promise<void> }> {
+    return this.supervisor.startUserMessage(sessionRef, input);
+  }
+
+  getVisionSession(ref: SessionRef): Promise<VisionSessionView> { return this.supervisor.getVisionSession(ref); }
+  getVisionEvidence(ref: SessionRef, evidenceId: string): Promise<StoredVisionEvidence> { return this.supervisor.getVisionEvidence(ref, evidenceId); }
+  retryVision(ref: SessionRef, sourceMessageId: string): Promise<void> { return this.supervisor.retryVision(ref, sourceMessageId); }
+  inspectImages(ref: SessionRef, input: InspectImagesInput, signal?: AbortSignal): Promise<StoredVisionEvidence> { return this.supervisor.inspectImages(ref, input, signal); }
+  validateVisionConnection(selection: SessionModelSelection): Promise<void> { return this.supervisor.validateVisionConnection(selection); }
+  testVisionConnection(selection: SessionModelSelection, onRequest?: () => void): Promise<VisionUsage | undefined> { return this.supervisor.testVisionConnection(selection, onRequest); }
 
   replaceQueuedMessages(sessionRef: SessionRef, messages: readonly SessionQueuedMessage[]): Promise<void> {
     return this.supervisor.replaceQueuedMessages(sessionRef, messages);

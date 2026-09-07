@@ -49,7 +49,7 @@ export async function raceVisionAbort<T>(work: Promise<T>, signal: AbortSignal):
   }
 }
 
-export function combineVisionSignal(signals: readonly (AbortSignal | undefined)[], timeoutMs: number): { signal: AbortSignal; dispose(): void } {
+export function combineVisionSignal(signals: readonly (AbortSignal | undefined)[], timeoutMs?: number): { signal: AbortSignal; dispose(): void } {
   const controller = new AbortController();
   const listeners: Array<readonly [AbortSignal, () => void]> = [];
   for (const signal of signals) {
@@ -61,12 +61,14 @@ export function combineVisionSignal(signals: readonly (AbortSignal | undefined)[
       listeners.push([signal, abort]);
     }
   }
-  const timer = setTimeout(() => controller.abort(new VisionError("VISION_TIMEOUT", "Image analysis exceeded its time budget.", true)), Math.max(0, timeoutMs));
-  timer.unref?.();
+  const timeout = () => controller.abort(new VisionError("VISION_TIMEOUT", "Image analysis exceeded its time budget.", true));
+  const timer = timeoutMs === undefined ? undefined : setTimeout(timeout, Math.max(0, timeoutMs));
+  if (timeoutMs !== undefined && timeoutMs <= 0) timeout();
+  timer?.unref?.();
   return {
     signal: controller.signal,
     dispose() {
-      clearTimeout(timer);
+      if (timer) clearTimeout(timer);
       for (const [signal, listener] of listeners) signal.removeEventListener("abort", listener);
     },
   };

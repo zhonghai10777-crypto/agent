@@ -18,7 +18,6 @@ import type { SessionCatalogSnapshot, WorkspaceCatalogSnapshot } from "@pi-gui/c
 import type {
   NavigateSessionTreeOptions,
   NavigateSessionTreeResult,
-  SessionMessageDeliveryMode,
   SessionMessageInput,
   SessionQueuedMessage,
   SessionTreeNodeSnapshot,
@@ -109,8 +108,14 @@ import {
 } from "./pi-compat/index.js";
 import { windowsPowerShellEncodingExtensionFactory } from "./windows-powershell-encoding.js";
 import { LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "./windows-shell.js";
+import type { InspectImagesInput, StoredVisionEvidence, VisionProgress, VisionSessionView, VisionSubmission, VisionUsage } from "@pi-gui/session-driver/vision-types";
+import { addVisionUsage, shouldRouteVision, VisionRouter, type VisionServices, type VisionSessionBinding } from "./vision-router.js";
+import { assertVisionActive, VisionError } from "./vision-errors.js";
+import { createVisionSummaryExtension, installVisionStreamAdapter } from "./pi-compat/vision-stream-adapter.js";
+import { annotateVisionMessageSources, continueAcceptedVisionTurn, resolveVisionModelKey, resolveVisionSessionKey, syncVisionMessageEntries, visionInputDigest, visionMessageInputDigest, visionSessionEntries } from "./pi-compat/vision-session-adapter.js";
 
 export interface PiSdkDriverOptions {
+  readonly visionServices?: VisionServices;
   readonly catalogFilePath?: string;
   /** Existing owner for catalog state. Takes precedence over catalogFilePath when provided. */
   readonly catalogStorage?: SessionFileCatalogStorage;
@@ -182,7 +187,13 @@ interface ManagedSessionRecord {
    * not tagging — is what keeps run attribution correct.
    */
   pendingCancel: Promise<void> | undefined;
+  cancelGeneration: number;
   eventNormalizer: AgentEventNormalizer;
+  vision: VisionProgress | undefined;
+  disposeVision: (() => void) | undefined;
+  submittingClientIds: Set<string>;
+  pendingVisionRetry?: Promise<void>;
+  visionRetryAbort?: AbortController;
 }
 
 interface RegisteredCommandAdapter {
@@ -219,6 +230,7 @@ interface SkillAdapter {
 }
 
 export class SessionSupervisor {
+  private readonly visionRouter: VisionRouter | undefined;
   private readonly catalogs: SessionFileCatalogStorage;
   private readonly createAgentSessionRuntimeImpl: (options?: CreateAgentSessionOptions) => Promise<AgentSessionRuntime>;
   private readonly modelRuntime: Promise<ModelRuntime> | undefined;
@@ -230,6 +242,7 @@ export class SessionSupervisor {
   private readonly isPidAlive = defaultIsPidAlive;
 
   constructor(options: PiSdkDriverOptions = {}) {
+    this.visionRouter = options.visionServices ? new VisionRouter(options.visionServices) : undefined;
     this.catalogs =
       options.catalogStorage ??
       (options.catalogFilePath
@@ -239,6 +252,12 @@ export class SessionSupervisor {
     // wherever it executes, so the factory is merged here rather than left to
     // every host to remember. It resolves to undefined off Windows.
     const extensionFactories: ExtensionFactory[] = options.extensionFactories ? [...options.extensionFactories] : [];
+    if (this.visionRouter) {
+      extensionFactories.push(createVisionSummaryExtension(this.visionRouter, (ctx) => {
+        const record = [...this.records.values()].find((entry) => entry.session?.sessionId === ctx.sessionManager.getSessionId() && entry.workspace.path === ctx.cwd);
+        return record?.session ? { session: record.session, binding: this.visionBinding(record) } : undefined;
+      }));
+    }
     const windowsPowerShellEncoding = windowsPowerShellEncodingExtensionFactory();
     if (windowsPowerShellEncoding) {
       extensionFactories.push(windowsPowerShellEncoding);
@@ -261,6 +280,164 @@ export class SessionSupervisor {
 
   setRuntimeMode(mode: "light" | "agent"): void {
     this.runtimeMode = mode;
+  }
+
+  private assertModelCanChange(record: ManagedSessionRecord): void {
+    if (record.pendingVisionRetry || record.status === "running" || record.session && (!record.session.isIdle || record.session.isCompacting)) throw new Error("The model and thinking level cannot change during a run. Stop or wait for it to finish.");
+  }
+
+  private visionBinding(record: ManagedSessionRecord): VisionSessionBinding {
+    const session = this.requireSession(record);
+    const ref = { ...record.ref };
+    return {
+      ref,
+      getEntries: () => visionSessionEntries(session),
+      imagesAllowed: () => !session.settingsManager.getBlockImages(),
+      resolveApiKey: (model) => resolveVisionSessionKey(session, model),
+      beforeRequest: async () => {
+        await this.syncVisionSubmissions(record);
+        forcePersistSession(session.sessionManager);
+      },
+      onProgress: async (progress) => {
+        if (record.session !== session || sessionKey(record.ref) !== sessionKey(ref)) return;
+        if (record.vision && record.vision.generation > progress.generation) return;
+        if (record.vision?.operationId === progress.operationId && (record.vision.revision ?? 0) > (progress.revision ?? 0)) return;
+        record.vision = progress;
+        // Pi owns the run lifecycle. An inspect_images tool failure or a manual
+        // summary must not end/start the parent run through auxiliary progress.
+        record.updatedAt = nowIso();
+        this.queueDriverEvents(record, [sessionUpdatedEvent(record)], { persistSnapshot: false });
+        await record.eventQueue;
+      },
+    };
+  }
+
+  private installVision(record: ManagedSessionRecord): void {
+    record.disposeVision?.();
+    record.disposeVision = undefined;
+    if (this.visionRouter && record.session) record.disposeVision = installVisionStreamAdapter(record.session, this.visionRouter, this.visionBinding(record));
+  }
+
+  private async registerVisionSubmission(record: ManagedSessionRecord, input: SessionMessageInput): Promise<VisionSubmission | undefined> {
+    if (!this.visionRouter || !input.clientMessageId) return undefined;
+    await this.syncVisionSubmissions(record);
+    const clientMessageId = input.clientMessageId;
+    const inputDigest = visionInputDigest(input);
+    let previous: VisionSubmission | undefined;
+    await this.visionRouter.services.store.update(record.ref, (data) => {
+      previous = data.submissions.find((item) => item.clientMessageId === clientMessageId);
+      if (previous && previous.state !== "pending") return data;
+      const afterEntryId = this.requireSession(record).sessionManager.getLeafId();
+      const submission: VisionSubmission = {
+        clientMessageId, inputDigest, generation: input.generation ?? previous?.generation ?? 0, state: "pending",
+        ...(afterEntryId ? { afterEntryId } : {}),
+      };
+      return { ...data, submissions: [...data.submissions.filter((item) => item.clientMessageId !== clientMessageId), submission] };
+    });
+    return previous;
+  }
+
+  private async syncVisionSubmissions(record: ManagedSessionRecord): Promise<void> {
+    if (this.visionRouter && record.session) await syncVisionMessageEntries(record.session, this.visionRouter.services.store, record.ref);
+  }
+
+  async getVisionSession(ref: SessionRef): Promise<VisionSessionView> {
+    const record = await this.ensureRecord(ref);
+    const data = await this.visionRouter?.services.store.read(ref);
+    const ids = new Set(visionSessionEntries(this.requireSession(record)).map((entry) => entry.id));
+    const images = (data?.images ?? []).filter((image) => ids.has(image.sourceMessageEntryId));
+    const sourceIds = new Set([
+      ...ids,
+      ...images.flatMap((image) => [image.sourceMessageEntryId, ...(image.clientMessageId ? [image.clientMessageId] : [])]),
+      ...(data?.submissions ?? []).flatMap((submission) => submission.sourceMessageEntryId && ids.has(submission.sourceMessageEntryId) ? [submission.clientMessageId] : []),
+    ]);
+    const progress = (data?.operations ?? []).filter((operation) => sourceIds.has(operation.sourceMessageId)).sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+    let usage: VisionSessionView["usage"];
+    for (const operation of progress) if (operation.usage) usage = addVisionUsage(usage, operation.usage);
+    return {
+      images: images.map(({ imageId, sourceMessageEntryId, clientMessageId, imageIndex, evidenceId }) => ({ imageId, sourceMessageEntryId, imageIndex, ...(clientMessageId ? { clientMessageId } : {}), ...(evidenceId ? { evidenceId } : {}) })),
+      progress, ...(usage ? { usage } : {}), requests: progress.reduce((total, item) => total + (item.requests ?? 0), 0), usageUnknown: progress.some((item) => Boolean(item.usageUnknown)),
+    };
+  }
+
+  async validateVisionConnection(selection: SessionModelSelection): Promise<void> {
+    await this.visionConnectionKey(selection);
+  }
+
+  async testVisionConnection(selection: SessionModelSelection, onRequest?: () => void): Promise<VisionUsage | undefined> {
+    const key = await this.visionConnectionKey(selection);
+    return this.visionRouter!.testConnection(key, onRequest);
+  }
+
+  private async visionConnectionKey(selection: SessionModelSelection): Promise<string> {
+    if (!this.visionRouter || !this.modelRuntime) throw new VisionError("VISION_DISABLED", "Image analysis is not configured.");
+    const model = await this.resolveModel(selection.provider, selection.modelId);
+    if (!shouldRouteVision(model)) throw new VisionError("VISION_UNSUPPORTED_PROVIDER", "Select an official DeepSeek Pro or Flash text model.");
+    const key = await resolveVisionModelKey(await this.modelRuntime, model);
+    if (!key) throw new VisionError("VISION_AUTH", "Configure the selected DeepSeek provider's credentials first.");
+    return key;
+  }
+
+  async getVisionEvidence(ref: SessionRef, evidenceId: string): Promise<StoredVisionEvidence> {
+    const record = await this.ensureRecord(ref);
+    const entries = new Set(visionSessionEntries(this.requireSession(record)).map((entry) => entry.id));
+    const data = await this.visionRouter?.services.store.read(ref);
+    const evidence = data?.evidence.find((entry) => entry.evidenceId === evidenceId && entry.sourceMessageEntryIds.every((id) => entries.has(id)));
+    if (!evidence) throw new VisionError("VISION_UNAUTHORIZED_IMAGE", "This evidence is not available in the current session branch.");
+    return evidence;
+  }
+
+  async inspectImages(ref: SessionRef, input: InspectImagesInput, signal?: AbortSignal): Promise<StoredVisionEvidence> {
+    const record = await this.ensureRecord(ref);
+    const session = this.requireSession(record);
+    if (!this.visionRouter || !session.model) throw new VisionError("VISION_DISABLED", "Image analysis is not configured.");
+    return this.visionRouter.inspect(session.model, this.visionBinding(record), input, signal);
+  }
+
+  async retryVision(ref: SessionRef, sourceMessageId: string): Promise<void> {
+    const record = await this.ensureRecord(ref);
+    if (record.pendingVisionRetry) return record.pendingVisionRetry;
+    const controller = new AbortController();
+    record.visionRetryAbort = controller;
+    const retry = this.retryVisionOnce(record, sourceMessageId, controller.signal);
+    record.pendingVisionRetry = retry;
+    try { await retry; }
+    finally {
+      if (record.pendingVisionRetry === retry) {
+        delete record.pendingVisionRetry;
+        delete record.visionRetryAbort;
+      }
+    }
+  }
+
+  private async retryVisionOnce(record: ManagedSessionRecord, sourceMessageId: string, signal: AbortSignal): Promise<void> {
+    const ref = record.ref;
+    const session = this.requireSession(record);
+    this.assertModelCanChange(record);
+    if (!this.visionRouter) throw new VisionError("VISION_DISABLED", "Image analysis is not configured.");
+    await this.syncVisionSubmissions(record);
+    const data = await this.visionRouter.services.store.read(ref);
+    assertVisionActive(signal);
+    const submission = data?.submissions.find((entry) => entry.clientMessageId === sourceMessageId || entry.sourceMessageEntryId === sourceMessageId);
+    const entryId = submission?.sourceMessageEntryId ?? sourceMessageId;
+    const entries = visionSessionEntries(session);
+    const sourceIndex = entries.findIndex((entry) => entry.id === entryId);
+    if (sourceIndex < 0) throw new VisionError("VISION_REQUEST", "The message was not accepted. Restore its attachments and send it again.");
+    if (entries.slice(sourceIndex + 1).some((entry) => (entry.message as { role?: string }).role === "user")) throw new VisionError("VISION_REQUEST", "A newer message is already in this branch. Retry the latest image turn or fork at the earlier message.");
+    record.eventNormalizer.reset();
+    record.runningRunId = crypto.randomUUID();
+    record.status = "running";
+    this.visionRouter.beginTurn(ref, submission?.clientMessageId ?? entryId, session.model?.id ?? "");
+    await this.emit(record, sessionUpdatedEvent(record));
+    try {
+      assertVisionActive(signal);
+      await continueAcceptedVisionTurn(session);
+      await record.eventQueue;
+    } finally {
+      if (!session.isStreaming && record.status === "running") record.status = "idle";
+      await this.persistSnapshot(record);
+      await this.emit(record, sessionUpdatedEvent(record));
+    }
   }
 
   listWorkspaces(): Promise<WorkspaceCatalogSnapshot> {
@@ -339,6 +516,7 @@ export class SessionSupervisor {
       }
 
       await this.catalogs.sessions.deleteSession(session.sessionRef);
+      await this.visionRouter?.services.store.remove(session.sessionRef);
       const record = this.records.get(key);
       if (!record) {
         continue;
@@ -428,7 +606,7 @@ export class SessionSupervisor {
         record.transcriptDiskMtimeMs = diskMtimeMs;
         return this.readTranscriptFromDisk(sessionRef);
       }
-      return transcriptFromMessages(record.session.messages ?? [], record.updatedAt);
+      return transcriptFromMessages(annotateVisionMessageSources(record.session.sessionManager, record.session.messages ?? []), record.updatedAt);
     }
     return this.readTranscriptFromDisk(sessionRef);
   }
@@ -446,7 +624,7 @@ export class SessionSupervisor {
     }
 
     const sessionManager = openSessionManager(sessionFile);
-    return transcriptFromMessages(sessionManager.buildSessionContext().messages, sessionEntry?.updatedAt);
+    return transcriptFromMessages(annotateVisionMessageSources(sessionManager, sessionManager.buildSessionContext().messages), sessionEntry?.updatedAt);
   }
 
   private async resolveSessionFilePath(
@@ -683,6 +861,7 @@ export class SessionSupervisor {
       timestamp: nowIso(),
       snapshot,
     });
+    await this.visionRouter?.fork(sourceRef, record.ref, visionSessionEntries(session));
     return selectedText === undefined ? { snapshot } : { snapshot, selectedText };
   }
 
@@ -744,8 +923,27 @@ export class SessionSupervisor {
     await this.updateArchivedState(sessionRef, undefined);
   }
 
-  async sendUserMessage(sessionRef: SessionRef, input: SessionMessageInput): Promise<void> {
+  async startUserMessage(sessionRef: SessionRef, input: SessionMessageInput): Promise<{ completion: Promise<void> }> {
+    let accepted!: () => void;
+    let rejected!: (error: unknown) => void;
+    const started = new Promise<void>((resolve, reject) => { accepted = resolve; rejected = reject; });
+    const completion = this.sendUserMessage(sessionRef, input, accepted);
+    void completion.then(accepted, rejected);
+    await started;
+    return { completion };
+  }
+
+  async sendUserMessage(sessionRef: SessionRef, input: SessionMessageInput, onAccepted?: () => void): Promise<void> {
     const record = await this.ensureRecord(sessionRef);
+    const clientMessageId = input.clientMessageId ?? crypto.randomUUID();
+    if (record.submittingClientIds.has(clientMessageId)) return;
+    record.submittingClientIds.add(clientMessageId);
+    try {
+      await this.sendUserMessageOnce(record, { ...input, clientMessageId }, onAccepted);
+    } finally { record.submittingClientIds.delete(clientMessageId); }
+  }
+
+  private async sendUserMessageOnce(record: ManagedSessionRecord, input: SessionMessageInput, onAccepted?: () => void): Promise<void> {
     // Never start a run while a Stop is still unwinding the previous one. pi's
     // agent events carry no run identifier, so an agent_end arriving after a new
     // run began would be attributed to the new run — flipping a live run to
@@ -754,23 +952,32 @@ export class SessionSupervisor {
     if (record.pendingCancel) {
       await record.pendingCancel;
     }
+    const cancelGeneration = record.cancelGeneration;
     const session = this.requireSession(record);
+    if (record.pendingVisionRetry && !session.isStreaming) throw new Error("The image retry is starting. Wait for it to start before sending another message.");
     const isExtensionCommand = this.isExtensionCommand(session, input.text);
     if (session.isStreaming && !isExtensionCommand && !input.deliverAs) {
       throw new Error("Session is already streaming. Specify deliverAs ('steer' or 'followUp') to queue the message.");
     }
 
-    const isQueuedMessage = session.isStreaming && !isExtensionCommand && Boolean(input.deliverAs);
+    const alreadyQueued = record.queuedMessages.some((message) => message.id === input.clientMessageId);
+    const isQueuedMessage = !isExtensionCommand && Boolean(input.deliverAs) && (session.isStreaming || alreadyQueued);
+    if (!isExtensionCommand && this.visionRouter) {
+      const previous = await this.registerVisionSubmission(record, input);
+      if (previous?.state === "completed" || previous?.sourceMessageEntryId) return;
+    }
+    if (record.cancelGeneration !== cancelGeneration) throw new Error("Message submission was cancelled.");
     const runId = isQueuedMessage || isExtensionCommand ? undefined : crypto.randomUUID();
     if (runId) {
       record.eventNormalizer.reset();
     }
     record.runningRunId = runId ?? record.runningRunId;
+    if (runId) this.visionRouter?.beginTurn(record.ref, input.clientMessageId!, session.model?.id ?? "");
     record.status = isQueuedMessage || isExtensionCommand ? record.status : "running";
     record.updatedAt = nowIso();
     record.config = deriveSessionConfig(session.sessionManager);
     record.preview = truncate(input.text);
-    if (isQueuedMessage) {
+    if (isQueuedMessage && !alreadyQueued) {
       record.queuedMessages = [
         ...record.queuedMessages,
         queuedMessageFromInput(input, record.updatedAt),
@@ -780,6 +987,7 @@ export class SessionSupervisor {
     await this.emit(record, sessionUpdatedEvent(record));
 
     try {
+      if (record.cancelGeneration !== cancelGeneration) throw new Error("Message submission was cancelled.");
       const images = input.attachments?.flatMap((attachment: NonNullable<SessionMessageInput["attachments"]>[number]) =>
         attachment.kind === "image"
           ? [{
@@ -790,23 +998,23 @@ export class SessionSupervisor {
           : [],
       );
       const promptText = injectFileAttachmentPreamble(input.text, input.attachments);
-      if (isQueuedMessage) {
-        // The queued-vs-prompt decision was made before the persistSnapshot/emit
-        // awaits above; the agent may have finished its turn in that window. A
-        // steer/follow-up now would attach to nothing and be silently dropped,
-        // so re-check the live streaming state and surface a retryable error
-        // instead. The catch below rolls back the optimistic queued entry.
-        if (!session.isStreaming) {
-          throw new Error(
-            "Session finished streaming before the queued message could be delivered. Retry to send it as a new turn.",
-          );
-        }
-        await this.queuePrompt(session, promptText, input.deliverAs!, images);
-      } else {
+      // Pi decides whether to queue or start a new turn at the actual prompt
+      // boundary. Persistence above can outlast the previous run; steer/followUp
+      // alone would leave the new message in a queue with no active consumer.
+      const unsubscribe = onAccepted ? session.subscribe((event) => { if (event.type === "agent_start") onAccepted(); }) : undefined;
+      try {
         await session.prompt(promptText, {
           ...(images && images.length > 0 ? { images } : {}),
+          ...(input.deliverAs ? { streamingBehavior: input.deliverAs } : {}),
           source: "interactive",
         });
+      } finally { unsubscribe?.(); }
+      onAccepted?.();
+      if (!session.isStreaming) {
+        await this.syncVisionSubmissions(record);
+        if (record.status === "idle" && this.visionRouter) {
+          await this.visionRouter.services.store.update(record.ref, (data) => ({ ...data, submissions: data.submissions.map((entry) => entry.clientMessageId === input.clientMessageId ? { ...entry, state: "completed" } : entry) }));
+        }
       }
 
       if (isExtensionCommand) {
@@ -814,12 +1022,13 @@ export class SessionSupervisor {
       }
     } catch (error) {
       if (isQueuedMessage) {
-        record.queuedMessages = record.queuedMessages.slice(0, -1);
+        record.queuedMessages = record.queuedMessages.filter((message) => message.id !== input.clientMessageId);
       }
-      if (!isQueuedMessage) {
+      if (!session.isStreaming) {
         record.runningRunId = undefined;
       }
-      record.status = isQueuedMessage ? "running" : isExtensionCommand ? "idle" : "failed";
+      const cancelled = record.cancelGeneration !== cancelGeneration;
+      record.status = session.isStreaming ? "running" : cancelled || isExtensionCommand ? "idle" : "failed";
       record.updatedAt = nowIso();
       record.preview = error instanceof Error ? error.message : String(error);
       await this.persistSnapshot(record);
@@ -838,21 +1047,39 @@ export class SessionSupervisor {
   async replaceQueuedMessages(sessionRef: SessionRef, messages: readonly SessionQueuedMessage[]): Promise<void> {
     const record = await this.ensureRecord(sessionRef);
     const session = this.requireSession(record);
+    const cancelGeneration = record.cancelGeneration;
+    if (this.visionRouter) {
+      for (const message of messages) {
+        await this.registerVisionSubmission(record, { text: message.text, clientMessageId: message.id, generation: message.generation ?? 0, ...(message.attachments ? { attachments: message.attachments } : {}) });
+      }
+      const oldIds = new Set(record.queuedMessages.map((message) => message.id));
+      const ids = new Set(messages.map((message) => message.id));
+      await this.visionRouter.services.store.update(record.ref, (data) => ({ ...data, submissions: data.submissions.filter((item) => item.state !== "pending" || !oldIds.has(item.clientMessageId) || ids.has(item.clientMessageId)) }));
+      // Persistence awaits may let Pi dequeue a message. It must never be put
+      // back in the queue after becoming a real user entry.
+      await this.syncVisionSubmissions(record);
+      const data = await this.visionRouter.services.store.read(record.ref);
+      const accepted = new Set(data?.submissions.filter((item) => item.state !== "pending").map((item) => item.clientMessageId));
+      messages = messages.filter((message) => !accepted.has(message.id));
+    }
+    if (record.pendingCancel || record.cancelGeneration !== cancelGeneration) throw new Error("Queue update was cancelled.");
     session.clearQueue();
 
     record.queuedMessages = messages.map((message) => cloneQueuedMessage(message));
-    for (const message of record.queuedMessages) {
-      const images = message.attachments?.flatMap((attachment: NonNullable<SessionQueuedMessage["attachments"]>[number]) =>
-        attachment.kind === "image"
-          ? [{
-              type: "image" as const,
-              data: attachment.data,
-              mimeType: attachment.mimeType,
-            }]
-          : [],
-      );
-      const promptText = injectFileAttachmentPreamble(message.text, message.attachments);
-      await this.queuePrompt(session, promptText, message.mode, images);
+    // Iterate the stable replacement list: message_start removes accepted
+    // entries from record.queuedMessages while a new prompt is starting.
+    for (const message of messages) {
+      if (record.pendingCancel || record.cancelGeneration !== cancelGeneration) throw new Error("Queue update was cancelled.");
+      const { completion } = await this.startUserMessage(sessionRef, {
+        text: message.text,
+        clientMessageId: message.id,
+        generation: message.generation ?? 0,
+        deliverAs: message.mode,
+        ...(message.attachments ? { attachments: message.attachments } : {}),
+      });
+      // The regular send path reports any post-acceptance failure through the
+      // driver event stream. Queue updates return as soon as input is accepted.
+      void completion.catch(() => {});
     }
 
     record.updatedAt = nowIso();
@@ -874,6 +1101,9 @@ export class SessionSupervisor {
     }
 
     const session = record.session;
+    record.cancelGeneration++;
+    record.visionRetryAbort?.abort();
+    this.visionRouter?.cancel(record.ref);
     // Mark the turn as user-cancelled before aborting so the agent_end fallout
     // is classified as a clean stop (idle) rather than a run failure. Gate on
     // the live agent loop, NOT on record.status: status is a cached field that
@@ -950,6 +1180,10 @@ export class SessionSupervisor {
     record.eventNormalizer.markSettled();
     await record.eventQueue;
     record.session?.clearQueue();
+    if (this.visionRouter) {
+      await this.syncVisionSubmissions(record).catch(() => {});
+      await this.visionRouter.services.store.update(record.ref, (data) => ({ ...data, submissions: data.submissions.map((item) => item.state === "pending" ? { ...item, state: "cancelled" } : item) })).catch(() => {});
+    }
     record.queuedMessages = [];
     record.runningRunId = undefined;
     record.status = "idle";
@@ -963,9 +1197,11 @@ export class SessionSupervisor {
     if (!session) {
       throw new Error(`Session ${sessionKey(record.ref)} is not active.`);
     }
+    this.assertModelCanChange(record);
 
     const model = await this.resolveModel(selection.provider, selection.modelId);
     const auth = await resolveModelAuth(session.modelRuntime, model);
+    this.assertModelCanChange(record);
     if (!auth) {
       throw new Error(`No authentication configured for ${selection.provider}.`);
     }
@@ -987,6 +1223,7 @@ export class SessionSupervisor {
 
   async setSessionThinkingLevel(sessionRef: SessionRef, thinkingLevel: string): Promise<void> {
     const record = await this.ensureRecord(sessionRef);
+    this.assertModelCanChange(record);
     const session = this.requireSession(record);
     this.applySessionThinkingLevel(session, thinkingLevel);
     forcePersistSession(session.sessionManager);
@@ -1032,6 +1269,7 @@ export class SessionSupervisor {
 
     this.resetExtensionUi(record);
     await session.reload();
+    this.installVision(record);
     await this.syncRecordAfterSessionMutation(record, { emitUpdate: true });
   }
 
@@ -1051,6 +1289,7 @@ export class SessionSupervisor {
   ): Promise<NavigateSessionTreeResult> {
     const record = await this.ensureRecord(sessionRef);
     const session = this.requireSession(record);
+    this.visionRouter?.cancel(record.ref);
     const result = await session.navigateTree(targetId, options);
     if (result.cancelled || result.aborted) {
       return {
@@ -1233,7 +1472,11 @@ export class SessionSupervisor {
       contextUsage: undefined,
       cancelRequested: false,
       pendingCancel: undefined,
+      cancelGeneration: 0,
       eventNormalizer: createAgentEventNormalizer(),
+      vision: undefined,
+      disposeVision: undefined,
+      submittingClientIds: new Set(),
     };
     return record;
   }
@@ -1261,6 +1504,10 @@ export class SessionSupervisor {
   }
 
   private async disposeRecordRuntime(record: ManagedSessionRecord): Promise<void> {
+    record.visionRetryAbort?.abort();
+    this.visionRouter?.cancel(record.ref);
+    record.disposeVision?.();
+    record.disposeVision = undefined;
     const runtime = record.runtime;
     const session = record.session;
     record.runtime = undefined;
@@ -1376,6 +1623,7 @@ export class SessionSupervisor {
     }
 
     record.session = session;
+    this.installVision(record);
     record.eventNormalizer.reset();
     record.sessionFile = session.sessionFile ?? session.sessionManager.getSessionFile();
     record.unsubscribeAgent?.();
@@ -1417,6 +1665,10 @@ export class SessionSupervisor {
       await this.refreshLeaseAndTranscriptBaseline(record);
     });
     await this.rebindRuntimeSession(record, runtime.session);
+    if (this.visionRouter) {
+      record.vision = await this.visionRouter.recover(record.ref);
+      if (record.vision?.stage === "interrupted") record.status = "failed";
+    }
     await this.refreshLeaseAndTranscriptBaseline(record);
   }
 
@@ -1669,23 +1921,6 @@ export class SessionSupervisor {
     const spaceIndex = trimmed.indexOf(" ");
     const commandName = spaceIndex === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIndex);
     return Boolean(session.extensionRunner?.getCommand(commandName));
-  }
-
-  private async queuePrompt(
-    session: AgentSession,
-    text: string,
-    deliverAs: SessionMessageDeliveryMode,
-    images?: readonly {
-      readonly type: "image";
-      readonly data: string;
-      readonly mimeType: string;
-    }[],
-  ): Promise<void> {
-    if (deliverAs === "steer") {
-      await session.steer(text, images ? [...images] : undefined);
-      return;
-    }
-    await session.followUp(text, images ? [...images] : undefined);
   }
 
   private async resolveModel(provider: string, modelId: string) {
@@ -1951,6 +2186,10 @@ export class SessionSupervisor {
         if (event.message.role === "user") {
           const queuedMessage = reconcileQueuedMessagesForStartedUserMessage(record, event.message, timestamp);
           if (queuedMessage) {
+            this.visionRouter?.beginTurn(record.ref, queuedMessage.id, record.session?.model?.id ?? "");
+            record.eventNormalizer.reset();
+            record.runningRunId ??= crypto.randomUUID();
+            record.status = "running";
             this.updatePreviewFromMessage(record, event.message);
             return [{
               type: "queuedMessageStarted" as const,
@@ -2027,6 +2266,9 @@ export class SessionSupervisor {
         // runRetrying, the non-latching channel: the handshake subscribes,
         // the error banner and desktop notifications do not.
         const outcome = determineRunOutcome(event.messages);
+        if (!event.willRetry && this.visionRouter) {
+          void this.visionRouter.settle(this.visionBinding(record), outcome.success).catch(() => {});
+        }
         const cancelledByUser = record.cancelRequested && !outcome.success;
         const normalizedEnd = record.eventNormalizer.normalize(event, {
           timestamp,
@@ -2754,7 +2996,8 @@ function cloneQueuedMessage(message: SessionQueuedMessage): SessionQueuedMessage
 
 function queuedMessageFromInput(input: SessionMessageInput, timestamp: string): SessionQueuedMessage {
   return {
-    id: crypto.randomUUID(),
+    id: input.clientMessageId ?? crypto.randomUUID(),
+    ...(input.generation !== undefined ? { generation: input.generation } : {}),
     mode: input.deliverAs!,
     text: input.text,
     ...(input.attachments
@@ -2776,19 +3019,17 @@ function reconcileQueuedMessagesForStartedUserMessage(
     return undefined;
   }
 
-  const text = messageText(message as Record<string, unknown>);
-  if (!text) {
-    return undefined;
-  }
+  const digest = visionMessageInputDigest(message);
+  if (!digest) return undefined;
 
-  const steeringIndex = record.queuedMessages.findIndex((item) => item.mode === "steer" && item.text === text);
+  const steeringIndex = record.queuedMessages.findIndex((item) => item.mode === "steer" && visionInputDigest(item) === digest);
   if (steeringIndex !== -1) {
     const [started] = record.queuedMessages.splice(steeringIndex, 1);
     record.updatedAt = timestamp;
     return started;
   }
 
-  const followUpIndex = record.queuedMessages.findIndex((item) => item.mode === "followUp" && item.text === text);
+  const followUpIndex = record.queuedMessages.findIndex((item) => item.mode === "followUp" && visionInputDigest(item) === digest);
   if (followUpIndex !== -1) {
     const [started] = record.queuedMessages.splice(followUpIndex, 1);
     record.updatedAt = timestamp;

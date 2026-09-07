@@ -106,6 +106,7 @@ export interface VisionProgress {
   readonly sessionId: string;
   readonly sourceMessageId: string;
   readonly generation: number;
+  readonly revision?: number;
   readonly stage: VisionStage;
   readonly imageCount: number;
   readonly completedImages: number;
@@ -147,8 +148,9 @@ export interface VisionSubmission {
   readonly clientMessageId: string;
   readonly inputDigest: string;
   readonly generation: number;
+  readonly afterEntryId?: string;
   readonly sourceMessageEntryId?: string;
-  readonly state: "pending" | "accepted" | "completed";
+  readonly state: "pending" | "accepted" | "completed" | "cancelled";
 }
 
 export interface VisionSessionRecord {

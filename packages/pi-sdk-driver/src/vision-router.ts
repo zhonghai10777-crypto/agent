@@ -47,6 +47,7 @@ export interface VisionSessionBinding {
   readonly imagesAllowed: () => boolean;
   readonly resolveApiKey: (model: VisionModel<VisionApi>) => Promise<string | undefined>;
   readonly onProgress: (progress: VisionProgress) => void | Promise<void>;
+  readonly beforeRequest?: () => Promise<void>;
 }
 
 interface LocatedImage {
@@ -66,7 +67,8 @@ interface RunningVisionOperation {
   readonly primaryModelId: string;
   readonly sourceMessageId: string;
   readonly operationId: string;
-  readonly budget: VisionRequestBudget;
+  budget: VisionRequestBudget;
+  knownUsageRequests: number;
   lastProgress?: VisionProgress;
   failure?: VisionError;
 }
@@ -145,22 +147,53 @@ export class VisionRouter {
 
   constructor(readonly services: VisionServices) { this.client = new VisionClient(services.fetch); }
 
+  async testConnection(apiKey: string, onRequest?: () => void): Promise<VisionUsage | undefined> {
+    const settings = { ...this.services.getSettings(), maxAttempts: 1 };
+    const scope = combineVisionSignal([], settings.totalTimeoutMs);
+    let release: (() => void) | undefined;
+    try {
+      release = await this.limiter.acquire(scope.signal, settings.maxConcurrentVisionRequests);
+      const image = await this.services.prepareImage({ type: "image", imageId: "img-connection-test", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGPQSLnzHx9mGBkKAOz6mcHK/OviAAAAAElFTkSuQmCC" }, settings, scope.signal);
+      const result = await this.client.recognize({ images: [image], question: "Describe the visible color of this small test image.", contextText: "Application connectivity test.", apiKey, settings, signal: scope.signal, ...(onRequest ? { onRequest } : {}), budget: { deadline: Date.now() + settings.totalTimeoutMs, attempts: 0, repairAttempted: false, largerOutputAttempted: false } });
+      return result.usage;
+    } finally { release?.(); scope.dispose(); }
+  }
+
   beginTurn(ref: SessionRef, sourceMessageId: string, primaryModelId: string): void {
     this.cancel(ref);
     this.active.set(refKey(ref), this.newOperation(sourceMessageId, primaryModelId));
   }
 
-  private newOperation(sourceMessageId: string, primaryModelId: string): RunningVisionOperation {
-    const settings = this.services.getSettings();
+  private newOperation(sourceMessageId: string, primaryModelId: string, generation = ++this.generation): RunningVisionOperation {
     return {
-      controller: new AbortController(), generation: ++this.generation,
+      controller: new AbortController(), generation,
       sourceMessageId, primaryModelId, operationId: randomUUID(),
-      budget: { deadline: Date.now() + settings.totalTimeoutMs, attempts: 0, repairAttempted: false, largerOutputAttempted: false },
+      budget: { deadline: 0, attempts: 0, repairAttempted: false, largerOutputAttempted: false },
+      knownUsageRequests: 0,
     };
   }
 
   cancel(ref: SessionRef): void {
     this.active.get(refKey(ref))?.controller.abort();
+  }
+
+  currentGeneration(ref: SessionRef): number | undefined { return this.active.get(refKey(ref))?.generation; }
+
+  /** Also used for failures before entry binding or persistence can succeed. */
+  async reportFailure(binding: VisionSessionBinding, error: unknown, primaryModelId: string, expectedGeneration?: number): Promise<void> {
+    let operation = this.active.get(refKey(binding.ref));
+    if (expectedGeneration !== undefined && operation?.generation !== expectedGeneration) return;
+    if (!operation) {
+      operation = this.newOperation(binding.getEntries().at(-1)?.id ?? "unaccepted", primaryModelId);
+      this.active.set(refKey(binding.ref), operation);
+    }
+    const failure = asVisionError(error);
+    if (operation.lastProgress?.errorCode === failure.code && ["failed", "cancelled"].includes(operation.lastProgress.stage)) return;
+    operation.failure = failure;
+    await this.progress(binding, operation, {
+      stage: failure.code === "VISION_CANCELLED" ? "cancelled" : "failed", retryable: failure.code !== "VISION_CANCELLED",
+      errorCode: failure.code, errorMessage: failure.message,
+    }).catch(() => {});
   }
 
   async settle(binding: VisionSessionBinding, completed: boolean): Promise<void> {
@@ -172,6 +205,7 @@ export class VisionRouter {
   async recover(ref: SessionRef): Promise<VisionProgress | undefined> {
     const record = await this.services.store.read(ref);
     if (!record) return undefined;
+    this.generation = record.operations.reduce((latest, operation) => Math.max(latest, operation.generation), this.generation);
     const unfinished = record.operations.some((op) => ["waiting", "recognizing", "persisting", "answering"].includes(op.stage));
     const current = unfinished ? await this.persist(ref, (data) => ({
       ...data,
@@ -183,7 +217,12 @@ export class VisionRouter {
   }
 
   async project(model: VisionModel<VisionApi>, context: VisionContext, binding: VisionSessionBinding, signal?: AbortSignal): Promise<VisionContext> {
+    assertVisionActive(signal);
     if (model.input.includes("image")) return context;
+    if (!binding.imagesAllowed() && context.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "text" && part.text === "Image reading is disabled."))) {
+      // Pi applies this global policy in convertToLlm, before streamFunction.
+      throw new VisionError("VISION_DISABLED", "Image reading is disabled in the runtime settings.");
+    }
     const hasImages = context.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image"));
     if (!hasImages) {
       assertTextOnlyPayload(context);
@@ -199,12 +238,14 @@ export class VisionRouter {
     const latest = located.at(-1)!;
     const sourceId = existing?.images.find((image) => image.sourceMessageEntryId === latest.entryId)?.clientMessageId ?? latest.entryId;
     let operation = this.active.get(refKey(binding.ref));
-    if (!operation || operation.controller.signal.aborted || operation.sourceMessageId !== sourceId && operation.lastProgress?.stage === "completed") {
+    if (!operation || operation.sourceMessageId !== sourceId && operation.lastProgress?.stage === "completed") {
       operation = this.newOperation(sourceId, model.id);
       this.active.set(refKey(binding.ref), operation);
     }
     if (operation.failure) throw operation.failure;
-    const scope = combineVisionSignal([signal, operation.controller.signal], operation.budget.deadline - Date.now());
+    // A primary/tool run may last much longer than a vision request. Reading
+    // already-persisted evidence has no network budget to exhaust.
+    const scope = combineVisionSignal([signal, operation.controller.signal]);
     const currentOperation = operation;
     const assertCurrent = () => {
       assertVisionActive(scope.signal);
@@ -239,6 +280,8 @@ export class VisionRouter {
           const result = await this.recognize(model, binding, operation, sources, scope.signal);
           assertCurrent();
           for (const image of group) results.set(image.imageId, result);
+          await this.progress(binding, operation, { completedImages: results.size });
+          assertCurrent();
         }
       }
       assertCurrent();
@@ -280,6 +323,25 @@ export class VisionRouter {
     } finally { scope.dispose(); }
   }
 
+  async projectSummary(model: VisionModel<VisionApi>, context: VisionContext, binding: VisionSessionBinding, signal: AbortSignal): Promise<VisionContext> {
+    const key = refKey(binding.ref);
+    const parent = this.active.get(key);
+    const operation = this.newOperation(binding.getEntries().at(-1)?.id ?? "summary", model.id, parent?.generation);
+    this.active.set(key, operation);
+    try {
+      const result = await this.project(model, context, binding, signal);
+      await this.settle(binding, true);
+      return result;
+    } catch (error) {
+      await this.reportFailure(binding, error, model.id, operation.generation);
+      throw error;
+    } finally {
+      if (this.active.get(key) === operation) {
+        if (parent) this.active.set(key, parent); else this.active.delete(key);
+      }
+    }
+  }
+
   private async bindImages(ref: SessionRef, sources: readonly LocatedImage[], previous: VisionSessionRecord | undefined): Promise<VisionImageBinding[]> {
     const bindings = sources.map((source) => {
       const saved = previous?.images.find((entry) => entry.sourceMessageEntryId === source.entryId && entry.imageIndex === source.imageIndex && entry.imageHash === source.hash);
@@ -313,16 +375,42 @@ export class VisionRouter {
   ): Promise<StoredVisionEvidence> {
     const digest = visionHash(JSON.stringify([images.map((image) => image.binding.inputDigest), model.provider, model.id, question, crop ?? null]));
     const key = `${refKey(binding.ref)}:${digest}`;
+    const flightKey = `${key}:${operation.generation}`;
     if (!force) {
-      const cached = this.cache.get(key);
-      if (cached) return cached;
-      const flight = this.flights.get(key);
+      const flight = this.flights.get(flightKey);
       if (flight) return raceVisionAbort(flight, signal);
     }
     const work = (async () => {
+      if (!force) {
+        const record = await this.services.store.read(binding.ref);
+        assertVisionActive(signal);
+        const saved = record?.evidence.find((entry) => entry.inputDigest === digest &&
+          entry.providerId === model.provider && entry.endpointIdentity === officialDeepSeekEndpoint(model.baseUrl) &&
+          entry.promptVersion === VISION_PROMPT_VERSION && entry.preprocessingVersion === VISION_PREPROCESSING_VERSION);
+        if (saved) {
+          const cached = this.cache.get(key);
+          const evidence = cached?.evidenceId === saved.evidenceId ? cached : saved;
+          // Switching provider configurations can move an image's current
+          // evidence pointer. Restore its durable binding when reusing an older
+          // result, so the same evidence remains available after a restart.
+          await this.persist(binding.ref, (current) => ({ ...current, images: current.images.map((image) =>
+            images.some((entry) => entry.binding.imageId === image.imageId) ? { ...image, evidenceId: evidence.evidenceId } : image) }));
+          assertVisionActive(signal);
+          this.cache.set(key, evidence);
+          return evidence;
+        }
+      }
       const settings = this.services.getSettings();
-      const release = await this.limiter.acquire(signal, settings.maxConcurrentVisionRequests);
+      // Start the budget at the first recognition, then share it across all
+      // missing history, tool-loop images and SDK re-entry in this turn.
+      // Only an explicit retry or a distinct inspect_images call starts anew.
+      if (!operation.budget.deadline) operation.budget = { ...operation.budget, deadline: Date.now() + settings.totalTimeoutMs };
+      const budget = operation.budget;
+      const scope = combineVisionSignal([signal], budget.deadline - Date.now());
+      signal = scope.signal;
+      let release: (() => void) | undefined;
       try {
+        release = await this.limiter.acquire(signal, settings.maxConcurrentVisionRequests);
         assertVisionActive(signal);
         const apiKey = await raceVisionAbort(binding.resolveApiKey(model), signal);
         if (!apiKey) throw new VisionError("VISION_AUTH", "Configure credentials for the selected official DeepSeek provider.");
@@ -333,13 +421,16 @@ export class VisionRouter {
         }
         const result = await this.client.recognize({
           images: prepared, question, contextText: images[0]!.binding.contextText, apiKey, settings,
-          budget: operation.budget, signal,
+          budget, signal,
           onAttempt: async () => { await this.progress(binding, operation, { stage: "recognizing" }); },
+          onRequest: async () => {
+            await this.progress(binding, operation, { requests: (operation.lastProgress?.requests ?? 0) + 1, usageUnknown: true });
+          },
           onUsage: async (usage) => {
             assertVisionActive(signal);
+            if (usage?.inputTokens !== undefined && usage.outputTokens !== undefined) operation.knownUsageRequests += 1;
             await this.progress(binding, operation, {
-              requests: (operation.lastProgress?.requests ?? 0) + 1,
-              usageUnknown: operation.lastProgress?.usageUnknown || usage?.inputTokens === undefined || usage?.outputTokens === undefined,
+              usageUnknown: operation.knownUsageRequests < (operation.lastProgress?.requests ?? 0),
               ...(usage ? { usage: addVisionUsage(operation.lastProgress?.usage, usage) } : {}),
             });
           },
@@ -366,10 +457,10 @@ export class VisionRouter {
         assertVisionActive(signal);
         this.cache.set(key, evidence);
         return evidence;
-      } finally { release(); }
+      } finally { release?.(); scope.dispose(); }
     })();
-    this.flights.set(key, work);
-    try { return await work; } finally { if (this.flights.get(key) === work) this.flights.delete(key); }
+    this.flights.set(flightKey, work);
+    try { return await work; } finally { if (this.flights.get(flightKey) === work) this.flights.delete(flightKey); }
   }
 
   async inspect(model: VisionModel<VisionApi>, binding: VisionSessionBinding, input: InspectImagesInput, signal?: AbortSignal): Promise<StoredVisionEvidence> {
@@ -384,9 +475,9 @@ export class VisionRouter {
       if (!image || !source) throw new VisionError("VISION_UNAUTHORIZED_IMAGE", "This image is not available in the active session branch.");
       return { binding: image, source };
     });
-    const operation = this.newOperation(images[0]!.binding.clientMessageId ?? images[0]!.source.entryId, model.id);
     const parent = this.active.get(refKey(binding.ref));
-    const scope = combineVisionSignal([signal, parent?.controller.signal], operation.budget.deadline - Date.now());
+    const operation = this.newOperation(parent?.sourceMessageId ?? images[0]!.binding.clientMessageId ?? images[0]!.source.entryId, model.id, parent?.generation);
+    const scope = combineVisionSignal([signal, parent?.controller.signal, operation.controller.signal]);
     try {
       await this.progress(binding, operation, { stage: "waiting", imageCount: images.length });
       const evidence = await this.recognize(model, binding, operation, images, scope.signal, input.question, input.crop, true);
@@ -435,12 +526,22 @@ export class VisionRouter {
       generation: operation.generation, stage: "waiting", imageCount: 0, completedImages: 0,
       primaryModelId: operation.primaryModelId, visionModelId: VISION_MODEL_ID,
       ...operation.lastProgress, ...change,
+      revision: (operation.lastProgress?.revision ?? 0) + 1,
     };
-    const record = await this.persist(binding.ref, (data) => {
+    // Publish actionable failures even when disk permissions also prevent their
+    // durable record. Successful handoff still requires the write to complete.
+    operation.lastProgress = progress;
+    const terminal = ["failed", "cancelled", "interrupted"].includes(progress.stage);
+    if (!terminal) assertVisionActive(operation.controller.signal);
+    let record: VisionSessionRecord;
+    try { record = await this.persist(binding.ref, (data) => {
       const previous = data.operations.find((entry) => entry.operationId === operation.operationId);
       const entry: VisionOperationRecord = { ...progress, ...operation.budget, createdAt: previous?.createdAt ?? now, updatedAt: now };
       return { ...data, operations: mergeBy(data.operations, [entry], (item) => item.operationId) };
-    });
+    }); } catch (error) {
+      if (terminal) await binding.onProgress(progress);
+      throw error;
+    }
     operation.lastProgress = record.operations.find((entry) => entry.operationId === operation.operationId)!;
     await binding.onProgress(operation.lastProgress);
   }
@@ -517,23 +618,32 @@ export function assertTextOnlyPayload(payload: unknown): void {
   if (!payload || typeof payload !== "object") return;
   const root = payload as Record<string, unknown>;
   const messages = Array.isArray(root.messages) ? root.messages : Array.isArray(root.input) ? root.input : [];
+  const inlineImage = /data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]{24,}/i;
+  const inspectBlock = (block: unknown): void => {
+    if (typeof block === "string") {
+      if (inlineImage.test(block)) throw new VisionError("VISION_PAYLOAD", "An inline image payload remained in a text-model request.");
+      return;
+    }
+    if (!block || typeof block !== "object") return;
+    const part = block as Record<string, unknown>;
+    if (["image", "image_url", "input_image"].includes(String(part.type))) throw new VisionError("VISION_PAYLOAD", "An image content block remained in a text-model request.");
+    if (part.type === "file" || part.type === "input_file") {
+      const file = part.file && typeof part.file === "object" ? part.file as Record<string, unknown> : part;
+      const encoded = JSON.stringify(file);
+      const mime = String(file.mime_type ?? file.mimeType ?? file.media_type ?? "");
+      const name = String(file.filename ?? file.name ?? file.file_url ?? file.url ?? "");
+      // Untyped opaque file IDs cannot establish that a text model can read the
+      // referenced file. Keep explicit non-image document blocks compatible.
+      if (/image\/|data:image/i.test(encoded) || /\.(?:png|jpe?g|gif|webp)(?:[?#]|$)/i.test(name) || file.file_id && !mime && !/\.(?:pdf|txt|csv|json|md)$/i.test(name)) throw new VisionError("VISION_PAYLOAD", "An image or untyped file reference remained in a text-model request.");
+    }
+    if (part.type === "text" || part.type === "input_text" || part.type === "output_text") inspectBlock(part.text);
+  };
+  inspectBlock(root.input);
   for (const raw of messages) {
+    inspectBlock(raw);
     if (!raw || typeof raw !== "object") continue;
     const message = raw as Record<string, unknown>;
     const blocks = Array.isArray(message.content) ? message.content : [message.content];
-    for (const block of blocks) {
-      if (typeof block === "string") {
-        if (/data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]{24,}/i.test(block)) throw new VisionError("VISION_PAYLOAD", "An inline image payload remained in a text-model request.");
-        continue;
-      }
-      if (!block || typeof block !== "object") continue;
-      const part = block as Record<string, unknown>;
-      if (["image", "image_url", "input_image"].includes(String(part.type)) || (part.type === "file" || part.type === "input_file") && /image|data:image/i.test(JSON.stringify(part))) {
-        throw new VisionError("VISION_PAYLOAD", "An image content block remained in a text-model request.");
-      }
-      if (part.type === "text" || part.type === "input_text") {
-        if (typeof part.text === "string" && /data:image\/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/]{24,}/i.test(part.text)) throw new VisionError("VISION_PAYLOAD", "An inline image payload remained in a text-model request.");
-      }
-    }
+    for (const block of blocks) inspectBlock(block);
   }
 }

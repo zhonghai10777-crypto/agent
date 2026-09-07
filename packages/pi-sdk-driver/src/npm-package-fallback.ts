@@ -107,6 +107,8 @@ async function createAgentSessionResultWithNpmFallback(
       ...(options?.thinkingLevel ? { thinkingLevel: options.thinkingLevel } : {}),
       ...(options?.scopedModels ? { scopedModels: options.scopedModels } : {}),
       ...(options?.tools ? { tools: options.tools } : {}),
+      ...(options?.excludeTools ? { excludeTools: options.excludeTools } : {}),
+      ...(options?.noTools !== undefined ? { noTools: options.noTools } : {}),
       ...(options?.customTools ? { customTools: options.customTools } : {}),
     })),
     services,

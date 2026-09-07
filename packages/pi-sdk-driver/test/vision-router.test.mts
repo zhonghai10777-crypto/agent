@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { assertTextOnlyPayload, officialDeepSeekEndpoint, VisionEvidenceCache } from "../dist/vision-router.js";
-import { fixture, model, ref, png } from "./vision-fixtures.mts";
+import { assertTextOnlyPayload, officialDeepSeekEndpoint, VisionEvidenceCache, VisionRouter } from "../dist/vision-router.js";
+import { fixture, model, ref, png, response } from "./vision-fixtures.mts";
 
 test("multi-image evidence precedes the original model context and keeps original history intact", async () => {
   const f = fixture();
@@ -41,6 +41,23 @@ test("text-only and native image models do not call the vision transport", async
   const context = { messages: [f.user()] };
   assert.equal(await f.router.project({ ...model, input: ["text", "image"] }, context, f.binding), context);
   assert.equal(f.calls.length, 0);
+});
+
+test("returning to a provider restores its persisted image binding without a new request, including after restart", async () => {
+  const f = fixture();
+  const context = { messages: [f.user()] };
+  await f.router.project(model, context, f.binding);
+  const originalId = (await f.store.read(ref)).images[0].evidenceId;
+  f.router.beginTurn(ref, "other-provider", model.id);
+  await f.router.project({ ...model, provider: "second-official-account" }, context, f.binding);
+  assert.equal(f.calls.length, 2);
+  assert.notEqual((await f.store.read(ref)).images[0].evidenceId, originalId);
+  f.router.beginTurn(ref, "original-provider", model.id);
+  await f.router.project(model, context, f.binding);
+  assert.equal((await f.store.read(ref)).images[0].evidenceId, originalId);
+  const reopened = new VisionRouter(f.router.services);
+  await reopened.project(model, context, f.binding);
+  assert.equal(f.calls.length, 2);
 });
 
 test("disabled and forged providers block images without ever borrowing a credential", async () => {
@@ -111,4 +128,53 @@ test("cache stays bounded without being the owner of durable evidence", () => {
   assert.equal(cache.size, 64);
   assert.equal(cache.get("0"), undefined);
   assert.ok(cache.byteSize <= 8 * 1024 * 1024);
+});
+
+test("one turn shares its total attempt budget across missing history and SDK re-entry", async () => {
+  const f = fixture();
+  const messages = Array.from({ length: 4 }, (_, index) => f.user(`history-${index}`, `Read image ${index}`));
+  f.router.beginTurn(ref, "latest", model.id);
+  await assert.rejects(f.router.project(model, { messages }, f.binding), { code: "VISION_BUDGET" });
+  assert.equal(f.calls.length, 3);
+  assert.equal((await f.store.read(ref)).evidence.length, 3, "confirmed partial work remains reusable");
+  await assert.rejects(f.router.project(model, { messages }, f.binding), { code: "VISION_BUDGET" });
+  assert.equal(f.calls.length, 3, "automatic SDK re-entry cannot reset the budget");
+  f.router.beginTurn(ref, "latest", model.id);
+  assertTextOnlyPayload(await f.router.project(model, { messages }, f.binding));
+  assert.equal(f.calls.length, 4, "explicit retry only fills the remaining evidence");
+});
+
+test("cancelled flights cannot poison an explicit retry or add late usage", async () => {
+  let release;
+  const f = fixture({ transport: (_url, init) => new Promise((resolve) => { release = () => {
+    const ids = JSON.parse(init.body).messages[1].content.filter((part) => part.text?.startsWith("Image ID: ")).map((part) => part.text.slice(10));
+    resolve(response(ids));
+  }; }) });
+  const context = { messages: [f.user()] };
+  f.router.beginTurn(ref, "client", model.id);
+  const cancelled = f.router.project(model, context, f.binding);
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+  f.router.cancel(ref);
+  await assert.rejects(cancelled, { code: "VISION_CANCELLED" });
+  const oldRelease = release;
+  release = undefined;
+  f.router.beginTurn(ref, "client", model.id);
+  const retried = f.router.project(model, context, f.binding);
+  while (!release) await new Promise((resolve) => setTimeout(resolve, 1));
+  oldRelease();
+  release();
+  await retried;
+  const record = await f.store.read(ref);
+  assert.equal(record.operations[0].stage, "cancelled");
+  assert.equal(record.operations[0].usage, undefined);
+  assert.equal(record.operations[0].requests, 1);
+  assert.equal(record.operations[1].usage.inputTokens, 37);
+  assert.equal(record.evidence.length, 1);
+});
+
+test("final payload guards cover Responses blocks and opaque image files without rejecting named documents", () => {
+  for (const input of [[{ type: "input_image", file_id: "image-file" }], [{ role: "user", content: [{ type: "input_file", file_id: "opaque-file" }] }], [{ role: "user", content: [{ type: "file", file: { filename: "photo.webp" } }] }]]) {
+    assert.throws(() => assertTextOnlyPayload({ input }), { code: "VISION_PAYLOAD" });
+  }
+  assert.doesNotThrow(() => assertTextOnlyPayload({ input: [{ role: "user", content: [{ type: "input_file", file_id: "doc", filename: "manual.pdf" }] }] }));
 });

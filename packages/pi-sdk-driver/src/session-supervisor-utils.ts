@@ -17,6 +17,7 @@ const FILE_ATTACHMENT_BLOCK_START = "<pi-gui-file-attachments>";
 const FILE_ATTACHMENT_BLOCK_END = "</pi-gui-file-attachments>";
 
 export interface SnapshotSource {
+  readonly vision?: import("@pi-gui/session-driver/vision-types").VisionProgress | undefined;
   readonly ref: SessionRef;
   readonly workspace: WorkspaceRef;
   readonly title: string;
@@ -54,6 +55,7 @@ export function buildSnapshot(source: SnapshotSource): SessionSnapshot {
         }
       : {}),
     ...(source.contextUsage !== undefined ? { contextUsage: { ...source.contextUsage } } : {}),
+    ...(source.vision ? { vision: { ...source.vision } } : {}),
   };
 }
 
@@ -308,6 +310,7 @@ export function transcriptFromMessages(messages: readonly unknown[], fallbackTim
       transcript.push({
         kind: "message",
         id: typeof message.id === "string" ? message.id : `${role}-${index}`,
+        ...(typeof message.sourceMessageEntryId === "string" ? { sourceMessageEntryId: message.sourceMessageEntryId } : {}),
         role,
         text,
         ...(attachments.length > 0 ? { attachments } : {}),

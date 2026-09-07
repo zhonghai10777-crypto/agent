@@ -1,5 +1,6 @@
 export interface SessionTranscriptImageAttachment {
   readonly kind: "image";
+  readonly id?: string;
   readonly mimeType: string;
   readonly data: string;
   readonly name?: string;
@@ -24,6 +25,7 @@ export interface SessionTranscriptMessage {
   readonly attachments?: readonly SessionTranscriptAttachment[];
   readonly createdAt: string;
   readonly id: string;
+  readonly sourceMessageEntryId?: string;
 }
 
 export interface SessionTranscriptToolCall {

@@ -16,6 +16,7 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
   const wrapper: Stream = (model, context, options) => {
     if (model.input.includes("image")) return original(model, context, options);
     const output = createAssistantMessageEventStream();
+    const generation = router.currentGeneration(binding.ref);
     const controller = new AbortController();
     const abort = () => controller.abort();
     for (const source of [lifetime.signal, options?.signal]) {
@@ -23,10 +24,16 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
       else source?.addEventListener("abort", abort, { once: true });
     }
     let primaryStarted = false;
+    const assertCurrent = () => {
+      assertVisionActive(controller.signal);
+      if (generation !== undefined && router.currentGeneration(binding.ref) !== generation) throw new VisionError("VISION_CANCELLED", "A newer turn replaced this model request.");
+    };
     void (async () => {
       try {
+        await binding.beforeRequest?.();
+        assertCurrent();
         const projected = await raceVisionAbort(router.project(model, context, binding, controller.signal), controller.signal);
-        assertVisionActive(controller.signal);
+        assertCurrent();
         const nextOptions: SimpleStreamOptions = {
           ...options,
           signal: controller.signal,
@@ -34,7 +41,7 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
             // Respect the SDK/extension transform before checking what will actually be sent.
             const transformed = await options?.onPayload?.(payload, requestModel);
             const final = transformed === undefined ? payload : transformed;
-            assertVisionActive(controller.signal);
+            assertCurrent();
             assertTextOnlyPayload(final);
             return final;
           },
@@ -47,7 +54,7 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
           while (true) {
             const item = await raceVisionAbort(iterator.next(), controller.signal);
             if (item.done) break;
-            assertVisionActive(controller.signal);
+            assertCurrent();
             output.push(item.value);
             if (item.value.type === "done" || item.value.type === "error") {
               terminal = true;
@@ -61,9 +68,12 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
       } catch (error) {
         const cancelled = controller.signal.aborted || error instanceof VisionError && error.code === "VISION_CANCELLED";
         const localError = error instanceof VisionError || !primaryStarted;
+        if (localError && (error instanceof VisionError || context.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image")))) {
+          await router.reportFailure(binding, error, model.id, generation);
+        }
         // Pi retries network-looking error strings. Detailed VISION_* errors live
         // in progress; this terminal local message intentionally has no retry trigger.
-        const errorMessage = cancelled ? "Image analysis cancelled." : localError
+        const errorMessage = cancelled ? (primaryStarted ? "Model request cancelled." : "Image analysis cancelled.") : localError
           ? "Image analysis stopped. See the image status for details and retry explicitly."
           : error instanceof Error ? error.message : "The model stream failed.";
         const message: AssistantMessage = {
@@ -131,7 +141,7 @@ export function createVisionSummaryExtension(router: VisionRouter, resolve: (ctx
 async function projectSummaryMessages(router: VisionRouter, target: VisionSummaryBinding, messages: readonly unknown[], signal: AbortSignal): Promise<unknown[]> {
   const compatible = messages.filter((message) => ["user", "assistant", "toolResult"].includes((message as { role: string }).role)) as VisionMessage[];
   const context: VisionContext = { messages: compatible };
-  const result = await router.project(target.session.model!, context, target.binding, signal);
+  const result = await router.projectSummary(target.session.model!, context, target.binding, signal);
   let index = 0;
   return messages.map((message) => compatible.includes(message as VisionMessage) ? result.messages[index++]! : message);
 }
