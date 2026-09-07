@@ -34,6 +34,7 @@ import { SidebarToggleButton } from "./sidebar-toggle-button";
 import { Topbar } from "./topbar";
 import { TerminalPanel } from "./terminal-panel";
 import { ConversationTimeline } from "./conversation-timeline";
+import { VisionSessionProvider } from "./vision-ui";
 import { loadPromptRailVisible, savePromptRailVisible } from "./prompt-rail-store";
 import { useSlashMenu } from "./hooks/use-slash-menu";
 import { useMentionMenu } from "./hooks/use-mention-menu";
@@ -1031,6 +1032,7 @@ function AppShell({
                   </div>
                 ) : null}
 
+                <VisionSessionProvider key={selectedSessionKey} sessionRef={{ workspaceId: selectedWorkspace.id, sessionId: selectedSession.id }} running={selectedSession.status === "running"} progress={selectedSession.vision}>
                 <ConversationTimeline
                   transcript={activeTranscript}
                   isTranscriptLoading={isTranscriptLoading}
@@ -1048,6 +1050,7 @@ function AppShell({
                   onForkFromMessage={selectedSession.status === "running" ? undefined : openForkModal}
                   promptRailVisible={promptRailVisible}
                 />
+                </VisionSessionProvider>
               </div>
             </section>
             <ComposerPanel

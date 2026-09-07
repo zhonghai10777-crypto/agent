@@ -17,6 +17,7 @@ import type { ModelOnboardingState, ModelOnboardingSettingsSection } from "./mod
 import { ModelSelector } from "./model-selector";
 import type { ExtensionDockModel } from "./extension-session-ui";
 import { useI18n } from "./i18n/I18nProvider";
+import { VisionUploadNotice } from "./vision-ui";
 
 interface ComposerPanelProps {
   readonly selectedSession: SessionRecord;
@@ -138,7 +139,10 @@ export function ComposerPanel({
           activeSlashCommand={activeSlashCommand}
           activeSlashCommandMeta={activeSlashCommandMeta}
           topNotice={(
+            <>
             <ModelOnboardingNoticeBanner notice={modelOnboarding.notice} onOpenSettings={onOpenModelSettings} />
+            <VisionUploadNotice modelId={modelId} attachments={attachments} queued={selectedSession.status === "running"} />
+            </>
           )}
           composerDraft={composerDraft}
           setComposerDraft={setComposerDraft}
@@ -233,7 +237,7 @@ export function ComposerPanel({
                       !primaryActionIsStop &&
                       ((!composerDraft.trim() && attachments.length === 0) || modelOnboarding.requiresModelSelection)
                     }
-                    onClick={onSubmit}
+                    onClick={(event) => { if (!primaryActionIsStop || event.detail < 2) onSubmit(); }}
                   >
                     {primaryActionIsStop ? <StopSquareIcon /> : <ArrowUpIcon />}
                   </button>

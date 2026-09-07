@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { RuntimeSettingsSnapshot, RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import { useI18n } from "./i18n/I18nProvider";
+import { SettingsVisionSection } from "./settings-vision-section";
 import {
   filterModels,
   labelForThinking,
@@ -62,6 +63,7 @@ export function SettingsModelsSection({
 
   return (
     <>
+      <SettingsVisionSection runtime={runtime} />
       <SettingsGroup>
         <SettingsRow title={t("settings.models.defaultModel")} description={t("settings.models.defaultModelDesc")}>
           <select

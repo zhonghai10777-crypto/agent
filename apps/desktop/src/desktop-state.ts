@@ -100,6 +100,7 @@ export type QueuedComposerMessageMode = "steer" | "followUp";
 
 export interface QueuedComposerMessage {
   readonly id: string;
+  readonly generation?: number;
   readonly mode: QueuedComposerMessageMode;
   readonly text: string;
   readonly attachments: readonly ComposerAttachment[];
@@ -120,6 +121,7 @@ export interface SessionRecord {
   readonly hasUnseenUpdate: boolean;
   readonly config?: SessionConfig;
   readonly contextUsage?: SessionContextUsage;
+  readonly vision?: import("@pi-gui/session-driver/vision-types").VisionProgress;
 }
 
 export type OrchestrationChildThreadStatus = "queued" | "running" | "waiting" | "complete" | "failed";

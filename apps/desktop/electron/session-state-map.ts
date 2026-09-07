@@ -39,6 +39,7 @@ export class SessionStateMap {
   readonly queuedComposerEditsBySession = new Map<string, QueuedComposerEditState>();
   readonly sessionConfigBySession = new Map<string, SessionConfig>();
   readonly contextUsageBySession = new Map<string, SessionContextUsage>();
+  readonly visionBySession = new Map<string, import("@pi-gui/session-driver/vision-types").VisionProgress>();
   readonly lastViewedAtBySession = new Map<string, string>();
   readonly pinnedAtBySession = new Map<string, string>();
   pinnedSessionOrder: string[] = [];
@@ -90,6 +91,7 @@ export class SessionStateMap {
       this.queuedComposerEditsBySession,
       this.sessionConfigBySession,
       this.contextUsageBySession,
+      this.visionBySession,
       this.lastViewedAtBySession,
       this.pinnedAtBySession,
       this.sessionErrorsBySession,
@@ -150,6 +152,7 @@ export class SessionStateMap {
     this.queuedComposerEditsBySession.delete(key);
     this.sessionConfigBySession.delete(key);
     this.contextUsageBySession.delete(key);
+    this.visionBySession.delete(key);
     this.lastViewedAtBySession.delete(key);
     this.pinnedAtBySession.delete(key);
     this.pinnedSessionOrder = this.pinnedSessionOrder.filter((entry) => entry !== key);

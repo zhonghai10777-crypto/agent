@@ -45,7 +45,7 @@ export function updateSessionRecord(
   session: SessionRecord,
   options: {
     readonly snapshot?: Partial<
-      Pick<SessionSnapshot, "title" | "updatedAt" | "archivedAt" | "preview" | "status" | "config" | "contextUsage">
+      Pick<SessionSnapshot, "title" | "updatedAt" | "archivedAt" | "preview" | "status" | "config" | "contextUsage" | "vision">
     >;
     readonly status?: SessionRecord["status"];
     readonly transcript: readonly TranscriptMessage[];
@@ -74,6 +74,7 @@ export function updateSessionRecord(
     hasUnseenUpdate: hasUnseenSessionUpdate(nextStatus, updatedAt, options.lastViewedAt, options.transcript),
     config: options.snapshot?.config ?? session.config,
     contextUsage: options.snapshot?.contextUsage ?? session.contextUsage,
+    vision: options.snapshot?.vision ?? session.vision,
   };
 }
 

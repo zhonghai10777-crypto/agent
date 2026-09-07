@@ -6,6 +6,7 @@ import { InlineDiff, extractDiffFromOutput } from "./diff-inline";
 import { ChevronRightIcon, CopyIcon, DiffIcon, FileIcon, ForkIcon, SparkIcon, TerminalIcon } from "./icons";
 import { extensionToLanguage } from "./syntax-highlight";
 import { useI18n } from "./i18n/I18nProvider";
+import { VisionMessageStatus } from "./vision-ui";
 import type { Translator } from "./i18n";
 
 interface TimelineItemProps {
@@ -113,6 +114,7 @@ function TimelineMessage({
             </div>
           ) : null}
           <MessageMarkdown text={item.text} />
+          <VisionMessageStatus item={item} />
         </div>
       </article>
     );
