@@ -1,0 +1,145 @@
+# Place this file at .github/workflows/windows-beta-candidate.yml.
+# Generates Windows x64 candidate artifacts only. It does NOT publish a Release,
+# require a publishing token, or replace full Windows UI / installer acceptance.
+# The referenced packaging commands were reviewed at commit 687ec3d.
+name: Windows Beta Candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      update_repository:
+        description: 'Existing update repository (owner/repo). Empty uses the app default.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-beta-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # This embeds only a repository name. Never embed PI_APP_UPDATE_TOKEN.
+      PI_APP_UPDATE_REPOSITORY: ${{ inputs.update_repository }}
+
+    steps:
+      - name: Check out the selected branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install the pnpm version pinned by the repository
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Validate configuration and product versions
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $repo = ([string]$env:PI_APP_UPDATE_REPOSITORY).Trim()
+          if ($repo) {
+            if ($repo -notmatch '^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$' -or
+                ($repo.Split('/')[1] -in @('.', '..'))) {
+              throw 'update_repository must be an existing owner/repository name.'
+            }
+          }
+          $root = Get-Content package.json -Raw | ConvertFrom-Json
+          $desktop = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
+          if ($root.version -ne $desktop.version) {
+            throw 'Root and desktop product versions do not match.'
+          }
+          if ($desktop.version -notmatch '^\d+\.\d+\.\d+-beta\.[0-9]+$') {
+            throw 'This candidate workflow expects a version such as 0.1.0-beta.33.'
+          }
+          Write-Host "Building candidate $($desktop.version) from $env:GITHUB_SHA"
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Driver tests on Windows
+        run: pnpm --filter @pi-gui/pi-sdk-driver test
+
+      - name: Launcher contract
+        run: pnpm --dir apps/desktop run verify:launcher-contract
+
+      - name: Changed-file adapter tests
+        run: pnpm --filter @pi-gui/desktop run test:changed-files
+
+      # Full UI tests and clean-account install/upgrade/uninstall acceptance
+      # must be completed separately before approving a public beta.
+      - name: Build NSIS installer and portable executable
+        run: pnpm package:win
+
+      - name: Verify packaged dependencies
+        run: pnpm --dir apps/desktop run verify:packaged-runtime-deps:windows
+
+      - name: Record build identity, signatures and SHA-256 checksums
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $desktop = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
+          $version = $desktop.version
+          $releaseDir = Join-Path $PWD 'apps/desktop/release'
+          $names = @(
+            "Agent-$version-x64-setup.exe",
+            "Agent-$version-x64-portable.exe"
+          )
+          $checksums = @()
+          $artifacts = @()
+          foreach ($name in $names) {
+            $file = Join-Path $releaseDir $name
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Expected artifact is missing: $file"
+            }
+            $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+            $signature = Get-AuthenticodeSignature -LiteralPath $file
+            $checksums += "$hash  $name"
+            $artifacts += [ordered]@{
+              file = $name
+              sha256 = $hash
+              bytes = (Get-Item -LiteralPath $file).Length
+              signatureStatus = $signature.Status.ToString()
+            }
+          }
+          $checksums | Set-Content (Join-Path $releaseDir 'SHA256SUMS.txt') -Encoding utf8
+          [ordered]@{
+            repository = $env:GITHUB_REPOSITORY
+            commit = $env:GITHUB_SHA
+            version = $version
+            platform = 'win32'
+            architecture = 'x64'
+            createdAtUtc = [DateTime]::UtcNow.ToString('o')
+            updateRepositoryOverride = $env:PI_APP_UPDATE_REPOSITORY
+            runId = $env:GITHUB_RUN_ID
+            acceptance = 'Candidate only: full Windows UI and installer acceptance not run by this workflow.'
+            artifacts = $artifacts
+          } | ConvertTo-Json -Depth 5 |
+            Set-Content (Join-Path $releaseDir 'build-info.json') -Encoding utf8
+
+      - name: Upload candidate files (not a GitHub Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-beta-candidate-${{ github.sha }}
+          path: |
+            apps/desktop/release/*-x64-setup.exe
+            apps/desktop/release/*-x64-portable.exe
+            apps/desktop/release/SHA256SUMS.txt
+            apps/desktop/release/build-info.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
