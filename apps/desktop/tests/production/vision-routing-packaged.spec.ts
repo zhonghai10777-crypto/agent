@@ -1,0 +1,57 @@
+import { cp, mkdir } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { expect, test } from "@playwright/test";
+import { getDesktopState, launchDesktopByExecutable, makeUserDataDir, makeWorkspace, setDeferredThreadTitleMode, startThreadFromSurface } from "../helpers/electron-app";
+import { pasteVisionImage, seedVisionAgentDir, startVisionHttpFixture } from "../helpers/vision-fixture";
+
+test("Windows packaged EXE handles images, Stop, retry and reopen under a Chinese path", async ({}, info) => {
+  test.skip(process.platform !== "win32" || process.env.PI_APP_TEST_PACKAGED_VISION !== "1", "Requires an explicit Windows packaged vision run.");
+  test.setTimeout(180_000);
+  const sourceExecutable = resolve(process.env.PI_APP_TEST_VISION_EXE ?? "apps/desktop/release/win-unpacked/agent.exe");
+  const installedDir = join(await makeUserDataDir("Agent-打包验证-"), "中文用户", "应用程序", "Agent");
+  await mkdir(installedDir, { recursive: true });
+  await cp(dirname(sourceExecutable), installedDir, { recursive: true });
+  const executable = join(installedDir, "agent.exe");
+  const userDataDir = await makeUserDataDir("Agent-中文用户-");
+  const agentDir = join(userDataDir, "agent");
+  const workspace = await makeWorkspace("视觉-中文工程");
+  await seedVisionAgentDir(agentDir);
+  const http = await startVisionHttpFixture();
+  const options = { agentDir, initialWorkspaces: [workspace], scrubProviderEnv: true, testMode: "background" as const };
+  let harness = await launchDesktopByExecutable(executable, userDataDir, options);
+  try {
+    let page = await harness.firstWindow();
+    expect(await harness.electronApp.evaluate(() => process.execPath)).toBe(executable);
+    await http.install(harness);
+    await setDeferredThreadTitleMode(harness);
+    await startThreadFromSurface(page, { prompt: "Packaged text baseline" });
+    await expect(page.locator(".timeline-item--assistant")).toContainText("Primary answer from deepseek-v4-pro");
+    http.setVisionMode("hold");
+    await pasteVisionImage(page);
+    await page.getByTestId("composer").fill("Read the packaged test image");
+    await page.getByTestId("send").click();
+    await expect(page.getByTestId("vision-status")).toHaveAttribute("data-stage", "recognizing");
+    await page.getByRole("button", { name: "Stop run" }).click();
+    await expect(page.getByTestId("vision-status")).toHaveAttribute("data-stage", "cancelled");
+    expect(http.requests.filter((request) => request.kind === "primary")).toHaveLength(1);
+    http.setVisionMode("success");
+    http.release();
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(page.getByTestId("vision-status")).toHaveAttribute("data-stage", "completed");
+    await page.getByRole("button", { name: "View image evidence" }).click();
+    await expect(page.getByTestId("vision-evidence")).toContainText("ERROR 42");
+    await page.screenshot({ path: info.outputPath("packaged-vision.png"), fullPage: true });
+    const state = await getDesktopState(page);
+    expect(state.workspaces.flatMap((entry) => entry.sessions).find((entry) => entry.id === state.selectedSessionId)?.config?.modelId).toBe("deepseek-v4-pro");
+    await harness.close();
+    const count = http.requests.length;
+    harness = await launchDesktopByExecutable(executable, userDataDir, options);
+    page = await harness.firstWindow();
+    await http.install(harness);
+    await expect(page.locator(".timeline-item__attachment--image")).toHaveCount(1);
+    await page.getByRole("button", { name: "View image evidence" }).click();
+    await expect(page.getByTestId("vision-evidence")).toContainText("ERROR 42");
+    expect(http.requests).toHaveLength(count);
+    await page.screenshot({ path: info.outputPath("packaged-reopen.png"), fullPage: true });
+  } finally { await harness.close().catch(() => {}); await http.close(); }
+});
