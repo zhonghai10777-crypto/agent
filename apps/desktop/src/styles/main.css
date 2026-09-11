@@ -2059,6 +2059,22 @@
   flex-shrink: 0;
 }
 
+.settings-endpoint-model .settings-row__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+
+.settings-endpoint-model__image-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  color: var(--muted-soft);
+  font-size: 13px;
+}
+
 .settings-row--updates .settings-row__control {
   flex: 0 1 360px;
   min-width: 0;

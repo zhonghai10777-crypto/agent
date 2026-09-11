@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
-import { sessionKey } from "@pi-gui/pi-sdk-driver";
+import { isImageInputDisabledError, sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
 import type {
@@ -11,7 +11,8 @@ import type {
   RemoveWorktreeInput,
   StartThreadInput,
 } from "../src/desktop-state";
-import { sendMessageToSession } from "./app-store-composer";
+import { restoreComposerDraft, sendMessageToSession } from "./app-store-composer";
+import { cloneComposerAttachments } from "./app-store-utils";
 import type { CreateWorktreeOptions } from "./worktree-manager";
 import type { AppStoreInternals } from "./app-store-internals";
 import { NEW_THREAD_PLACEHOLDER_TITLE } from "./thread-title-constants";
@@ -165,8 +166,25 @@ export async function startThread(store: AppStoreInternals, input: StartThreadIn
     if (prompt || attachments.length > 0) {
       void sendMessageToSession(store, session.ref, prompt, attachments, {
         rollbackOptimisticMessageOnError: false,
-      }).catch((error) => {
-        void store.withError(error);
+      }).catch(async (error) => {
+        if (isImageInputDisabledError(error)) {
+          await restoreComposerDraft(store, session.ref, prompt, attachments);
+          // First messages bypass the composer submit handler that restores its
+          // local draft. Publish the recovery only if this thread is still selected.
+          if (store.state.selectedWorkspaceId === session.ref.workspaceId && store.state.selectedSessionId === session.ref.sessionId) {
+            store.state = {
+              ...store.state,
+              composerDraft: prompt,
+              composerDraftSyncSource: "command",
+              composerDraftSyncNonce: store.allocateComposerDraftSyncNonce(),
+              composerAttachments: cloneComposerAttachments(attachments),
+              revision: store.state.revision + 1,
+            };
+          }
+          await store.withSessionError(session.ref, error);
+        } else {
+          await store.withError(error);
+        }
       });
     }
     if (prompt) {

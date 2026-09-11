@@ -144,6 +144,7 @@ const enMessages = {
   "composer.stopRun": "Stop run",
   "composer.sendMessage": "Send message",
   "composer.dropToAttach": "Drop images or files to attach",
+  "composer.imageInputDisabled": "Image input is not enabled for {model}. For a vision-capable custom model, enable Image input in Settings → Providers, or choose a model that accepts images.",
   "composer.removeAttachment": "Remove {name}",
   "composer.attachment.pages": "{count} page(s) read",
   "composer.attachment.sheets": "{count} sheet(s) read",
@@ -480,6 +481,9 @@ const enMessages = {
   "settings.endpoints.bridgeUnavailable": "Desktop bridge is not available.",
   "settings.endpoints.modelCount": "{count} model{s}",
   "settings.endpoints.enableAria": "Enable {id}",
+  "settings.endpoints.imageInput": "Image input",
+  "settings.endpoints.imageInputAria": "Image input for {id}",
+  "settings.endpoints.imageInputHint": "Enable image input for models that support vision to send screenshots and pictures.",
   "settings.endpoints.description":
     "Add OpenAI-compatible endpoints (Ollama, vLLM, or your own server). Stored in ~/.pi/agent/models.json.",
   "settings.endpoints.addEndpointHint": "Register a local or custom OpenAI-compatible server.",

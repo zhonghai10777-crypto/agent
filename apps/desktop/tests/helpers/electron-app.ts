@@ -575,7 +575,7 @@ export async function seedAgentDir(agentDir: string, options: SeedAgentDirOption
                 api: "openai-completions",
                 apiKey: "unused",
                 piGuiCustomEndpoint: true,
-                models: [{ id: "gpt-5" }, { id: "gpt-4o" }, { id: "gpt-4-turbo" }],
+                models: ["gpt-5", "gpt-4o", "gpt-4-turbo"].map((id) => ({ id, input: ["text", "image"] })),
               },
             }
           : {},

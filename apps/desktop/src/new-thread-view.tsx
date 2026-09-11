@@ -169,7 +169,11 @@ export function NewThreadView({
               topNotice={(
                 <>
                 <ModelOnboardingNoticeBanner notice={modelOnboarding.notice} onOpenSettings={onOpenModelSettings} />
-                <VisionUploadNotice modelId={modelId} attachments={attachments} />
+                <VisionUploadNotice
+                  modelId={modelId}
+                  supportsImages={runtime?.models.find((model) => model.providerId === provider && model.modelId === modelId)?.supportsImages}
+                  attachments={attachments}
+                />
                 </>
               )}
               queuedMessages={[]}

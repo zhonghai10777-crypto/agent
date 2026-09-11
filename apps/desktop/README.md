@@ -79,9 +79,24 @@ The default repository remains `zhonghai10777-crypto/agent` for existing users.
 Anonymous updates require a publicly readable distribution repository; without
 one, private-repository checks report an access error rather than “up to date”.
 
+## Model image input
+
+Settings → Providers → Custom endpoints lets you enable **Image input** for each
+vision-capable model. The setting persists across edits and restarts and applies
+to the next turn in an open session. Images are sent directly to that model.
+
+Official DeepSeek `deepseek-flash` (V4.1 Flash), `deepseek-v4-flash`, and
+`deepseek-v4-flash-vision-exp` default to image input at `https://api.deepseek.com`
+or its `/v1` endpoint, following the [DeepSeek vision documentation](https://api-docs.deepseek.com/zh-cn/guides/vision).
+Startup fills missing image capabilities in older app-managed configurations,
+keeping an original-file backup and preserving explicit choices. Other custom
+models require an explicit image setting. If neither native image input nor an
+image assistance route is available, sending a screenshot shows a configuration
+error and keeps the draft and attachments for retry.
+
 ## DeepSeek image assistance
 
-Official DeepSeek `deepseek-v4-pro` and `deepseek-v4-flash` text sessions can analyze
+Official DeepSeek `deepseek-v4-pro` and `deepseek-v4-flash` sessions configured for text input can analyze
 attached images with `deepseek-v4-flash-vision-exp`, then answer with the original
 primary model, thinking level, context and tools. Settings → Models controls
 **Automatic image analysis**, shows the auxiliary model and account source, and

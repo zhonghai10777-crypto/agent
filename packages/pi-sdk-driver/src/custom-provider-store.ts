@@ -4,6 +4,8 @@ import {
   BUILT_IN_PROVIDER_IDS,
   CUSTOM_PROVIDER_ID_PATTERN,
   CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
+  defaultCustomModelInput,
+  isCustomModelInput,
   isValidHttpBaseUrl,
   OPENAI_COMPLETIONS_API,
   PI_GUI_CUSTOM_PROVIDER_MARKER,
@@ -50,8 +52,31 @@ export class CustomProviderStore {
           `Provider ID "${input.providerId}" already exists in models.json and is not managed by pi-gui.`,
         );
       }
-      providers[input.providerId] = toProviderConfig(input);
+      providers[input.providerId] = toProviderConfig(input, existing as Record<string, unknown> | undefined);
       await atomicWriteJson(this.modelsJsonPath, data);
+    });
+  }
+
+  /** Fill only missing, documented image defaults; keep all existing provider data intact. */
+  async migrateImageCapabilities(): Promise<void> {
+    await this.enqueue(async () => {
+      const data = await readModelsJson(this.modelsJsonPath);
+      if (!data.providers || typeof data.providers !== "object") return;
+      let changed = false;
+      for (const [providerId, raw] of Object.entries(data.providers)) {
+        if (!raw || typeof raw !== "object") continue;
+        const config = raw as Record<string, unknown>;
+        if (!isPiGuiCustomProviderConfig(providerId, config) || typeof config.baseUrl !== "string" || !Array.isArray(config.models)) continue;
+        for (const model of config.models) {
+          if (!model || typeof model !== "object" || typeof model.id !== "string" || model.input !== undefined) continue;
+          const input = defaultCustomModelInput(config.baseUrl, model.id);
+          if (input.includes("image")) {
+            model.input = input;
+            changed = true;
+          }
+        }
+      }
+      if (changed) await writeJsonFileAtomic(this.modelsJsonPath, data, { backup: true });
     });
   }
 
@@ -95,10 +120,13 @@ function validateInput(input: CustomProviderInput): void {
     if (model.contextWindow !== undefined && !Number.isFinite(model.contextWindow)) {
       throw new Error(`Model ${model.id} has non-numeric contextWindow.`);
     }
+    if (model.input !== undefined && !isCustomModelInput(model.input)) {
+      throw new Error(`Model ${model.id} input must be a non-empty array containing only text and image.`);
+    }
   }
 }
 
-function toProviderConfig(input: CustomProviderInput): Record<string, unknown> {
+function toProviderConfig(input: CustomProviderInput, existing?: Record<string, unknown>): Record<string, unknown> {
   return {
     baseUrl: input.baseUrl,
     api: OPENAI_COMPLETIONS_API,
@@ -108,7 +136,13 @@ function toProviderConfig(input: CustomProviderInput): Record<string, unknown> {
     apiKey: CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
     [PI_GUI_CUSTOM_PROVIDER_MARKER]: true,
     models: (input.models ?? []).map((model) => {
-      const entry: Record<string, unknown> = { id: model.id };
+      const previous = Array.isArray(existing?.models)
+        ? existing.models.find((entry) => entry && typeof entry === "object" && entry.id === model.id)
+        : undefined;
+      const entry: Record<string, unknown> = {
+        id: model.id,
+        input: model.input ?? (isCustomModelInput(previous?.input) ? previous.input : defaultCustomModelInput(input.baseUrl, model.id)),
+      };
       if (model.contextWindow !== undefined) {
         entry.contextWindow = model.contextWindow;
       }
@@ -147,9 +181,11 @@ function readCustomProviders(data: Record<string, unknown>): readonly CustomProv
             }
             const contextWindow =
               typeof modelConfig.contextWindow === "number" ? modelConfig.contextWindow : undefined;
-            return contextWindow !== undefined
-              ? { id: modelConfig.id, contextWindow }
-              : { id: modelConfig.id };
+            return {
+              id: modelConfig.id,
+              ...(contextWindow !== undefined ? { contextWindow } : {}),
+              ...(isCustomModelInput(modelConfig.input) ? { input: modelConfig.input } : {}),
+            };
           })
           .filter((entry): entry is CustomProviderModelInput => entry !== undefined)
       : [];

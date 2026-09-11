@@ -143,6 +143,7 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.stopRun": "停止运行",
   "composer.sendMessage": "发送消息",
   "composer.dropToAttach": "拖放图片或文件以附加",
+  "composer.imageInputDisabled": "当前模型 {model} 未启用图片输入。请在“设置 → 模型服务 → 自定义端点”中为支持视觉的模型开启“接受图片”，或切换到支持图片的模型。",
   "composer.removeAttachment": "移除 {name}",
   "composer.attachment.pages": "已解析 {count} 页",
   "composer.attachment.sheets": "已解析 {count} 个工作表",
@@ -477,6 +478,9 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.endpoints.bridgeUnavailable": "桌面桥不可用。",
   "settings.endpoints.modelCount": "{count} 个模型",
   "settings.endpoints.enableAria": "启用 {id}",
+  "settings.endpoints.imageInput": "接受图片",
+  "settings.endpoints.imageInputAria": "{id} 接受图片",
+  "settings.endpoints.imageInputHint": "为支持视觉的模型开启“接受图片”，即可发送截图和图片。",
   "settings.endpoints.description":
     "添加兼容 OpenAI 协议的端点（Ollama、vLLM 或你自己的服务器）。配置保存在 ~/.pi/agent/models.json。",
   "settings.endpoints.addEndpointHint": "注册一个本地或自建的 OpenAI 兼容服务器。",

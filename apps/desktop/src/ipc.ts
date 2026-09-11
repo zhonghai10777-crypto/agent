@@ -1,5 +1,6 @@
 import type { RuntimeSettingsSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { StoredVisionEvidence, VisionRoutingSettings, VisionSessionView, VisionUsage } from "@pi-gui/session-driver/vision-types";
+import type { CustomProviderModelInput } from "@pi-gui/pi-sdk-driver/custom-provider-types";
 import type { WebSearchKeySource, WebSearchProvider } from "./web-search-providers";
 import type {
   NavigateSessionTreeOptions,
@@ -37,10 +38,7 @@ export type DesktopNotificationPermissionStatus =
   | "unknown";
 
 
-export interface CustomProviderModelConfig {
-  readonly id: string;
-  readonly contextWindow?: number;
-}
+export type CustomProviderModelConfig = CustomProviderModelInput;
 
 /**
  * A custom endpoint as the renderer sees it. The API key is never sent to the
