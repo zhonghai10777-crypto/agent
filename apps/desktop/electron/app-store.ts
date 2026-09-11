@@ -6,6 +6,7 @@ import {
   applyHostUiRequestToExtensionUiState,
   type GenerateThreadTitleOptions,
   isExtensionUiDialogRequest,
+  isImageInputDisabledError,
   JsonCatalogStore,
   PiSdkDriver,
   type PiSdkDriverConfig,
@@ -71,7 +72,7 @@ import {
   isThemeMode,
   isThemePresetId,
 } from "../src/desktop-state";
-import { setGlobalLocale } from "../src/i18n";
+import { setGlobalLocale, tGlobal } from "../src/i18n";
 import { PRODUCT } from "../src/product";
 import {
   applyTimelineEvent,
@@ -1118,10 +1119,7 @@ export class DesktopAppStore implements AppStoreInternals {
       providerId: entry.providerId,
       baseUrl: entry.baseUrl,
       hasApiKey: entry.hasApiKey,
-      models: entry.models.map((model) => ({
-        id: model.id,
-        ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
-      })),
+      models: entry.models,
     }));
   }
 
@@ -1136,10 +1134,7 @@ export class DesktopAppStore implements AppStoreInternals {
         providerId: config.providerId,
         baseUrl: config.baseUrl,
         ...(config.apiKey !== undefined ? { apiKey: config.apiKey } : {}),
-        models: (config.models ?? []).map((model) => ({
-          id: model.id,
-          ...(model.contextWindow !== undefined ? { contextWindow: model.contextWindow } : {}),
-        })),
+        models: config.models ?? [],
       }),
       { refreshAllWorkspaces: true },
     );
@@ -3644,6 +3639,9 @@ function applyModelSettingsSnapshot(
  * a user-readable explanation of who holds it and what to do.
  */
 function describeStoreError(error: unknown): string {
+  if (isImageInputDisabledError(error)) {
+    return tGlobal("composer.imageInputDisabled", { model: `${error.providerId}/${error.modelId}` });
+  }
   if (isSessionLeasedError(error)) {
     const { holder } = error;
     const where = holder.surface === "pi-cli" ? "the pi CLI" : "another pi instance";

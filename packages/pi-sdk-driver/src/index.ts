@@ -17,6 +17,7 @@ export {
 export type { PiSdkDriverOptions, SyncWorkspaceResult } from "./session-supervisor.js";
 export { SessionSupervisor } from "./session-supervisor.js";
 export { SessionLeasedError } from "./session-lease.js";
+export { ImageInputDisabledError, isImageInputDisabledError } from "./image-input.js";
 export type { LeaseInfo } from "./session-lease.js";
 export { RUNTIME_SCHEMA_VERSION } from "./session-schema.js";
 export type { SessionSchemaInfo } from "./session-schema.js";

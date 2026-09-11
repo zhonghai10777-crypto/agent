@@ -113,6 +113,7 @@ import { addVisionUsage, shouldRouteVision, VisionRouter, type VisionServices, t
 import { assertVisionActive, VisionError } from "./vision-errors.js";
 import { createVisionSummaryExtension, installVisionStreamAdapter } from "./pi-compat/vision-stream-adapter.js";
 import { annotateVisionMessageSources, continueAcceptedVisionTurn, resolveVisionModelKey, resolveVisionSessionKey, syncVisionMessageEntries, visionInputDigest, visionMessageInputDigest, visionSessionEntries } from "./pi-compat/vision-session-adapter.js";
+import { prepareSessionImageInput } from "./image-input.js";
 
 export interface PiSdkDriverOptions {
   readonly visionServices?: VisionServices;
@@ -960,6 +961,8 @@ export class SessionSupervisor {
       throw new Error("Session is already streaming. Specify deliverAs ('steer' or 'followUp') to queue the message.");
     }
 
+    prepareSessionImageInput(session, isExtensionCommand ? undefined : input.attachments, this.visionRouter ? shouldRouteVision : undefined);
+
     const alreadyQueued = record.queuedMessages.some((message) => message.id === input.clientMessageId);
     const isQueuedMessage = !isExtensionCommand && Boolean(input.deliverAs) && (session.isStreaming || alreadyQueued);
     if (!isExtensionCommand && this.visionRouter) {
@@ -1048,6 +1051,9 @@ export class SessionSupervisor {
     const record = await this.ensureRecord(sessionRef);
     const session = this.requireSession(record);
     const cancelGeneration = record.cancelGeneration;
+    for (const message of messages) {
+      prepareSessionImageInput(session, message.attachments, this.visionRouter ? shouldRouteVision : undefined);
+    }
     if (this.visionRouter) {
       for (const message of messages) {
         await this.registerVisionSubmission(record, { text: message.text, clientMessageId: message.id, generation: message.generation ?? 0, ...(message.attachments ? { attachments: message.attachments } : {}) });

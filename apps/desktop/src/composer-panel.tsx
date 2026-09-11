@@ -141,7 +141,12 @@ export function ComposerPanel({
           topNotice={(
             <>
             <ModelOnboardingNoticeBanner notice={modelOnboarding.notice} onOpenSettings={onOpenModelSettings} />
-            <VisionUploadNotice modelId={modelId} attachments={attachments} queued={selectedSession.status === "running"} />
+            <VisionUploadNotice
+              modelId={modelId}
+              supportsImages={runtime?.models.find((model) => model.providerId === provider && model.modelId === modelId)?.supportsImages}
+              attachments={attachments}
+              queued={selectedSession.status === "running"}
+            />
             </>
           )}
           composerDraft={composerDraft}

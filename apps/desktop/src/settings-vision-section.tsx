@@ -10,7 +10,7 @@ export function SettingsVisionSection({ runtime }: { readonly runtime?: RuntimeS
   const [status, setStatus] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState("");
-  const candidates = runtime?.models.filter((model) => ["deepseek-v4-pro", "deepseek-v4-flash"].includes(model.modelId)) ?? [];
+  const candidates = runtime?.models.filter((model) => !model.supportsImages && ["deepseek-v4-pro", "deepseek-v4-flash"].includes(model.modelId)) ?? [];
   const selected = candidates.find((model) => `${model.providerId}/${model.modelId}` === selection) ?? candidates[0];
   useEffect(() => {
     let active = true;

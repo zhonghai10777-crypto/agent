@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sessionKey } from "@pi-gui/pi-sdk-driver";
+import { isImageInputDisabledError, sessionKey } from "@pi-gui/pi-sdk-driver";
 import { tGlobal } from "../src/i18n";
 import type { SessionAttachment, SessionConfig, SessionQueuedMessage, SessionRef } from "@pi-gui/session-driver";
 import type { ComposerAttachment, DesktopAppState, QueuedComposerMessage, WorkspaceSessionTarget } from "../src/desktop-state";
@@ -408,13 +408,7 @@ export async function submitComposerToSession(
     if (resolvedRuntimeSlashCommand) {
       store.finishRuntimeCommandExecution(sessionRef);
     }
-    if (textInput) {
-      store.sessionState.composerDraftsBySession.set(key, textInput);
-    }
-    if (attachments.length > 0) {
-      store.sessionState.composerAttachmentsBySession.set(key, cloneComposerAttachments(attachments));
-      await store.persistComposerAttachments(key, attachments);
-    }
+    await restoreComposerDraft(store, sessionRef, textInput, attachments);
     if (editingState) {
       store.setQueuedComposerEditState(sessionRef, editingState);
     }
@@ -479,6 +473,22 @@ export async function cancelCurrentRun(store: AppStoreInternals): Promise<Deskto
 
 /* ── Internal helpers ───────────────────────────────────── */
 
+export async function restoreComposerDraft(
+  store: AppStoreInternals,
+  sessionRef: SessionRef,
+  text: string,
+  attachments: readonly ComposerAttachment[],
+): Promise<void> {
+  const key = sessionKey(sessionRef);
+  if (text) {
+    store.sessionState.composerDraftsBySession.set(key, text);
+  }
+  if (attachments.length > 0) {
+    store.sessionState.composerAttachmentsBySession.set(key, cloneComposerAttachments(attachments));
+    await store.persistComposerAttachments(key, attachments);
+  }
+}
+
 export async function sendMessageToSession(
   store: AppStoreInternals,
   sessionRef: SessionRef,
@@ -524,7 +534,7 @@ export async function sendMessageToSession(
       await store.driver.sendUserMessage(sessionRef, input);
     }
   } catch (error) {
-    if (rollbackOptimisticMessageOnError) {
+    if (rollbackOptimisticMessageOnError || isImageInputDisabledError(error)) {
       const transcript = store.sessionState.transcriptCache.get(key) ?? [];
       store.sessionState.transcriptCache.set(
         key,

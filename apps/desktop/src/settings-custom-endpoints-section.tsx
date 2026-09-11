@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CUSTOM_PROVIDER_ID_PATTERN, isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver/custom-provider-types";
+import { CUSTOM_PROVIDER_ID_PATTERN, defaultCustomModelInput, isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver/custom-provider-types";
 import type { CustomProviderConfig, CustomProviderModelConfig, CustomProviderView } from "./ipc";
 import { useI18n } from "./i18n/I18nProvider";
 import type { Translator } from "./i18n";
@@ -200,14 +200,20 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
     setProbeCandidates(result.models);
   };
 
-  const toggleModel = (id: string, contextWindow?: number) => {
+  const toggleModel = (id: string) => {
     setModels((current) => {
       const existing = current.find((model) => model.id === id);
       if (existing) {
         return current.filter((model) => model.id !== id);
       }
-      return [...current, contextWindow !== undefined ? { id, contextWindow } : { id }];
+      return [...current, { id }];
     });
+  };
+
+  const setModelImageInput = (id: string, enabled: boolean) => {
+    setModels((current) => current.map((model) => model.id === id
+      ? { ...model, input: enabled ? ["text", "image"] : ["text"] }
+      : model));
   };
 
   const handleManualAdd = (id: string) => {
@@ -344,12 +350,15 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
             <p className="settings-row__description settings-warning">{probeError}</p>
           ) : null}
           <ModelChecklist
+            baseUrl={baseUrl}
             probed={probeCandidates}
             selected={models}
             onToggle={toggleModel}
+            onImageInputChange={setModelImageInput}
             onManualAdd={handleManualAdd}
             disabled={savePending}
           />
+          <p className="settings-row__description">{t("settings.endpoints.imageInputHint")}</p>
           <p className="settings-row__description">{t("settings.endpoints.toolCallingHint")}</p>
         </div>
 
@@ -373,17 +382,19 @@ function CustomEndpointDialog({ mode, existingProviderIds, onClose, onSave }: Cu
 }
 
 interface ModelChecklistProps {
+  readonly baseUrl: string;
   readonly probed: readonly string[];
   readonly selected: readonly CustomProviderModelConfig[];
-  readonly onToggle: (id: string, contextWindow?: number) => void;
+  readonly onToggle: (id: string) => void;
+  readonly onImageInputChange: (id: string, enabled: boolean) => void;
   readonly onManualAdd: (id: string) => void;
   readonly disabled: boolean;
 }
 
-function ModelChecklist({ probed, selected, onToggle, onManualAdd, disabled }: ModelChecklistProps) {
+function ModelChecklist({ baseUrl, probed, selected, onToggle, onImageInputChange, onManualAdd, disabled }: ModelChecklistProps) {
   const { t } = useI18n();
   const [manualDraft, setManualDraft] = useState("");
-  const selectedIds = useMemo(() => new Set(selected.map((model) => model.id)), [selected]);
+  const selectedModels = useMemo(() => new Map(selected.map((model) => [model.id, model])), [selected]);
   const knownIds = useMemo(() => new Set([...probed, ...selected.map((model) => model.id)]), [probed, selected]);
 
   const submitManual = () => {
@@ -397,20 +408,33 @@ function ModelChecklist({ probed, selected, onToggle, onManualAdd, disabled }: M
         <p className="settings-row__description">{t("settings.endpoints.checklistEmpty")}</p>
       ) : (
         <ul className="settings-list">
-          {[...knownIds].sort((a, b) => a.localeCompare(b)).map((id) => (
-            <li key={id} className="settings-row">
-              <label className="settings-row__label">
-                <input
-                  aria-label={t("settings.endpoints.enableAria", { id })}
-                  type="checkbox"
-                  checked={selectedIds.has(id)}
-                  disabled={disabled}
-                  onChange={() => onToggle(id)}
-                />
-                <span className="settings-row__title">{id}</span>
-              </label>
-            </li>
-          ))}
+          {[...knownIds].sort((a, b) => a.localeCompare(b)).map((id) => {
+            const model = selectedModels.get(id);
+            return (
+              <li key={id} className="settings-row settings-endpoint-model">
+                <label className="settings-row__label">
+                  <input
+                    aria-label={t("settings.endpoints.enableAria", { id })}
+                    type="checkbox"
+                    checked={Boolean(model)}
+                    disabled={disabled}
+                    onChange={() => onToggle(id)}
+                  />
+                  <span className="settings-row__title">{id}</span>
+                </label>
+                <label className="settings-endpoint-model__image-input">
+                  <input
+                    aria-label={t("settings.endpoints.imageInputAria", { id })}
+                    type="checkbox"
+                    checked={Boolean(model && (model.input ?? defaultCustomModelInput(baseUrl, id)).includes("image"))}
+                    disabled={disabled || !model}
+                    onChange={(event) => onImageInputChange(id, event.target.checked)}
+                  />
+                  <span>{t("settings.endpoints.imageInput")}</span>
+                </label>
+              </li>
+            );
+          })}
         </ul>
       )}
       <div className="settings-row">

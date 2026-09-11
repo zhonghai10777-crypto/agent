@@ -19,16 +19,20 @@ export type RuntimeCredentialInfo = Awaited<ReturnType<RuntimeCredentialStore["l
 export function createRuntimeDependencies(options: RuntimeSupervisorOptions = {}): RuntimeDependencies {
   const agentDir = resolve(options.agentDir ?? getAgentDir());
   const modelsJsonPath = join(agentDir, "models.json");
+  const customProviderStore = options.customProviderStore ?? new CustomProviderStore(modelsJsonPath);
   const modelRuntime = options.modelRuntime
     ? Promise.resolve(options.modelRuntime)
-    : createModelRuntime({
+    : customProviderStore.migrateImageCapabilities().catch((error: unknown) => {
+        // A locked or malformed models.json must not prevent the app from opening
+        // settings, where the user can correct it. Never replace it on failure.
+        console.warn("Could not update legacy model image capabilities:", error);
+      }).then(() => createModelRuntime({
         ...(options.credentialStore ? { credentials: options.credentialStore } : { authPath: join(agentDir, "auth.json") }),
         modelsPath: modelsJsonPath,
-      });
+      }));
   const modelRegistry = options.modelRegistry
     ? Promise.resolve(options.modelRegistry)
     : modelRuntime.then(createModelRegistry);
-  const customProviderStore = options.customProviderStore ?? new CustomProviderStore(modelsJsonPath);
   return {
     agentDir,
     modelRuntime,

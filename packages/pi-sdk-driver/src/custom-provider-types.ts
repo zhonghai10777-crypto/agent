@@ -1,6 +1,31 @@
 export interface CustomProviderModelInput {
   readonly id: string;
   readonly contextWindow?: number;
+  readonly input?: readonly ("text" | "image")[];
+}
+
+const DEEPSEEK_IMAGE_MODELS = new Set([
+  "deepseek-flash",
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-vision-exp",
+]);
+
+/** Documented defaults for the official endpoint; unknown models need an explicit capability. */
+export function defaultCustomModelInput(baseUrl: string, modelId: string): readonly ("text" | "image")[] {
+  try {
+    const url = new URL(baseUrl);
+    if (url.origin === "https://api.deepseek.com" &&
+        ["", "/v1"].includes(url.pathname.replace(/\/+$/, "")) && DEEPSEEK_IMAGE_MODELS.has(modelId)) {
+      return ["text", "image"];
+    }
+  } catch {
+    // URL validation belongs to the endpoint form and store.
+  }
+  return ["text"];
+}
+
+export function isCustomModelInput(value: unknown): value is readonly ("text" | "image")[] {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => item === "text" || item === "image");
 }
 
 export interface CustomProviderInput {

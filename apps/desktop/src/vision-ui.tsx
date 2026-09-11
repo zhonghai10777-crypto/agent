@@ -44,13 +44,14 @@ export function VisionSessionProvider({ sessionRef, running, progress, children 
   </VisionContext.Provider>;
 }
 
-export function VisionUploadNotice({ modelId, attachments, queued = false }: {
+export function VisionUploadNotice({ modelId, supportsImages, attachments, queued = false }: {
   readonly modelId?: string;
+  readonly supportsImages?: boolean;
   readonly attachments: readonly ComposerAttachment[];
   readonly queued?: boolean;
 }) {
   const { t } = useI18n();
-  if (!["deepseek-v4-pro", "deepseek-v4-flash"].includes(modelId ?? "") || !attachments.some((item) => item.kind === "image")) return null;
+  if (supportsImages || !["deepseek-v4-pro", "deepseek-v4-flash"].includes(modelId ?? "") || !attachments.some((item) => item.kind === "image")) return null;
   return <p className="vision-upload-notice" data-testid="vision-disclosure">
     {t("vision.disclosure")}{queued ? ` ${t("vision.queueModel")}` : ""}
   </p>;
