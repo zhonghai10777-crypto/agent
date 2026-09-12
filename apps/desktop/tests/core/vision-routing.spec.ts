@@ -221,11 +221,13 @@ test("official routing keeps original images, primary model and evidence across 
     await pasteVisionImage(f.page);
     await pasteVisionImage(f.page, "第二张.png");
     await expect(f.page.getByTestId("vision-disclosure")).toContainText("adds usage");
+    await expect(f.page.getByTestId("vision-disclosure")).toContainText("deepseek-flash");
     await f.page.getByTestId("composer").fill("Compare these dialogs");
     await f.page.getByTestId("send").click();
     await expect(f.page.getByTestId("vision-status")).toHaveAttribute("data-stage", "completed");
     expect(f.http.requests.map((request) => request.kind)).toEqual(["primary", "vision", "primary"]);
     const vision = f.http.requests[1]!.body;
+    expect(vision.model).toBe("deepseek-flash");
     expect(vision.messages[1].content.filter((part: any) => part.type === "image_url")).toHaveLength(2);
     expect(vision.tools).toBeUndefined();
     const primary = f.http.requests[2]!.body;
@@ -325,6 +327,7 @@ test("connection validation is local and the paid-image test requires native con
   try {
     await f.page.keyboard.press(desktopShortcut(","));
     await f.page.getByRole("button", { name: "Models", exact: true }).click();
+    await expect(f.page.getByText("deepseek-flash", { exact: true })).toBeVisible();
     await f.page.getByRole("button", { name: "Validate configuration" }).click();
     await expect(f.page.getByRole("status")).toContainText("no image request");
     expect(f.http.requests).toHaveLength(1);

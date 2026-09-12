@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
-import type { VisionRoutingSettings } from "@pi-gui/session-driver/vision-types";
+import { VISION_MODEL_ID, type VisionRoutingSettings } from "@pi-gui/session-driver/vision-types";
 import { useI18n } from "./i18n/I18nProvider";
 import { SettingsGroup, SettingsRow } from "./settings-utils";
 
@@ -35,12 +35,12 @@ export function SettingsVisionSection({ runtime }: { readonly runtime?: RuntimeS
     } catch { setStatus(t("vision.testFailed")); }
     finally { setBusy(false); }
   };
-  return <SettingsGroup title={t("vision.settingsTitle")} description={t("vision.disclosure")}>
+  return <SettingsGroup title={t("vision.settingsTitle")} description={t("vision.disclosure", { model: VISION_MODEL_ID })}>
     <SettingsRow title={t("vision.enable")} description={t("vision.failurePolicy")}>
       <input aria-label={t("vision.enable")} type="checkbox" checked={settings?.enabled ?? false} disabled={!settings || busy} onChange={(event) => void save(event.target.checked)} />
     </SettingsRow>
     <SettingsRow title={t("vision.auxiliaryModel")} description={t("vision.sameAccount")}>
-      <span className="settings-hint">deepseek-v4-flash-vision-exp</span>
+      <span className="settings-hint">{VISION_MODEL_ID}</span>
     </SettingsRow>
     <SettingsRow title={t("vision.testTitle")} description={t("vision.testDescription")}>
       <div className="settings-pill-row">

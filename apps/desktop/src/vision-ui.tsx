@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { SessionRef } from "@pi-gui/session-driver";
 import type { SessionTranscriptMessage } from "@pi-gui/pi-sdk-driver";
-import type { StoredVisionEvidence, VisionProgress, VisionSessionView } from "@pi-gui/session-driver/vision-types";
+import { VISION_MODEL_ID, type StoredVisionEvidence, type VisionProgress, type VisionSessionView } from "@pi-gui/session-driver/vision-types";
 import type { ComposerAttachment } from "./desktop-state";
 import { useI18n } from "./i18n/I18nProvider";
 
@@ -53,7 +53,7 @@ export function VisionUploadNotice({ modelId, supportsImages, attachments, queue
   const { t } = useI18n();
   if (supportsImages || !["deepseek-v4-pro", "deepseek-v4-flash"].includes(modelId ?? "") || !attachments.some((item) => item.kind === "image")) return null;
   return <p className="vision-upload-notice" data-testid="vision-disclosure">
-    {t("vision.disclosure")}{queued ? ` ${t("vision.queueModel")}` : ""}
+    {t("vision.disclosure", { model: VISION_MODEL_ID })}{queued ? ` ${t("vision.queueModel")}` : ""}
   </p>;
 }
 

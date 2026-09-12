@@ -1,6 +1,6 @@
 import type { SessionRef } from "./types.js";
 
-export const VISION_MODEL_ID = "deepseek-v4-flash-vision-exp" as const;
+export const VISION_MODEL_ID = "deepseek-flash" as const;
 export const VISION_ENDPOINT = "https://api.deepseek.com/chat/completions" as const;
 
 export interface VisionRoutingSettings {

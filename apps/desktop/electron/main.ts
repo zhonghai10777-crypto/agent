@@ -17,6 +17,7 @@ import {
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
 import { VisionService } from "./vision-service";
+import { VISION_MODEL_ID } from "@pi-gui/session-driver/vision-types";
 import { createImageInspectionRuntimeExtension } from "./image-inspection-runtime";
 import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
@@ -1681,7 +1682,7 @@ app.whenReady().then(async () => {
       if (!workspace || !await store.driver.runtimeSupervisor.imagesAllowed(workspace)) throw new Error("Image uploads are disabled in the runtime settings.");
       await store.driver.validateVisionConnection(input);
       if (!input.performRequest) return { ok: true, requestMade: false };
-      const confirmation = await dialog.showMessageBox(window, { type: "question", title: tGlobal("vision.testTitle"), message: tGlobal("vision.testConfirm"), buttons: [tGlobal("vision.testSend"), tGlobal("common.cancel")], defaultId: 1, cancelId: 1 });
+      const confirmation = await dialog.showMessageBox(window, { type: "question", title: tGlobal("vision.testTitle"), message: tGlobal("vision.testConfirm", { model: VISION_MODEL_ID }), buttons: [tGlobal("vision.testSend"), tGlobal("common.cancel")], defaultId: 1, cancelId: 1 });
       if (confirmation.response !== 0) return { ok: true, requestMade: false };
       const usage = await store.driver.testVisionConnection(input, () => { requestMade = true; });
       return { ok: true, requestMade: true, ...(usage ? { usage } : {}) };
