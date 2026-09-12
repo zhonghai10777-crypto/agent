@@ -96,6 +96,43 @@ test("create_child_thread returns after a slow worker starts, before its turn co
     const window = await harness.firstWindow();
     await createNamedThread(window, "Parent orchestration thread");
     const parentRef = await selectedSessionRef(window);
+    await createNamedThread(window, "Writable target");
+    const targetRef = await selectedSessionRef(window);
+    await window.evaluate((ref) => window.piApp.setPermissionMode(ref.workspaceId, ref.sessionId, "plan"), parentRef);
+    const denied = await runOrchestrationRuntimeTool(harness, {
+      toolName: "send_message_to_thread", sessionRef: parentRef,
+      params: { thread_id: targetRef.sessionId, message: "Write should never start" },
+    });
+    expect(denied.details?.error).toMatch(/Read-only/);
+    // No user-facing control exists for a model's direct Store dispatch. This
+    // main-only test hook proves a bypass of tool definitions is also rejected.
+    const bypass = await harness.electronApp.evaluate(async (_, { caller, target }) => {
+      const hooks = (globalThis as any).__PI_APP_TEST_HOOKS;
+      return {
+        plan: await hooks.dispatchThreadMessage(caller, { threadId: target, message: "Denied" }),
+        unknown: await hooks.dispatchThreadMessage({ ...caller, sessionId: "unknown" }, { threadId: target, message: "Denied" }),
+      };
+    }, { caller: parentRef, target: targetRef.sessionId });
+    expect(bypass.plan.details.error).toMatch(/Read-only/);
+    expect(bypass.unknown.details.error).toMatch(/calling session/);
+    expect(server.requestCount()).toBe(0);
+    expect((await getDesktopState(window)).workspaces.flatMap((entry) => entry.sessions)
+      .find((entry) => entry.id === targetRef.sessionId)?.status).not.toBe("running");
+    const listed = await runOrchestrationRuntimeTool(harness, {
+      toolName: "list_threads", sessionRef: parentRef, params: {},
+    });
+    expect(listed.details?.error).toBeUndefined();
+    const read = await runOrchestrationRuntimeTool(harness, {
+      toolName: "read_thread", sessionRef: parentRef, params: { thread_id: targetRef.sessionId },
+    });
+    expect(read.details?.error).toBeUndefined();
+    await window.evaluate((ref) => window.piApp.setPermissionMode(ref.workspaceId, ref.sessionId, "auto"), parentRef);
+    const allowed = await runOrchestrationRuntimeTool(harness, {
+      toolName: "send_message_to_thread", sessionRef: parentRef,
+      params: { thread_id: targetRef.sessionId, message: "Allowed Auto follow-up" },
+    });
+    expect(allowed.details?.error).toBeUndefined();
+    await expect.poll(server.requestCount).toBeGreaterThan(0);
     const prompt = "Keep this delegated worker running slowly.";
     let deadline: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {

@@ -5,7 +5,7 @@ import type {
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
 import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES, sessionToolNames } from "@pi-gui/pi-sdk-driver/windows-shell";
-import { createChildThreadToolName } from "../../electron/orchestration-runtime";
+import { createChildThreadToolName, sendMessageToThreadToolName } from "../../electron/orchestration-runtime";
 import { officeToolNames } from "../../electron/office-runtime";
 import { PLAN_BLOCKED_TOOLS, shouldBlockTool } from "../../electron/permission-mode";
 import { createPermissionModeExtension } from "../../electron/permission-runtime";
@@ -61,6 +61,7 @@ test("shouldBlockTool: plan mode lets read-only tools through", () => {
   expect(shouldBlockTool("plan", "read_document")).toBeNull();
   expect(shouldBlockTool("plan", "web_search")).toBeNull();
   expect(shouldBlockTool("plan", "list_threads")).toBeNull();
+  expect(shouldBlockTool("plan", "read_thread")).toBeNull();
 });
 
 test("shouldBlockTool: unknown tools fail open in plan mode, not starved", () => {
@@ -75,6 +76,7 @@ test("shouldBlockTool: create_child_thread is blocked via the orchestration cons
   // allowlist keeps a stale literal.
   expect(PLAN_BLOCKED_TOOLS.has(createChildThreadToolName)).toBe(true);
   expect(shouldBlockTool("plan", createChildThreadToolName)?.block).toBe(true);
+  expect(shouldBlockTool("plan", sendMessageToThreadToolName)?.block).toBe(true);
 });
 
 // ── createPermissionModeExtension: the hook actually wires shouldBlockTool ──

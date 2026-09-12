@@ -59,6 +59,7 @@ export interface AppStoreInternals {
   selectedSessionRef(): SessionRef | undefined;
   getExtensionFilePath(workspaceId: string, filePath: string): string | undefined;
   sessionFromState(sessionRef: SessionRef): { archivedAt?: string; updatedAt: string; title: string; status: string; preview?: string } | undefined;
+  sessionPermissionMode(sessionRef: SessionRef): import("@pi-gui/session-driver").PermissionMode;
   ensureSessionReady(sessionRef: SessionRef): Promise<SessionSnapshot | undefined>;
   ensureSessionSubscription(sessionRef: SessionRef): Promise<void>;
   ensureSessionSubscribed(sessionRef: SessionRef): Promise<void>;

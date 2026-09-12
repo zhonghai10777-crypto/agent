@@ -18,6 +18,7 @@ import type {
   TranscriptMessage,
 } from "../src/desktop-state";
 import { submitComposerToSession } from "./app-store-composer";
+import { assertModelDelegationAllowed } from "./permission-mode";
 import type { AppStoreInternals } from "./app-store-internals";
 import { latestSessionActivityAt, previewFromTranscript } from "./app-store-utils";
 import {
@@ -71,6 +72,12 @@ async function createChildThreadRecord(
   input: SpawnChildThreadInput,
 ): Promise<CreatedChildThreadResult> {
   await store.initialize();
+  if (input.sourceToolCallId) {
+    assertModelDelegationAllowed(store, {
+      workspaceId: input.parentWorkspaceId,
+      sessionId: input.parentSessionId,
+    }, createChildThreadToolName);
+  }
   const prompt = input.prompt.trim();
   if (!prompt) {
     throw new Error("Child thread prompt cannot be empty.");
@@ -539,6 +546,12 @@ export async function sendMessageToThreadToolResult(
   parentRef: SessionRef,
   input: { readonly threadId: string; readonly message: string },
 ): Promise<AgentToolResult<SendMessageToThreadToolDetails>> {
+  await store.initialize();
+  try {
+    assertModelDelegationAllowed(store, parentRef, sendMessageToThreadToolName);
+  } catch (error) {
+    return sendMessageToThreadErrorResult(input.threadId, input.message, errorMessage(error));
+  }
   const target = resolveThreadTarget(store, parentRef, input.threadId);
   if (!target) {
     return sendMessageToThreadErrorResult(input.threadId, input.message, `Unknown thread: ${input.threadId}`);
