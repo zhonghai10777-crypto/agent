@@ -18,9 +18,10 @@
  * provider all read one source of truth for the default.
  */
 import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES } from "@pi-gui/pi-sdk-driver/windows-shell";
-import { createChildThreadToolName } from "./orchestration-runtime";
+import { createChildThreadToolName, sendMessageToThreadToolName } from "./orchestration-runtime";
 import { officeToolNames } from "./office-runtime";
-import type { PermissionMode } from "@pi-gui/session-driver";
+import type { PermissionMode, SessionRef } from "@pi-gui/session-driver";
+import type { AppStoreInternals } from "./app-store-internals";
 
 /**
  * Tool names blocked in `plan` mode.
@@ -32,6 +33,7 @@ export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   ...SHELL_TOOL_NAMES,
   ...FILE_MUTATION_TOOL_NAMES,
   createChildThreadToolName,
+  sendMessageToThreadToolName,
   ...officeToolNames,
 ]);
 
@@ -62,4 +64,18 @@ export function shouldBlockTool(
     };
   }
   return null;
+}
+
+/** Rechecked at model dispatch; user composer actions use separate entry points. */
+export function assertModelDelegationAllowed(
+  store: Pick<AppStoreInternals, "sessionFromState" | "sessionPermissionMode" | "assertCapability">,
+  caller: SessionRef,
+  toolName: string,
+): void {
+  if (!store.sessionFromState(caller)) {
+    throw new Error(`Unable to resolve calling session: ${caller.workspaceId}:${caller.sessionId}. Delegation denied.`);
+  }
+  store.assertCapability("childAgents");
+  const block = shouldBlockTool(store.sessionPermissionMode(caller), toolName);
+  if (block) throw new Error(block.reason);
 }

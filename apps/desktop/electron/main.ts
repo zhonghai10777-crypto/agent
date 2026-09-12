@@ -111,7 +111,6 @@ import type {
 import type { SessionDriverEvent } from "@pi-gui/session-driver";
 import type { GenerateThreadTitleOptions } from "@pi-gui/pi-sdk-driver";
 import type { PermissionMode, SessionRef, WorkspaceRef } from "@pi-gui/session-driver";
-import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
 import { resolveProductUserDataDir } from "./user-data-dir";
 
 const isDev = Boolean(process.env.ELECTRON_RENDERER_URL);
@@ -270,19 +269,12 @@ async function chooseOfficeOutputPath(format: OfficeFormat): Promise<string | un
 /**
  * Resolves the calling session's permission mode for the permission extension.
  * Per-call (not registration-time) for the same reason as `documentAccessScopeFor`:
- * extensions are shared across sessions in a workspace. Fails open to `auto`
- * when the session can't be resolved — `plan` is an opt-in read-only gear, not a
- * security boundary, so an unresolved context must not block writes.
+ * extensions are shared across sessions in a workspace. An unresolved identity
+ * receives read-only permissions; model dispatch also rejects unknown callers.
  */
 function permissionModeFor(ctx: ExtensionContext): PermissionMode {
-  // Fast path for the common case: plan is opt-in, so most sessions never flip
-  // out of the default. When no session has switched to plan, skip the
-  // workspace/session resolution entirely — this runs on every tool call.
-  if (store.sessionState.permissionModeBySession.size === 0) {
-    return DEFAULT_PERMISSION_MODE;
-  }
   const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
-  return sessionRef ? store.sessionPermissionMode(sessionRef) : DEFAULT_PERMISSION_MODE;
+  return sessionRef ? store.sessionPermissionMode(sessionRef) : "plan";
 }
 
 async function runOrchestrationRuntimeToolForTest(
@@ -1447,6 +1439,9 @@ app.whenReady().then(async () => {
           promptForText(mainWindow, message, placeholder ?? "", allowEmpty ?? false),
         runOrchestrationRuntimeTool: (input: OrchestrationRuntimeToolTestInput) =>
           runOrchestrationRuntimeToolForTest(orchestrationRuntimeBridge, input),
+        // Direct Store entry: regression tests deliberately bypass the model hook.
+        dispatchThreadMessage: (caller: SessionRef, input: { threadId: string; message: string }) =>
+          orchestrationTools.sendMessageToThreadToolResult(store, caller, input),
         runReadDocumentTool: (sessionRef: SessionRef, params: unknown) =>
           runReadDocumentToolForTest(sessionRef, params),
         runOfficeTool: (sessionRef: SessionRef, toolName: string, params: unknown) =>
