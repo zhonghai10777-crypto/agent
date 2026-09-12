@@ -1,5 +1,8 @@
 import path from "node:path";
 import { readXlsx, type XlsxWorkbook } from "./xlsx-reader";
+import { MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARS, MAX_DOCUMENT_CHARS } from "./document-limits";
+import { DocumentZipError, inspectDocumentZip, readDocumentZipParts } from "./document-zip";
+export { MAX_DOCUMENT_BYTES, MAX_EXTRACTED_CHARS, MAX_DOCUMENT_CHARS } from "./document-limits";
 
 /**
  * Document text extraction for chat attachments.
@@ -24,7 +27,13 @@ export type DocumentFailureReason =
   | "corrupt"
   | "unsupported"
   | "too-large"
-  | "empty";
+  | "empty"
+  | "unavailable"
+  | "changed"
+  | "cancelled"
+  | "timeout"
+  | "worker-unavailable"
+  | "queue-full";
 
 export interface DocumentExtractionMeta {
   /** PDF page count. */
@@ -35,6 +44,9 @@ export interface DocumentExtractionMeta {
   readonly encoding?: string;
   /** True when `text` was cut at the character budget. */
   readonly truncated?: boolean;
+  readonly complete?: boolean;
+  readonly charLimit?: number;
+  readonly extractedChars?: number;
 }
 
 export interface DocumentExtractionSuccess {
@@ -46,10 +58,12 @@ export interface DocumentExtractionSuccess {
    * Per-page text, kept only when the extractor already had it (PDFs, which
    * pdf.js hands over page by page before they are joined). read_document pages
    * through exactly these, so keeping them costs one array and saves a second
-   * full parse of the file. Uncapped on purpose: `text` is truncated at the
-   * character budget, but paging must still reach the end of a long standard.
+   * full parse of the file. Bounded by the document limit, independently of
+   * preview truncation; incomplete extraction is always reported in metadata.
    */
   readonly pageTexts?: readonly string[];
+  /** Complete readable sections, independent of the bounded preview text. */
+  readonly sectionTexts?: readonly string[];
 }
 
 export interface DocumentExtractionFailure {
@@ -58,6 +72,7 @@ export interface DocumentExtractionFailure {
   readonly reason: DocumentFailureReason;
   /** Free-form detail for logs; user-facing copy is chosen from `reason`. */
   readonly detail?: string;
+  readonly code?: string;
 }
 
 export type DocumentExtraction = DocumentExtractionSuccess | DocumentExtractionFailure;
@@ -68,9 +83,6 @@ export interface ExtractDocumentOptions {
   /** Hard cap on extracted characters. Longer output is truncated and flagged. */
   readonly maxChars?: number;
 }
-
-export const MAX_DOCUMENT_BYTES = 64 * 1024 * 1024;
-export const MAX_EXTRACTED_CHARS = 400_000;
 
 const PDF_MAGIC = "%PDF-";
 const ZIP_MAGIC = [0x50, 0x4b, 0x03, 0x04];
@@ -85,13 +97,15 @@ export function sniffDocumentKind(buffer: Uint8Array, fileName?: string): Docume
     return "pdf";
   }
   if (startsWithBytes(buffer, ZIP_MAGIC)) {
-    // OOXML containers are ZIPs; the part names are stored uncompressed in the
-    // archive, so a raw scan separates Word from Excel without a ZIP reader.
-    const head = latin1(buffer);
-    if (head.includes("word/document.xml")) {
+    const entries = inspectDocumentZip(buffer);
+    const typesEntry = entries.get("[Content_Types].xml");
+    if (!typesEntry) return "unknown";
+    if (typesEntry.originalSize > 256 * 1024) throw new DocumentZipError("too-large", "Office content types exceed the metadata budget.");
+    const types = new TextDecoder().decode(readDocumentZipParts(buffer, (name) => name === "[Content_Types].xml")["[Content_Types].xml"]);
+    if (entries.has("word/document.xml") && types.includes("wordprocessingml.document.main+xml")) {
       return "docx";
     }
-    if (head.includes("xl/workbook.xml") || head.includes("xl/worksheets/")) {
+    if (entries.has("xl/workbook.xml") && /spreadsheetml.sheet.main\+xml|ms-excel.sheet.macroEnabled.main\+xml/.test(types)) {
       return "xlsx";
     }
     return "unknown";
@@ -183,10 +197,7 @@ export async function extractPdf(buffer: Uint8Array, maxChars: number): Promise<
   if ("ok" in perPage) {
     return perPage;
   }
-  const extraction = success("pdf", normalizeExtractedText(perPage.pages.join("\n\n")), maxChars, {
-    pages: perPage.pages.length,
-  });
-  return { ...extraction, pageTexts: perPage.pages };
+  return successFromParts("pdf", perPage.pages, maxChars, { pages: perPage.totalPages, complete: perPage.complete });
 }
 
 /**
@@ -200,7 +211,7 @@ export async function extractPdf(buffer: Uint8Array, maxChars: number): Promise<
  */
 export async function extractPdfPages(
   buffer: Uint8Array,
-): Promise<{ readonly pages: readonly string[] } | DocumentExtractionFailure> {
+): Promise<{ readonly pages: readonly string[]; readonly totalPages: number; readonly complete: boolean } | DocumentExtractionFailure> {
   const perPage = await pdfPageTexts(buffer);
   if ("ok" in perPage) {
     return perPage;
@@ -209,18 +220,31 @@ export async function extractPdfPages(
   if (pages.every((page) => page === "")) {
     return { ok: false, kind: "pdf", reason: "scanned-pdf", detail: `${pages.length} page(s), no text layer` };
   }
-  return { pages };
+  return { pages, totalPages: perPage.totalPages, complete: perPage.complete };
 }
 
 async function pdfPageTexts(
   buffer: Uint8Array,
-): Promise<{ readonly pages: readonly string[] } | DocumentExtractionFailure> {
-  const { extractText, getDocumentProxy } = await import("unpdf");
+): Promise<{ readonly pages: readonly string[]; readonly totalPages: number; readonly complete: boolean } | DocumentExtractionFailure> {
+  const { getDocumentProxy } = await import("unpdf");
   try {
     const document = await getDocumentProxy(buffer);
-    const result = await extractText(document, { mergePages: false });
-    const pages = Array.isArray(result.text) ? result.text : [result.text];
-    return { pages };
+    try {
+      if (document.numPages > 2_000) return { ok: false, kind: "pdf", reason: "too-large", detail: "PDF page limit exceeded." };
+      const pages: string[] = [];
+      let chars = 0;
+      for (let number = 1; number <= document.numPages; number++) {
+        const page = await document.getPage(number);
+        const content = await page.getTextContent();
+        const text = normalizeExtractedText(content.items.map((item) => "str" in item ? `${item.str}${item.hasEOL ? "\n" : ""}` : "").join(""));
+        const remaining = MAX_DOCUMENT_CHARS - chars;
+        pages.push(text.slice(0, remaining));
+        chars += text.length;
+        page.cleanup();
+        if (chars >= MAX_DOCUMENT_CHARS) return { pages, totalPages: document.numPages, complete: chars === MAX_DOCUMENT_CHARS && number === document.numPages };
+      }
+      return { pages, totalPages: document.numPages, complete: true };
+    } finally { await document.loadingTask.destroy(); }
   } catch (error) {
     return pdfFailure(error);
   }
@@ -267,10 +291,11 @@ export async function extractDocx(buffer: Uint8Array, maxChars: number): Promise
   const mammoth = (await import("mammoth")).default;
   let raw: string;
   try {
+    inspectDocumentZip(buffer);
     const result = await mammoth.extractRawText({ buffer: Buffer.from(buffer) });
     raw = result.value;
   } catch (error) {
-    return { ok: false, kind: "docx", reason: "corrupt", detail: errorMessage(error) };
+    return { ok: false, kind: "docx", reason: error instanceof DocumentZipError ? error.reason : "corrupt", detail: errorMessage(error) };
   }
 
   const text = normalizeExtractedText(raw);
@@ -285,24 +310,38 @@ export async function extractXlsx(buffer: Uint8Array, maxChars: number): Promise
   try {
     workbook = readXlsx(buffer);
   } catch (error) {
-    return { ok: false, kind: "xlsx", reason: "corrupt", detail: errorMessage(error) };
+    return { ok: false, kind: "xlsx", reason: error instanceof DocumentZipError ? error.reason : "corrupt", detail: errorMessage(error) };
   }
 
   const sheets: string[] = [];
   const blocks: string[] = [];
   for (const sheet of workbook.sheets) {
     sheets.push(sheet.name);
-    const rows = sheet.rows.map((cells) => cells.join("\t"));
-    // Sheet names carry real meaning in these workbooks ("运行参数", "缺陷台账"),
-    // so they stay in the text the model sees rather than only in metadata.
-    blocks.push(rows.length > 0 ? `## ${sheet.name}\n${rows.join("\n")}` : `## ${sheet.name}\n(空工作表)`);
+    let rows: string[] = [];
+    let firstRow = 0;
+    let lastRow = 0;
+    let chars = 0;
+    const flush = () => {
+      if (rows.length) blocks.push(`## ${sheet.name} — rows ${firstRow}–${lastRow}\n${rows.join("\n")}`);
+      rows = []; chars = 0;
+    };
+    for (const [index, cells] of sheet.rows.entries()) {
+      const rowNumber = sheet.rowNumbers?.[index] ?? index + 1;
+      for (const line of segmentText(normalizeExtractedText(cells.join("\t")), 3_700)) {
+        if (chars + line.length > 3_700) flush();
+        if (!rows.length) firstRow = rowNumber;
+        lastRow = rowNumber;
+        rows.push(line); chars += line.length + 1;
+      }
+    }
+    flush();
+    if (!sheet.rows.length) blocks.push(`## ${sheet.name}\n(空工作表)`);
   }
 
-  const text = normalizeExtractedText(blocks.join("\n\n"));
-  if (!text) {
+  if (!blocks.length) {
     return { ok: false, kind: "xlsx", reason: "empty" };
   }
-  return success("xlsx", text, maxChars, { sheets });
+  return successFromParts("xlsx", blocks, maxChars, { sheets });
 }
 
 export async function extractPlainText(buffer: Uint8Array, maxChars: number): Promise<DocumentExtraction> {
@@ -326,14 +365,15 @@ export async function extractDocument(
 ): Promise<DocumentExtraction> {
   const maxBytes = options.maxBytes ?? MAX_DOCUMENT_BYTES;
   const maxChars = options.maxChars ?? MAX_EXTRACTED_CHARS;
-  const kind = sniffDocumentKind(buffer, fileName);
-
   if (buffer.byteLength > maxBytes) {
-    return { ok: false, kind, reason: "too-large", detail: `${buffer.byteLength} bytes exceeds ${maxBytes}` };
+    return { ok: false, kind: "unknown", reason: "too-large", detail: `${buffer.byteLength} bytes exceeds ${maxBytes}` };
   }
   if (buffer.byteLength === 0) {
-    return { ok: false, kind, reason: "empty" };
+    return { ok: false, kind: "unknown", reason: "empty" };
   }
+  let kind: DocumentKind;
+  try { kind = sniffDocumentKind(buffer, fileName); }
+  catch (error) { return { ok: false, kind: "unknown", reason: error instanceof DocumentZipError ? error.reason : "corrupt", detail: errorMessage(error) }; }
 
   switch (kind) {
     case "pdf":
@@ -357,13 +397,35 @@ function success(
   maxChars: number,
   meta: DocumentExtractionMeta,
 ): DocumentExtractionSuccess {
-  const truncated = text.length > maxChars;
-  const clipped = truncated ? text.slice(0, maxChars) : text;
+  return successFromParts(kind, segmentText(text.slice(0, MAX_DOCUMENT_CHARS)), maxChars,
+    { ...meta, complete: text.length <= MAX_DOCUMENT_CHARS });
+}
+
+function successFromParts(kind: DocumentKind, source: readonly string[], maxChars: number, meta: DocumentExtractionMeta): DocumentExtractionSuccess {
+  const parts: string[] = [];
+  let chars = 0;
+  let complete = meta.complete !== false;
+  for (const part of source) {
+    if (chars + part.length > MAX_DOCUMENT_CHARS) {
+      parts.push(part.slice(0, MAX_DOCUMENT_CHARS - chars));
+      chars = MAX_DOCUMENT_CHARS;
+      complete = false;
+      break;
+    }
+    parts.push(part); chars += part.length;
+  }
+  let preview = "";
+  for (const part of parts) {
+    if (preview.length >= maxChars) break;
+    preview += `${preview ? "\n\n" : ""}${part}`.slice(0, maxChars - preview.length);
+  }
+  const truncated = chars > maxChars || !complete;
   return {
     ok: true,
     kind,
-    text: clipped,
-    meta: truncated ? { ...meta, truncated: true } : meta,
+    text: preview,
+    meta: { ...meta, complete, extractedChars: chars, ...(complete ? {} : { charLimit: MAX_DOCUMENT_CHARS }), ...(truncated ? { truncated: true } : {}) },
+    ...(kind === "pdf" ? { pageTexts: parts } : { sectionTexts: parts }),
   };
 }
 

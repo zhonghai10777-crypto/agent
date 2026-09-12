@@ -1,13 +1,16 @@
-import { readdir, rm, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import type { DocumentFailureReason } from "./document-extract";
-import { getDocumentParts, type DocumentParts } from "./document-cache";
+import { getDocumentParts, type DocumentCacheOptions, type DocumentParts } from "./document-cache";
+import { authorizeDocumentRead, isPathWithinRoot } from "./document-access";
+import { MAX_LIBRARY_CHARS } from "./document-limits";
 import { describeFailure } from "./document-runtime";
 import { readJsonWithBackup, writeFileAtomicQueued } from "./atomic-file-write";
 
-const INDEX_VERSION = 1;
-const DEFAULT_MAX_INDEXED_CHARS = 100_000_000;
+const INDEX_VERSION = 2;
+const MAX_LIBRARY_FILES = 2_048;
 const SUPPORTED_EXTENSIONS = new Set([".pdf", ".docx", ".xlsx", ".txt", ".md", ".csv"]);
+const TRANSIENT_FAILURES = new Set<DocumentFailureReason>(["unavailable", "changed", "cancelled", "timeout", "worker-unavailable", "queue-full"]);
 
 export interface LibraryDocument {
   readonly path: string;
@@ -15,16 +18,23 @@ export interface LibraryDocument {
   readonly key: string;
   readonly unit: "page" | "section";
   readonly parts: readonly string[];
+  readonly root?: string;
+  readonly complete?: boolean;
+  readonly charLimit?: number;
+  readonly indexedAt?: string;
+  readonly offline?: boolean;
 }
-
-export type LibrarySkipReason = DocumentFailureReason | "unavailable" | "capacity";
-
+export type LibrarySkipReason = DocumentFailureReason | "capacity";
 export interface LibrarySkippedFile {
   readonly path: string;
   readonly reason: string;
   readonly reasonCode: LibrarySkipReason;
 }
-
+export interface LibraryRootStatus {
+  readonly path: string;
+  readonly state: "online" | "partial" | "offline";
+  readonly checkedAt: string;
+}
 export interface LibraryIndexStatus {
   readonly state: "idle" | "indexing" | "ready";
   readonly total: number;
@@ -32,35 +42,33 @@ export interface LibraryIndexStatus {
   readonly documents: number;
   readonly parts: number;
   readonly skipped: readonly LibrarySkippedFile[];
+  readonly snapshotAvailable?: boolean;
+  readonly roots?: readonly LibraryRootStatus[];
 }
-
+interface PersistedLibraryFailure extends LibrarySkippedFile {
+  readonly key: string;
+  readonly failedAt?: number;
+  readonly retryAfter?: number;
+  readonly attempts?: number;
+}
 interface PersistedLibraryIndex {
   readonly version: number;
   readonly documents: readonly LibraryDocument[];
   readonly failures?: readonly PersistedLibraryFailure[];
 }
-
-interface PersistedLibraryFailure extends LibrarySkippedFile {
-  readonly key: string;
-}
-
-interface LibraryCandidate {
-  readonly path: string;
-  readonly key: string;
-}
-
+interface LibraryCandidate { readonly path: string; readonly key: string; readonly root: string; }
+export interface LibraryRebuildOptions { readonly retryFailures?: boolean; }
 export interface LibraryIndexReader {
-  rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void): Promise<void>;
+  rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void, options?: LibraryRebuildOptions): Promise<void>;
   clear(options?: { readonly deleteDisk?: boolean }): Promise<void>;
   status(): LibraryIndexStatus;
   documents(): readonly LibraryDocument[];
 }
-
 export interface LibraryIndexDependencies {
   readonly maxIndexedChars?: number;
-  readonly getParts?: (
-    filePath: string,
-  ) => Promise<
+  readonly now?: () => number;
+  readonly writeIndex?: typeof writeFileAtomicQueued;
+  readonly getParts?: (filePath: string, options?: DocumentCacheOptions) => Promise<
     DocumentParts | { readonly ok: false; readonly reason: DocumentFailureReason; readonly detail?: string }
   >;
 }
@@ -68,398 +76,249 @@ export interface LibraryIndexDependencies {
 export class LibraryIndex implements LibraryIndexReader {
   private readonly indexPath: string;
   private readonly getParts: NonNullable<LibraryIndexDependencies["getParts"]>;
+  private readonly writeIndex: typeof writeFileAtomicQueued;
+  private readonly now: () => number;
   private readonly maxIndexedChars: number;
   private indexedDocuments: readonly LibraryDocument[] = [];
   private indexedFailures: readonly PersistedLibraryFailure[] = [];
   private currentStatus: LibraryIndexStatus = emptyStatus("idle");
   private loaded = false;
-  private rebuildPromise: Promise<void> | undefined;
-  private activeRootsSignature = "";
+  private hasSnapshot = false;
   private generation = 0;
+  private roots: readonly string[] = [];
+  private active?: { signature: string; controller: AbortController; promise: Promise<void> };
+  private saveTail: Promise<unknown> = Promise.resolve();
 
   constructor(indexDir: string, dependencies: LibraryIndexDependencies = {}) {
     this.indexPath = path.join(indexDir, "index.json");
     this.getParts = dependencies.getParts ?? getDocumentParts;
-    this.maxIndexedChars = Math.max(1, Math.trunc(dependencies.maxIndexedChars ?? DEFAULT_MAX_INDEXED_CHARS));
+    this.writeIndex = dependencies.writeIndex ?? writeFileAtomicQueued;
+    this.now = dependencies.now ?? Date.now;
+    this.maxIndexedChars = Math.max(1, Math.trunc(dependencies.maxIndexedChars ?? MAX_LIBRARY_CHARS));
   }
 
-  async rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void): Promise<void> {
-    const normalizedRoots = normalizeRoots(roots);
-    const signature = normalizedRoots.join("\0");
-
-    if (this.rebuildPromise) {
-      if (signature === this.activeRootsSignature) {
-        return this.rebuildPromise;
-      }
-      try {
-        await this.rebuildPromise;
-      } catch {
-        // A newer rebuild should still get a chance to recover from an earlier failure.
-      }
-    }
-
-    this.activeRootsSignature = signature;
+  async rebuild(roots: readonly string[], onProgress?: (status: LibraryIndexStatus) => void, options: LibraryRebuildOptions = {}): Promise<void> {
+    const normalized = normalizeRoots(roots);
+    const signature = normalized.join("\0");
+    if (this.active?.signature === signature && !options.retryFailures) return this.active.promise;
+    this.active?.controller.abort();
     const generation = ++this.generation;
-    const task = this.performRebuild(normalizedRoots, generation, onProgress);
-    this.rebuildPromise = task;
-    try {
-      await task;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.currentStatus = {
-        ...this.currentStatus,
-        state: "ready",
-        skipped: [
-          ...this.currentStatus.skipped,
-          {
-            path: this.indexPath,
-            reason: `The local library index could not be saved (${message}).`,
-            reasonCode: "unavailable",
-          },
-        ],
-      };
+    if (!normalized.some((root) => this.roots.includes(root))) this.hasSnapshot = false;
+    this.roots = normalized;
+    // Revocation takes effect synchronously, before scanning or waiting on I/O.
+    this.indexedDocuments = this.indexedDocuments.filter((doc) => libraryDocumentIsAuthorized(doc, normalized));
+    this.indexedFailures = this.indexedFailures.filter((file) => normalized.some((root) => isPathWithinRoot(file.path, root)));
+    const controller = new AbortController();
+    const task = this.performRebuild(normalized, generation, controller.signal, onProgress, options);
+    this.active = { signature, controller, promise: task };
+    try { await task; }
+    catch (error) {
+      if (generation === this.generation) this.publish({
+        ...this.currentStatus, state: this.hasSnapshot ? "ready" : "idle",
+        skipped: [...this.currentStatus.skipped, unavailable(this.indexPath, error)],
+      }, onProgress);
       throw error;
-    } finally {
-      if (this.rebuildPromise === task) {
-        this.rebuildPromise = undefined;
-        this.activeRootsSignature = "";
-      }
-    }
+    } finally { if (this.active?.promise === task) this.active = undefined; }
   }
 
   async clear(options: { readonly deleteDisk?: boolean } = {}): Promise<void> {
-    this.generation += 1;
-    const inFlight = this.rebuildPromise;
-    this.indexedDocuments = [];
-    this.indexedFailures = [];
-    this.currentStatus = emptyStatus("idle");
-    this.loaded = false;
-    if (inFlight) {
-      await inFlight.catch(() => undefined);
-    }
-    if (options.deleteDisk) {
-      await rm(this.indexPath, { force: true });
-    }
+    const generation = ++this.generation;
+    this.active?.controller.abort();
+    this.active = undefined;
+    this.indexedDocuments = []; this.indexedFailures = []; this.roots = [];
+    this.currentStatus = emptyStatus("idle"); this.hasSnapshot = false; this.loaded = true;
+    // An empty committed snapshot is a tombstone: a previous .bak can no longer
+    // resurrect cleared content. Existing source files and backups are retained.
+    if (options.deleteDisk) await this.save({ version: INDEX_VERSION, documents: [], failures: [] }, generation);
   }
 
   status(): LibraryIndexStatus {
-    return {
-      ...this.currentStatus,
-      skipped: [...this.currentStatus.skipped],
+    const documents = this.documents();
+    return { ...this.currentStatus, documents: documents.length,
+      parts: documents.reduce((sum, doc) => sum + doc.parts.length, 0),
+      snapshotAvailable: this.hasSnapshot,
+      roots: this.currentStatus.roots?.filter((root) => this.roots.includes(root.path)),
+      skipped: this.currentStatus.skipped.filter((entry) => entry.path === this.indexPath ||
+        this.roots.some((root) => entry.path === root || isPathWithinRoot(entry.path, root))),
     };
   }
+  documents(): readonly LibraryDocument[] { return this.indexedDocuments.filter((doc) => libraryDocumentIsAuthorized(doc, this.roots)); }
 
-  documents(): readonly LibraryDocument[] {
-    return this.indexedDocuments;
-  }
-
-  private async performRebuild(
-    roots: readonly string[],
-    generation: number,
-    onProgress?: (status: LibraryIndexStatus) => void,
-  ): Promise<void> {
-    await this.loadPersistedIndex();
-    if (generation !== this.generation) {
-      return;
-    }
-    this.publish({ ...emptyStatus("indexing") }, onProgress);
-
-    const scan = await scanLibraryRoots(roots);
-    if (generation !== this.generation) {
-      return;
-    }
-    const previousByPath = new Map(this.indexedDocuments.map((document) => [document.path, document]));
-    const previousFailureByPath = new Map(this.indexedFailures.map((failure) => [failure.path, failure]));
-    const nextDocuments: LibraryDocument[] = [];
+  private async performRebuild(roots: readonly string[], generation: number, signal: AbortSignal,
+    onProgress: ((status: LibraryIndexStatus) => void) | undefined, options: LibraryRebuildOptions): Promise<void> {
+    await this.loadPersistedIndex(generation);
+    if (generation !== this.generation) return;
+    this.publish({ ...emptyStatus("indexing"), snapshotAvailable: this.hasSnapshot }, onProgress);
+    const scan = await scanLibraryRoots(roots, signal, this.now);
+    if (generation !== this.generation) return;
+    const previousByPath = new Map(this.indexedDocuments.map((doc) => [doc.path, doc]));
+    const previousFailureByPath = new Map(this.indexedFailures.map((file) => [file.path, file]));
+    const candidatePaths = new Set(scan.candidates.map((file) => file.path));
+    // An unreliable root cannot prove deletion. Keep its authorized old snapshot
+    // with its original timestamp and an explicit offline/partial marker.
+    const retained = this.indexedDocuments.filter((doc) => !candidatePaths.has(doc.path) &&
+      scan.roots.some((root) => root.state !== "online" && libraryDocumentIsAuthorized(doc, [root.path])));
+    const nextDocuments: LibraryDocument[] = retained.map((doc) => ({ ...doc, offline: true }));
     const nextFailures: PersistedLibraryFailure[] = [];
     const skipped: LibrarySkippedFile[] = [...scan.skipped];
-    let indexedChars = 0;
-    let parts = 0;
-
-    this.publish(
-      {
-        state: "indexing",
-        total: scan.candidates.length,
-        done: 0,
-        documents: 0,
-        parts: 0,
-        skipped,
-      },
-      onProgress,
-    );
+    let indexedChars = nextDocuments.reduce((sum, doc) => sum + doc.parts.reduce((count, part) => count + part.length, 0), 0);
+    this.publish({ ...emptyStatus("indexing"), total: scan.candidates.length, skipped, roots: scan.roots }, onProgress);
 
     for (const [index, candidate] of scan.candidates.entries()) {
-      if (generation !== this.generation) {
-        return;
-      }
+      if (generation !== this.generation) return;
       const previous = previousByPath.get(candidate.path);
+      const priorFailure = previousFailureByPath.get(candidate.path);
       let document: LibraryDocument | undefined;
-
-      if (previous?.key === candidate.key) {
-        document = previous;
+      if (previous?.key === candidate.key && previous.complete !== undefined) {
+        document = { ...previous, root: candidate.root, offline: false };
+      } else if (priorFailure?.key === candidate.key && priorFailure.reasonCode !== "capacity" &&
+          !options.retryFailures && (priorFailure.retryAfter ?? 0) > this.now()) {
+        nextFailures.push(priorFailure); skipped.push(priorFailure);
       } else {
-        const previousFailure = previousFailureByPath.get(candidate.path);
-        if (previousFailure?.key === candidate.key) {
-          nextFailures.push(previousFailure);
-          skipped.push(withoutKey(previousFailure));
+        let extracted: Awaited<ReturnType<NonNullable<LibraryIndexDependencies["getParts"]>>>;
+        try { extracted = await this.getParts(candidate.path, { signal, retryFailures: options.retryFailures, expectedVersion: candidate.key }); }
+        catch (error) { extracted = { ok: false, reason: "unavailable", detail: String(error) }; }
+        if (generation !== this.generation) return;
+        if ("ok" in extracted) {
+          const attempts = (priorFailure?.attempts ?? 0) + 1;
+          const delay = TRANSIENT_FAILURES.has(extracted.reason) ? Math.min(60_000, 1_000 * 2 ** Math.min(attempts - 1, 6)) : 24 * 60 * 60_000;
+          const failure: PersistedLibraryFailure = { path: candidate.path, key: candidate.key,
+            reason: describeFailure(extracted.reason, extracted.detail), reasonCode: extracted.reason,
+            failedAt: this.now(), retryAfter: this.now() + delay, attempts };
+          nextFailures.push(failure); skipped.push(failure);
         } else {
-          const extracted = await this.getParts(candidate.path);
-          if ("ok" in extracted) {
-            const failure: PersistedLibraryFailure = {
-              path: candidate.path,
-              key: candidate.key,
-              reason: describeFailure(extracted.reason, extracted.detail),
-              reasonCode: extracted.reason,
-            };
-            nextFailures.push(failure);
-            skipped.push(withoutKey(failure));
-          } else {
-            document = {
-              path: candidate.path,
-              title: path.basename(candidate.path, path.extname(candidate.path)),
-              key: candidate.key,
-              unit: extracted.unit,
-              parts: extracted.parts,
-            };
-          }
+          document = { path: candidate.path, title: path.basename(candidate.path, path.extname(candidate.path)),
+            key: extracted.sourceVersion ?? candidate.key, unit: extracted.unit, parts: extracted.parts,
+            root: candidate.root, complete: extracted.complete !== false, charLimit: extracted.charLimit,
+            indexedAt: new Date(this.now()).toISOString(), offline: false };
         }
       }
-
       if (document) {
-        const documentChars = document.parts.reduce((total, part) => total + part.length, 0);
-        if (indexedChars + documentChars > this.maxIndexedChars) {
-          console.warn(`[library-index] character budget reached; omitted ${candidate.path}`);
-          const failure: PersistedLibraryFailure = {
-            path: candidate.path,
-            key: candidate.key,
-            reason: "The local library index reached its size limit, so this document was omitted.",
-            reasonCode: "capacity",
-          };
-          nextFailures.push(failure);
-          skipped.push(withoutKey(failure));
-        } else {
-          nextDocuments.push(document);
-          indexedChars += documentChars;
-          parts += document.parts.length;
-        }
+        const chars = document.parts.reduce((sum, part) => sum + part.length, 0);
+        if (indexedChars + chars > this.maxIndexedChars) {
+          const failure: PersistedLibraryFailure = { path: candidate.path, key: candidate.key, reasonCode: "capacity",
+            reason: "The local library reached its character limit. Free capacity and rebuild to retry this document." };
+          nextFailures.push(failure); skipped.push(failure);
+        } else { nextDocuments.push(document); indexedChars += chars; }
       }
-
-      this.publish(
-        {
-          state: "indexing",
-          total: scan.candidates.length,
-          done: index + 1,
-          documents: nextDocuments.length,
-          parts,
-          skipped,
-        },
-        onProgress,
-      );
+      this.publish({ ...this.currentStatus, state: "indexing", done: index + 1, skipped }, onProgress);
     }
-
-    nextDocuments.sort((left, right) => left.path.localeCompare(right.path));
-    nextFailures.sort((left, right) => left.path.localeCompare(right.path));
-    if (generation !== this.generation) {
-      return;
-    }
-    if (
-      !sameVersionedEntries(this.indexedDocuments, nextDocuments) ||
-      !sameVersionedEntries(this.indexedFailures, nextFailures)
-    ) {
-      await writeFileAtomicQueued(
-        this.indexPath,
-        `${JSON.stringify({ version: INDEX_VERSION, documents: nextDocuments, failures: nextFailures } satisfies PersistedLibraryIndex)}\n`,
-      );
-    }
-
-    this.indexedDocuments = nextDocuments;
-    this.indexedFailures = nextFailures;
-    this.publish(
-      {
-        state: "ready",
-        total: scan.candidates.length,
-        done: scan.candidates.length,
-        documents: nextDocuments.length,
-        parts,
-        skipped,
-      },
-      onProgress,
-    );
+    if (generation !== this.generation) return;
+    nextDocuments.sort((a, b) => a.path.localeCompare(b.path));
+    const committed = await this.save({ version: INDEX_VERSION, documents: nextDocuments, failures: nextFailures }, generation);
+    // This check is after async atomic writes too: a late old save must never
+    // restore memory after Clear, root revocation, or a newer rebuild.
+    if (!committed) return;
+    this.indexedDocuments = nextDocuments; this.indexedFailures = nextFailures;
+    this.hasSnapshot = this.hasSnapshot || nextDocuments.length > 0 || scan.roots.every((root) => root.state === "online");
+    this.publish({ ...this.currentStatus, state: "ready", done: scan.candidates.length, skipped, roots: scan.roots }, onProgress);
   }
 
-  private async loadPersistedIndex(): Promise<void> {
-    if (this.loaded) {
-      return;
+  private async save(snapshot: PersistedLibraryIndex, generation: number): Promise<boolean> {
+    const task = this.saveTail.catch(() => undefined).then(async () => {
+      if (generation !== this.generation) return false;
+      await this.writeIndex(this.indexPath, `${JSON.stringify(snapshot)}\n`);
+      return generation === this.generation;
+    });
+    this.saveTail = task;
+    return task;
+  }
+
+  private async loadPersistedIndex(generation: number): Promise<void> {
+    if (this.loaded) return;
+    // Older 100M-character caches may exceed the current low-memory budget.
+    // Rebuild those without reading a huge JSON string into the main process.
+    const maxBytes = this.maxIndexedChars * 6 + 1_000_000;
+    for (const file of [this.indexPath, `${this.indexPath}.bak`]) {
+      try { if ((await stat(file)).size > maxBytes) { this.loaded = true; return; } } catch { /* absent cache */ }
     }
+    const saved = await readJsonWithBackup<unknown>(this.indexPath);
+    if (generation !== this.generation) return;
     this.loaded = true;
-    const persisted = await readJsonWithBackup<unknown>(this.indexPath);
-    if (persisted.corrupted) {
-      console.warn("[library-index] persisted index was corrupt; rebuilding from source documents.");
-    }
-    const parsed = parsePersistedIndex(persisted.value);
-    this.indexedDocuments = parsed.documents;
+    const parsed = parsePersistedIndex(saved.value);
+    let chars = 0;
+    this.indexedDocuments = parsed.documents.filter((doc) => {
+      if (!libraryDocumentIsAuthorized(doc, this.roots)) return false;
+      chars += doc.parts.reduce((sum, part) => sum + part.length, 0);
+      return chars <= this.maxIndexedChars;
+    });
     this.indexedFailures = parsed.failures;
+    this.hasSnapshot = parsed.valid && this.indexedDocuments.length > 0;
   }
-
-  private publish(status: LibraryIndexStatus, onProgress?: (status: LibraryIndexStatus) => void): void {
-    this.currentStatus = { ...status, skipped: [...status.skipped] };
-    try {
-      onProgress?.(this.status());
-    } catch (error) {
-      console.warn("[library-index] progress callback failed:", error);
-    }
+  private publish(status: LibraryIndexStatus, callback?: (status: LibraryIndexStatus) => void): void {
+    this.currentStatus = status;
+    try { callback?.(this.status()); } catch (error) { console.warn("[library-index] progress callback failed:", error); }
   }
 }
 
-function emptyStatus(state: LibraryIndexStatus["state"]): LibraryIndexStatus {
-  return { state, total: 0, done: 0, documents: 0, parts: 0, skipped: [] };
+export function libraryDocumentIsAuthorized(document: Pick<LibraryDocument, "path" | "root">, roots: readonly string[]): boolean {
+  return roots.some((root) => document.root ? document.root === path.normalize(root) || isPathWithinRoot(document.root, root) : isPathWithinRoot(document.path, root));
 }
+function emptyStatus(state: LibraryIndexStatus["state"]): LibraryIndexStatus { return { state, total: 0, done: 0, documents: 0, parts: 0, skipped: [] }; }
+function normalizeRoots(roots: readonly string[]): readonly string[] { return [...new Set(roots.filter((root) => path.isAbsolute(root)).map((root) => path.normalize(root)))].sort(); }
 
-function normalizeRoots(roots: readonly string[]): readonly string[] {
-  return roots
-    .filter((root) => path.isAbsolute(root))
-    .map((root) => path.normalize(root))
-    .filter((root, index, all) => all.indexOf(root) === index)
-    .sort((left, right) => left.localeCompare(right));
-}
-
-async function scanLibraryRoots(
-  roots: readonly string[],
-): Promise<{ readonly candidates: readonly LibraryCandidate[]; readonly skipped: readonly LibrarySkippedFile[] }> {
+async function scanLibraryRoots(roots: readonly string[], signal: AbortSignal, now: () => number): Promise<{
+  candidates: LibraryCandidate[]; skipped: LibrarySkippedFile[]; roots: LibraryRootStatus[];
+}> {
   const candidates = new Map<string, LibraryCandidate>();
   const skipped: LibrarySkippedFile[] = [];
-
+  const statuses: LibraryRootStatus[] = [];
+  let visited = 0;
   for (const root of roots) {
-    await scanDirectory(root, candidates, skipped);
+    let state: LibraryRootStatus["state"] = "online";
+    const walk = async (directory: string, depth: number): Promise<void> => {
+      if (signal.aborted) return;
+      if (depth > 32 || visited > 10_000 || candidates.size >= MAX_LIBRARY_FILES) {
+        state = "partial"; skipped.push({ path: directory, reasonCode: "capacity", reason: "Library scan limit reached. Use fewer files or a smaller folder." }); return;
+      }
+      let entries;
+      try { entries = await boundedScanIo(readdir(directory, { withFileTypes: true }), signal); }
+      catch (error) { state = directory === root ? "offline" : "partial"; skipped.push(unavailable(directory, error)); return; }
+      for (const entry of entries) {
+        if (signal.aborted) return;
+        if (++visited > 10_000 || candidates.size >= MAX_LIBRARY_FILES) { state = "partial"; skipped.push({ path: directory, reasonCode: "capacity", reason: "Library file count limit reached." }); return; }
+        if (entry.name.startsWith(".") || entry.name.startsWith("~$") || entry.isSymbolicLink()) continue;
+        const file = path.join(directory, entry.name);
+        if (entry.isDirectory()) { await walk(file, depth + 1); continue; }
+        if (!entry.isFile() || !SUPPORTED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+        try {
+          const authorized = await boundedScanIo(authorizeDocumentRead(file, { workspaceRoots: [root], allowedFiles: [] }), signal);
+          candidates.set(authorized.path, { path: authorized.path, key: authorized.sourceVersion, root });
+        } catch (error) { state = "partial"; skipped.push(unavailable(file, error)); }
+      }
+    };
+    await walk(root, 0);
+    statuses.push({ path: root, state, checkedAt: new Date(now()).toISOString() });
   }
-
-  return {
-    candidates: [...candidates.values()].sort((left, right) => left.path.localeCompare(right.path)),
-    skipped,
-  };
+  return { candidates: [...candidates.values()].sort((a, b) => a.path.localeCompare(b.path)), skipped, roots: statuses };
 }
-
-async function scanDirectory(
-  directory: string,
-  candidates: Map<string, LibraryCandidate>,
-  skipped: LibrarySkippedFile[],
-): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    skipped.push(unavailable(directory, error));
-    return;
-  }
-
-  for (const entry of entries) {
-    if (entry.name.startsWith(".") || entry.name.startsWith("~$") || entry.isSymbolicLink()) {
-      continue;
-    }
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      await scanDirectory(entryPath, candidates, skipped);
-      continue;
-    }
-    if (!entry.isFile() || !SUPPORTED_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) {
-      continue;
-    }
-    try {
-      const fileStat = await stat(entryPath);
-      const absolutePath = path.resolve(entryPath);
-      candidates.set(absolutePath, {
-        path: absolutePath,
-        key: `${absolutePath}:${fileStat.mtimeMs}:${fileStat.size}`,
-      });
-    } catch (error) {
-      skipped.push(unavailable(entryPath, error));
-    }
-  }
+function unavailable(file: string, error: unknown): LibrarySkippedFile { return { path: file, reason: `This library path is temporarily unavailable (${error instanceof Error ? error.message : String(error)}).`, reasonCode: "unavailable" }; }
+function boundedScanIo<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error, result?: T) => {
+      clearTimeout(timer); signal.removeEventListener("abort", abort);
+      if (error) reject(error); else resolve(result as T);
+    };
+    const abort = () => finish(new Error("Library scan cancelled."));
+    const timer = setTimeout(() => finish(new Error("Library filesystem operation timed out.")), 5_000);
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) abort();
+    operation.then((result) => finish(undefined, result), (error) => finish(error));
+  });
 }
-
-function unavailable(filePath: string, error: unknown): LibrarySkippedFile {
-  const detail = error instanceof Error ? error.message : String(error);
-  return {
-    path: filePath,
-    reason: `This library path could not be read (${detail}).`,
-    reasonCode: "unavailable",
-  };
-}
-
-function parsePersistedIndex(value: unknown): {
-  readonly documents: readonly LibraryDocument[];
-  readonly failures: readonly PersistedLibraryFailure[];
-} {
-  if (typeof value !== "object" || value === null) {
-    return { documents: [], failures: [] };
-  }
+function parsePersistedIndex(value: unknown): { documents: LibraryDocument[]; failures: PersistedLibraryFailure[]; valid: boolean } {
+  if (typeof value !== "object" || !value) return { documents: [], failures: [], valid: false };
   const input = value as Partial<PersistedLibraryIndex>;
-  if (input.version !== INDEX_VERSION || !Array.isArray(input.documents)) {
-    return { documents: [], failures: [] };
-  }
-  return {
-    documents: input.documents.filter(isLibraryDocument),
-    failures: Array.isArray(input.failures) ? input.failures.filter(isPersistedLibraryFailure) : [],
-  };
+  if (![1, INDEX_VERSION].includes(input.version ?? 0) || !Array.isArray(input.documents)) return { documents: [], failures: [], valid: false };
+  return { valid: true, documents: input.documents.filter(isLibraryDocument).slice(0, MAX_LIBRARY_FILES),
+    failures: Array.isArray(input.failures) ? input.failures.filter((file) => typeof file === "object" && file !== null &&
+      typeof file.path === "string" && typeof file.key === "string" && typeof file.reason === "string" && typeof file.reasonCode === "string").slice(0, MAX_LIBRARY_FILES) : [] };
 }
-
 function isLibraryDocument(value: unknown): value is LibraryDocument {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const document = value as Partial<LibraryDocument>;
-  return (
-    typeof document.path === "string" &&
-    path.isAbsolute(document.path) &&
-    typeof document.title === "string" &&
-    typeof document.key === "string" &&
-    (document.unit === "page" || document.unit === "section") &&
-    Array.isArray(document.parts) &&
-    document.parts.every((part) => typeof part === "string")
-  );
-}
-
-function isPersistedLibraryFailure(value: unknown): value is PersistedLibraryFailure {
-  if (typeof value !== "object" || value === null) {
-    return false;
-  }
-  const failure = value as Partial<PersistedLibraryFailure>;
-  return (
-    typeof failure.path === "string" &&
-    path.isAbsolute(failure.path) &&
-    typeof failure.key === "string" &&
-    typeof failure.reason === "string" &&
-    isLibrarySkipReason(failure.reasonCode)
-  );
-}
-
-function isLibrarySkipReason(value: unknown): value is LibrarySkipReason {
-  return (
-    value === "scanned-pdf" ||
-    value === "password-protected" ||
-    value === "corrupt" ||
-    value === "too-large" ||
-    value === "empty" ||
-    value === "unsupported" ||
-    value === "unavailable" ||
-    value === "capacity"
-  );
-}
-
-function withoutKey(failure: PersistedLibraryFailure): LibrarySkippedFile {
-  return {
-    path: failure.path,
-    reason: failure.reason,
-    reasonCode: failure.reasonCode,
-  };
-}
-
-function sameVersionedEntries(
-  previous: readonly { readonly path: string; readonly key: string }[],
-  next: readonly { readonly path: string; readonly key: string }[],
-): boolean {
-  return (
-    previous.length === next.length &&
-    previous.every((document, index) => document.path === next[index]?.path && document.key === next[index]?.key)
-  );
+  if (typeof value !== "object" || !value) return false;
+  const doc = value as Partial<LibraryDocument>;
+  return typeof doc.path === "string" && path.isAbsolute(doc.path) && typeof doc.title === "string" && typeof doc.key === "string" &&
+    (doc.unit === "page" || doc.unit === "section") && Array.isArray(doc.parts) && doc.parts.every((part) => typeof part === "string") &&
+    (doc.root === undefined || typeof doc.root === "string" && path.isAbsolute(doc.root)) &&
+    (doc.complete === undefined || typeof doc.complete === "boolean");
 }

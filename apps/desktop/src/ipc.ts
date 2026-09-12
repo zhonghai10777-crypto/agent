@@ -134,6 +134,11 @@ export type LibrarySkipReasonView =
   | "empty"
   | "unsupported"
   | "unavailable"
+  | "changed"
+  | "cancelled"
+  | "timeout"
+  | "worker-unavailable"
+  | "queue-full"
   | "capacity";
 
 export interface LibrarySkippedFileView {
@@ -149,6 +154,8 @@ export interface LibraryIndexStatusView {
   readonly documents: number;
   readonly parts: number;
   readonly skipped: readonly LibrarySkippedFileView[];
+  readonly snapshotAvailable?: boolean;
+  readonly roots?: readonly { readonly path: string; readonly state: "online" | "partial" | "offline"; readonly checkedAt: string }[];
 }
 
 export const desktopIpc = {

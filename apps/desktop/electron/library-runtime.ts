@@ -6,6 +6,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { numberParam, stringParam } from "./tool-params";
 import type { LibraryDocument, LibraryIndexReader, LibraryIndexStatus } from "./library-index";
+import { libraryDocumentIsAuthorized } from "./library-index";
 import type { LibrarySettings } from "./library-store";
 
 export const librarySearchToolName = "library_search";
@@ -19,6 +20,10 @@ export interface LibrarySearchMatch {
   readonly snippet: string;
   readonly matchedTerms: number;
   readonly frequency: number;
+  readonly sourceVersion?: string;
+  readonly complete?: boolean;
+  readonly indexedAt?: string;
+  readonly offline?: boolean;
 }
 
 export interface LibrarySearchToolDetails {
@@ -43,6 +48,10 @@ export interface LibraryListEntry {
   readonly title: string;
   readonly unit: "page" | "section";
   readonly parts: number;
+  readonly sourceVersion?: string;
+  readonly complete?: boolean;
+  readonly indexedAt?: string;
+  readonly offline?: boolean;
 }
 
 type LibraryToolDetails = LibrarySearchToolDetails | LibraryListToolDetails;
@@ -89,6 +98,8 @@ export function searchLibraryDocuments(
         snippet: snippetAround(part, firstMatch, firstTerm.length, 200),
         matchedTerms: terms.length,
         frequency,
+        sourceVersion: document.key, complete: document.complete,
+        indexedAt: document.indexedAt, offline: document.offline,
       } satisfies LibrarySearchMatch;
       insertRankedMatch(matches, match, boundedLimit);
     }
@@ -137,10 +148,15 @@ function createLibrarySearchTool(
         return errorResult({ action: "library_search", query, results: [], error: readinessError });
       }
 
-      const results = searchLibraryDocuments(index.documents(), query, numberParam(params, "limit") ?? 8);
+      const current = getSettings();
+      const currentError = describeLibraryMisconfiguration(current);
+      if (currentError) return errorResult({ action: "library_search", query, results: [], error: currentError });
+      const documents = index.documents().filter((doc) => libraryDocumentIsAuthorized(doc, current.roots));
+      const notice = snapshotNotice(index.status(), documents);
+      const results = searchLibraryDocuments(documents, query, numberParam(params, "limit") ?? 8);
       if (results.length === 0) {
         return {
-          content: [{ type: "text", text: `No local library results found for "${query}". Try a synonym or a more exact standard number.` }],
+          content: [{ type: "text", text: `${notice}No local library results found for "${query}" in the indexed content. Try a synonym or a more exact standard number.` }],
           details: { action: "library_search", query, results },
         };
       }
@@ -148,11 +164,11 @@ function createLibrarySearchTool(
       const text = results
         .map((result, resultIndex) => {
           const citation = result.unit === "page" ? `第 ${result.part} 页` : `第 ${result.part} 节`;
-          return `${resultIndex + 1}. 《${result.title}》 ${citation}\nPath: ${result.path}\n${result.snippet}`;
+          return `${resultIndex + 1}. 《${result.title}》 ${citation}\nPath: ${result.path}\nSource version: ${result.sourceVersion}\n${result.offline ? `Offline cached source, indexed ${result.indexedAt ?? "at an unknown time"}; not freshly read.\n` : ""}${result.snippet}`;
         })
         .join("\n\n");
       return {
-        content: [{ type: "text", text }],
+        content: [{ type: "text", text: notice + text }],
         details: { action: "library_search", query, results },
       };
     },
@@ -202,14 +218,20 @@ function createLibraryListTool(
       }
 
       const normalizedFilter = filter.toLowerCase();
+      const current = getSettings();
+      const currentError = describeLibraryMisconfiguration(current);
+      if (currentError) return errorResult({ action: "library_list", filter, offset, limit, total: 0, documents: [], error: currentError });
       const matchingDocuments = index
         .documents()
+        .filter((document) => libraryDocumentIsAuthorized(document, current.roots))
         .filter((document) => !normalizedFilter || document.title.toLowerCase().includes(normalizedFilter))
         .map((document) => ({
           path: document.path,
           title: document.title,
           unit: document.unit,
           parts: document.parts.length,
+          sourceVersion: document.key, complete: document.complete,
+          indexedAt: document.indexedAt, offline: document.offline,
         }));
       const documents = matchingDocuments.slice(offset, offset + limit);
       const text = documents.length
@@ -223,7 +245,7 @@ function createLibraryListTool(
           ? `No local library documents match "${filter}".`
           : "The local library contains no readable documents.";
       return {
-        content: [{ type: "text", text }],
+        content: [{ type: "text", text: snapshotNotice(index.status(), matchingDocuments) + text }],
         details: { action: "library_list", filter, offset, limit, total: matchingDocuments.length, documents },
       };
     },
@@ -233,7 +255,7 @@ function createLibraryListTool(
 const libraryPromptGuidelines: string[] = [
   "For questions about procedures, standards, protection settings, equipment parameters, or plant rules, search the local library before considering web_search; site documents take precedence over public information.",
   "If the first search misses, retry with synonyms or exact standard numbers (for example: 厂用电切换 / 厂用电源切换 / 厂用电源快切). Do not give up after one query.",
-  "After a match, call read_document with the returned full path and part number before answering. Never answer from the search snippet alone.",
+  "After a match, call read_document with the returned full path, part number and source_version before answering. Never answer from the search snippet alone.",
   "Cite the source as 《file name》 page N (or section N for non-paginated files).",
   "If the local library has no relevant content, say so explicitly. Never invent a clause from training memory.",
 ];
@@ -258,16 +280,25 @@ export function createLibraryRuntimeExtension(
 
 async function refreshReadyIndex(index: LibraryIndexReader, roots: readonly string[]): Promise<string | undefined> {
   const status = index.status();
+  if (status.state === "ready" && status.snapshotAvailable === false && status.roots?.some((root) => root.state !== "online")) {
+    return "The local library is not ready: its source folders are unavailable and there is no previously committed content to search.";
+  }
   if (status.state === "idle") {
     void index.rebuild(roots).catch((error) => {
       console.error("[library-runtime] background index build failed:", error);
     });
     return "The local library is not ready yet. Its documents are being prepared; try again shortly.";
   }
-  if (status.state === "indexing") {
+  if (status.state === "indexing" && !(status.snapshotAvailable ?? index.documents().length > 0)) {
     return indexingMessage(status);
   }
   return undefined;
+}
+
+function snapshotNotice(status: LibraryIndexStatus, documents: readonly { complete?: boolean; offline?: boolean }[]): string {
+  return (status.state === "indexing" ? "Using the previous committed library snapshot while refresh continues.\n" : "") +
+    (documents.some((doc) => doc.offline) || status.roots?.some((root) => root.state !== "online") ? "Some sources are offline or partially scanned. Cached excerpts are not a fresh reading of the source.\n" : "") +
+    (documents.some((doc) => doc.complete === false) ? "Some documents are only partially indexed due to safety limits. Missing matches do not prove absence from their full text.\n" : "");
 }
 
 function insertRankedMatch(matches: LibrarySearchMatch[], match: LibrarySearchMatch, limit: number): void {

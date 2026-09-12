@@ -56,6 +56,11 @@ test("tells the model a scan could not be read instead of letting it guess", () 
   expect(instructions).toContain("Do NOT call read");
 });
 
+test("a safety-limited document is explicitly partial in model guidance", () => {
+  const prompt = injectFileAttachmentPreamble("Find the tail", [pdf({ extraction: { status: "ok", chars: 4_000_000, complete: false, charLimit: 4_000_000 } })]);
+  expect(payloadOf(prompt).instructions.join(" ")).toContain("Only part of this document is available");
+});
+
 test("strips the whole block back out of the transcript", () => {
   const prompt = injectFileAttachmentPreamble("第 3.2 条怎么说？", [
     pdf({ extraction: { status: "ok", pages: 2, chars: 40 }, documentText: "第 3.2 条：效率不低于 92%。" }),

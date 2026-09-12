@@ -277,7 +277,8 @@ function fileAttachmentInstructions(
         : `${extraction.chars ?? 0} characters`;
     lines.push(
       `${file.name}: ${size}. Call read_document with its fsPath to read it. ` +
-        "Do NOT use read — it returns meaningless characters for this file type.",
+        "Do NOT use read — it returns meaningless characters for this file type." +
+        (extraction.complete === false ? " Only part of this document is available due to a safety limit; do not infer that unread content is absent." : ""),
     );
   }
   return lines;
