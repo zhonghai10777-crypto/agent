@@ -23,11 +23,13 @@ export function toAttachmentExtraction(extraction: DocumentExtraction): SessionA
   }
   return {
     status: "ok",
-    chars: extraction.text.length,
+    chars: extraction.meta.extractedChars ?? extraction.text.length,
     ...(extraction.meta.pages !== undefined ? { pages: extraction.meta.pages } : {}),
     ...(extraction.meta.sheets ? { sheets: extraction.meta.sheets } : {}),
     ...(extraction.meta.encoding ? { encoding: extraction.meta.encoding } : {}),
     ...(extraction.meta.truncated ? { truncated: true } : {}),
+    ...(extraction.meta.complete !== undefined ? { complete: extraction.meta.complete } : {}),
+    ...(extraction.meta.charLimit !== undefined ? { charLimit: extraction.meta.charLimit } : {}),
   };
 }
 
@@ -69,7 +71,7 @@ export async function withDocumentText(
     }
     const extraction = await getDocumentExtraction(attachment.fsPath);
     const summary = toAttachmentExtraction(extraction);
-    const inline = extraction.ok && extraction.text.length <= INLINE_DOCUMENT_CHAR_LIMIT;
+    const inline = extraction.ok && !extraction.meta.truncated && extraction.meta.complete !== false && extraction.text.length <= INLINE_DOCUMENT_CHAR_LIMIT;
     result.push({
       ...attachment,
       extraction: summary,

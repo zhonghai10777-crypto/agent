@@ -500,6 +500,8 @@ function normalizeAttachmentExtraction(
       ...(typeof record.chars === "number" ? { chars: record.chars } : {}),
       ...(typeof record.encoding === "string" ? { encoding: record.encoding } : {}),
       ...(record.truncated === true ? { truncated: true } : {}),
+      ...(typeof record.complete === "boolean" ? { complete: record.complete } : {}),
+      ...(typeof record.charLimit === "number" ? { charLimit: record.charLimit } : {}),
     },
   };
 }

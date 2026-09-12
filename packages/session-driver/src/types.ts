@@ -78,6 +78,8 @@ export interface SessionAttachmentExtraction {
   readonly chars?: number;
   readonly encoding?: string;
   readonly truncated?: boolean;
+  readonly complete?: boolean;
+  readonly charLimit?: number;
 }
 
 export interface SessionFileAttachment {

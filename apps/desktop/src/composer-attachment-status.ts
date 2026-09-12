@@ -22,6 +22,12 @@ const FAILURE_KEYS: Readonly<Record<string, MessageKey>> = {
   "too-large": "composer.attachment.failed.tooLarge",
   empty: "composer.attachment.failed.empty",
   unsupported: "composer.attachment.failed.unsupported",
+  unavailable: "composer.attachment.failed.unavailable",
+  changed: "composer.attachment.failed.changed",
+  cancelled: "composer.attachment.failed.cancelled",
+  timeout: "composer.attachment.failed.timeout",
+  "worker-unavailable": "composer.attachment.failed.workerUnavailable",
+  "queue-full": "composer.attachment.failed.queueFull",
 };
 
 export function attachmentExtractionLabel(
@@ -38,6 +44,9 @@ export function attachmentExtractionLabel(
     };
   }
 
+  if (extraction.complete === false) {
+    return { key: "composer.attachment.partial", params: { count: extraction.charLimit ?? extraction.chars ?? 0 }, failed: false };
+  }
   if (extraction.pages !== undefined) {
     return { key: "composer.attachment.pages", params: { count: extraction.pages }, failed: false };
   }

@@ -1,4 +1,4 @@
-import { unzipSync } from "fflate";
+import { readDocumentZipParts } from "./document-zip";
 
 /**
  * Minimal read-only XLSX reader.
@@ -15,6 +15,7 @@ import { unzipSync } from "fflate";
 export interface XlsxSheet {
   readonly name: string;
   readonly rows: readonly (readonly string[])[];
+  readonly rowNumbers?: readonly number[];
 }
 
 export interface XlsxWorkbook {
@@ -31,7 +32,7 @@ function textPart(files: Record<string, Uint8Array>, name: string): string | und
 }
 
 export function readXlsx(buffer: Uint8Array): XlsxWorkbook {
-  const files = unzipSync(buffer);
+  const files = readDocumentZipParts(buffer, (name) => name.startsWith("xl/") && (name.endsWith(".xml") || name.endsWith(".rels")));
   const workbookXml = textPart(files, "xl/workbook.xml");
   if (!workbookXml) {
     throw new Error("not an xlsx workbook (missing xl/workbook.xml)");
@@ -54,7 +55,8 @@ export function readXlsx(buffer: Uint8Array): XlsxWorkbook {
     if (sheetXml === undefined) {
       continue;
     }
-    sheets.push({ name, rows: readSheetRows(sheetXml, sharedStrings, dateStyles, uses1904DateSystem) });
+    const rowNumbers: number[] = [];
+    sheets.push({ name, rows: readSheetRows(sheetXml, sharedStrings, dateStyles, uses1904DateSystem, rowNumbers), rowNumbers });
   }
 
   if (sheets.length === 0) {
@@ -68,9 +70,11 @@ function readSheetRows(
   sharedStrings: readonly string[],
   dateStyles: ReadonlySet<number>,
   uses1904DateSystem: boolean,
+  rowNumbers: number[],
 ): readonly (readonly string[])[] {
   const rows: string[][] = [];
   for (const rowMatch of sheetXml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>|<row\b[^>]*\/>/g)) {
+    const rowNumber = Number.parseInt(attribute(rowMatch[0].split(">")[0] ?? "", "r") ?? "", 10);
     const body = rowMatch[1] ?? "";
     const cells: string[] = [];
     for (const cellMatch of body.matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>|<c\b([^>]*)\/>/g)) {
@@ -90,6 +94,7 @@ function readSheetRows(
     }
     if (cells.length > 0) {
       rows.push(cells);
+      rowNumbers.push(Number.isFinite(rowNumber) && rowNumber > 0 ? rowNumber : (rowNumbers.at(-1) ?? 0) + 1);
     }
   }
   return rows;

@@ -94,6 +94,7 @@ import {
 import { canBorrowModelProviderKey, type WebSearchKeySource } from "../src/web-search-providers";
 import { LibraryStore, normalizeLibrarySettings } from "./library-store";
 import { LibraryIndex } from "./library-index";
+import { MAX_LIBRARY_CHARS } from "./document-limits";
 import { createLibraryRuntimeExtension, createLibraryRuntimeTools } from "./library-runtime";
 import type {
   ComposerAttachment,
@@ -227,12 +228,13 @@ function tryResolveSessionRefFromExtensionContext(ctx: ExtensionContext): Sessio
 function baseDocumentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
   const sessionRef = tryResolveSessionRefFromExtensionContext(ctx);
   return {
-    workspaceRoots: [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)],
+    workspaceRoots: sessionRef ? [path.resolve(ctx.sessionManager.getCwd?.() ?? ctx.cwd)] : [],
     allowedFiles: sessionRef ? store.attachedDocumentPathsFor(sessionRef) : [],
   };
 }
 
 function documentAccessScopeFor(ctx: ExtensionContext): DocumentAccessScope {
+  if (!tryResolveSessionRefFromExtensionContext(ctx)) return { workspaceRoots: [], allowedFiles: [] };
   const base = baseDocumentAccessScopeFor(ctx);
   const settings = libraryStore.read();
   return {
@@ -326,8 +328,8 @@ async function runLibraryRuntimeToolForTest(toolName: string, params: unknown): 
   return tool.execute(`test-${toolName}`, params, undefined, undefined, {} as ExtensionContext);
 }
 
-function startLibraryRebuild(roots: readonly string[]): void {
-  void libraryIndex.rebuild(roots).catch((error) => {
+function startLibraryRebuild(roots: readonly string[], retryFailures = false): void {
+  void libraryIndex.rebuild(roots, undefined, { retryFailures }).catch((error) => {
     console.error("[library-index] rebuild failed:", error);
   });
 }
@@ -1328,7 +1330,7 @@ app.whenReady().then(async () => {
   };
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
   libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
-    maxIndexedChars: initialRuntimeMode === "light" ? 10_000_000 : 100_000_000,
+    maxIndexedChars: initialRuntimeMode === "light" ? MAX_LIBRARY_CHARS / 2 : MAX_LIBRARY_CHARS,
   });
   const initialLibrarySettings = libraryStore.read();
   if (initialLibrarySettings.enabled && initialLibrarySettings.roots.length > 0) {
@@ -1734,7 +1736,7 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle(desktopIpc.getLibraryIndexStatus, (): LibraryIndexStatusView => libraryIndex.status());
   ipcMain.handle(desktopIpc.rebuildLibraryIndex, (): LibraryIndexStatusView => {
-    startLibraryRebuild(libraryStore.read().roots);
+    startLibraryRebuild(libraryStore.read().roots, true);
     return libraryIndex.status();
   });
   ipcMain.handle(desktopIpc.setScopedModelPatterns, (event, workspaceId: string, patterns: readonly string[]) =>

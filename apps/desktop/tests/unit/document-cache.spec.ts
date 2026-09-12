@@ -1,5 +1,9 @@
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
+import { builtDocumentWorker } from "../helpers/document-worker";
+
+const worker = builtDocumentWorker();
+test.afterAll(() => worker.close());
 import {
   FAILURE_TTL_MS,
   getDocumentExtraction,
@@ -15,7 +19,7 @@ test("a transient read failure recovers with identical file metadata", async ({}
   await writeFile(file, "恢复后可以读取的规程");
   const metadata = await stat(file);
   let reads = 0;
-  const options = { io: {
+  const options = { worker, io: {
     stat: async () => metadata,
     readFile: async () => {
       if (++reads === 1) throw Object.assign(new Error("temporary lock"), { code: "EACCES" });
@@ -37,6 +41,7 @@ test("parse failures expire and explicit reattachment retries before expiry", as
   let reads = 0;
   let time = 100;
   const options = {
+    worker,
     now: () => time,
     io: { stat, readFile: async (path: string) => { reads += 1; return new Uint8Array(await readFile(path)); } },
   };
@@ -55,7 +60,7 @@ test("reattachment preserves the successful extraction cache", async ({}, testIn
   const file = testInfo.outputPath("valid.txt");
   await writeFile(file, "already extracted");
   let reads = 0;
-  const options = { io: { stat, readFile: async (path: string) => {
+  const options = { worker, io: { stat, readFile: async (path: string) => {
     reads += 1;
     return new Uint8Array(await readFile(path));
   } } };
