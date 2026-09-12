@@ -97,7 +97,7 @@ error and keeps the draft and attachments for retry.
 ## DeepSeek image assistance
 
 Official DeepSeek `deepseek-v4-pro` and `deepseek-v4-flash` sessions configured for text input can analyze
-attached images with `deepseek-v4-flash-vision-exp`, then answer with the original
+attached images with `deepseek-flash`, then answer with the original
 primary model, thinking level, context and tools. Settings → Models controls
 **Automatic image analysis**, shows the auxiliary model and account source, and
 offers local configuration validation or a confirmed small-image connection test.

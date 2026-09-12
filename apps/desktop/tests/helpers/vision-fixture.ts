@@ -2,6 +2,7 @@ import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, type Page } from "@playwright/test";
+import { VISION_MODEL_ID } from "@pi-gui/session-driver/vision-types";
 import type { DesktopHarness } from "./electron-app";
 
 export const VISION_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGPQSLnzHx9mGBkKAOz6mcHK/OviAAAAAElFTkSuQmCC";
@@ -40,7 +41,7 @@ export async function startVisionHttpFixture() {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
     const body = JSON.parse(Buffer.concat(chunks).toString());
-    const kind = body.model === "deepseek-v4-flash-vision-exp" ? "vision" : "primary";
+    const kind = body.model === VISION_MODEL_ID && body.stream === false ? "vision" : "primary";
     requests.push({ kind, body });
     if (kind === "vision") {
       const respond = () => {

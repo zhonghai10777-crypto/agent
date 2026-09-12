@@ -15,7 +15,7 @@ test("vision client sends the fixed official serialized protocol without tools",
     assert.equal(url, "https://api.deepseek.com/chat/completions");
     assert.equal(init.redirect, "error");
     const body = JSON.parse(init.body as string);
-    assert.equal(body.model, "deepseek-v4-flash-vision-exp");
+    assert.equal(body.model, "deepseek-flash");
     assert.deepEqual(body.thinking, { type: "disabled" });
     assert.deepEqual(body.response_format, { type: "json_object" });
     assert.equal(body.stream, false);
