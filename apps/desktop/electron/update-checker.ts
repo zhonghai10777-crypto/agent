@@ -1,4 +1,5 @@
 import { app, net, Notification, shell } from "electron";
+import { compare, parse } from "semver";
 import { PRODUCT, PRODUCT_UPDATE_REPOSITORY } from "../src/product";
 import type { UpdateCheckResult } from "../src/update-state";
 export type { UpdateCheckResult } from "../src/update-state";
@@ -30,6 +31,8 @@ export type GitHubRelease = {
   tag_name?: string;
   html_url?: string;
   draft?: boolean;
+  prerelease?: boolean;
+  assets?: readonly { name?: string; size?: number; state?: string; browser_download_url?: string }[];
 };
 
 export function openReleasesPage(releaseUrl = releasesPageFor(resolveUpdateSource().repository)): Promise<void> {
@@ -64,6 +67,8 @@ interface UpdateCheckOptions {
   readonly currentVersion?: string;
   readonly fetch?: (url: string, init: RequestInit) => Promise<Response>;
   readonly timeoutMs?: number;
+  readonly platform?: NodeJS.Platform;
+  readonly architecture?: string;
 }
 
 export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<UpdateCheckResult> {
@@ -77,48 +82,58 @@ export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<
   const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? FETCH_TIMEOUT_MS);
   const fetchRelease = options.fetch ?? ((url, init) => net.fetch(url, init));
   try {
-    const res = await fetchRelease(`https://api.github.com/repos/${source.repository}/releases?per_page=10`, {
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-        ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
-      },
-      redirect: "error",
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) {
-        return { status: "error", code: "rate-limited", message: "GitHub's request limit was reached. Please try again later." };
-      }
-      if ([401, 403, 404].includes(res.status)) {
-        return { status: "error", code: "access-denied", message: "The update repository is unavailable or requires access. Use your own read-only credential or ask the publisher for a public update source." };
-      }
-      return { status: "error", code: "http", message: `The update service returned HTTP ${res.status}.` };
-    }
-    let payload: unknown;
-    try {
-      payload = await res.json();
-    } catch (error) {
-      if (controller.signal.aborted) throw error;
-      return { status: "error", code: "invalid-response", message: "The update service returned an unreadable response." };
-    }
-    if (!Array.isArray(payload)) {
-      return { status: "error", code: "invalid-response", message: "The update service returned an unexpected response." };
-    }
-    const release = payload.find((item): item is GitHubRelease & { tag_name: string } =>
-      typeof item === "object" && item !== null && item.draft !== true && typeof item.tag_name === "string");
-    if (!release) {
-      return { status: "error", code: "no-releases", message: "The update source has no published versions yet." };
-    }
-    const latest = release.tag_name.replace(/^v/, "");
     const current = options.currentVersion ?? app.getVersion();
-    if (!parseSemver(latest) || !parseSemver(current)) {
-      return { status: "error", code: "invalid-response", message: "The update service returned an invalid version." };
+    const currentParsed = strictVersion(current);
+    if (!currentParsed) return { status: "error", code: "configuration", message: "The installed version is not valid SemVer." };
+    const releases: GitHubRelease[] = [];
+    // GitHub orders by publication, not version. Exhaust a bounded window; never
+    // call an incomplete scan “up to date” or follow arbitrary Link URLs with auth.
+    const pageSize = 30, maxPages = 5;
+    let complete = false;
+    for (let page = 1; page <= maxPages; page++) {
+      const res = await fetchRelease(`https://api.github.com/repos/${source.repository}/releases?per_page=${pageSize}&page=${page}`, {
+        headers: {
+          Accept: "application/vnd.github+json",
+          "X-GitHub-Api-Version": "2022-11-28",
+          ...(source.token ? { Authorization: `Bearer ${source.token}` } : {}),
+        },
+        redirect: "error", signal: controller.signal,
+      });
+      if (!res.ok) {
+        if (res.status === 429 || (res.status === 403 && res.headers.get("x-ratelimit-remaining") === "0")) return { status: "error", code: "rate-limited", message: "GitHub's request limit was reached. Please try again later." };
+        if ([401, 403, 404].includes(res.status)) return { status: "error", code: "access-denied", message: "The update repository is unavailable or requires access. Use your own read-only credential or ask the publisher for a public update source." };
+        return { status: "error", code: "http", message: `The update service returned HTTP ${res.status}.` };
+      }
+      let payload: unknown;
+      try { payload = await res.json(); }
+      catch (error) {
+        if (controller.signal.aborted) throw error;
+        return { status: "error", code: "invalid-response", message: "The update service returned an unreadable response." };
+      }
+      if (!Array.isArray(payload) || payload.length > pageSize) return { status: "error", code: "invalid-response", message: "The update service returned an unexpected response." };
+      releases.push(...payload.filter((item): item is GitHubRelease => item && typeof item === "object" && !Array.isArray(item) && item.draft !== true));
+      const link = res.headers.get("link");
+      if (!(link ? /rel="next"/.test(link) : payload.length === pageSize)) { complete = true; break; }
     }
-    if (compareSemver(latest, current) > 0) {
-      return { status: "update-available", currentVersion: current, latestVersion: latest, releaseUrl: releaseUrlFor(release, source.repository) };
-    }
-    return { status: "up-to-date", currentVersion: current, latestVersion: latest };
+    if (!complete) return { status: "error", code: "incomplete-coverage", message: "More releases exist beyond the update check's 150-release window. View the release page or retry later; the latest compatible version could not be confirmed." };
+    if (!releases.length) return { status: "error", code: "no-releases", message: "The update source has no published versions yet." };
+    const valid = releases.flatMap((release) => {
+      if (typeof release.tag_name !== "string") return [];
+      const version = release.tag_name.replace(/^v/, "");
+      const parsed = strictVersion(version);
+      return parsed ? [{ release, version, parsed }] : [];
+    });
+    if (!valid.length) return { status: "error", code: "invalid-response", message: "The update service returned no valid versions." };
+    const channel = currentParsed.prerelease[0];
+    const candidates = valid.filter(({ release, parsed, version }) => {
+      const stable = !parsed.prerelease.length && release.prerelease !== true;
+      const permitted = stable || channel !== undefined && parsed.prerelease[0] === channel;
+      return permitted && hasCompatibleAsset(release, version, source.repository, options.platform ?? process.platform, options.architecture ?? process.arch);
+    }).sort((a, b) => compare(b.parsed, a.parsed));
+    const latest = candidates[0];
+    if (!latest) return { status: "error", code: "no-compatible-release", message: "The update source has no verified package for this platform, architecture and update channel." };
+    if (compare(latest.parsed, currentParsed) > 0) return { status: "update-available", currentVersion: current, latestVersion: latest.version, releaseUrl: releaseUrlFor(latest.release, source.repository) };
+    return { status: "up-to-date", currentVersion: current, latestVersion: latest.version };
   } catch {
     return {
       status: "error",
@@ -187,73 +202,28 @@ export function releaseUrlFor(release: GitHubRelease, repository = resolveUpdate
   return canonicalUrl;
 }
 
-/**
- * Compare two semver strings. Returns a negative number when `a < b`, zero when
- * equal, positive when `a > b`. Handles prerelease precedence per semver
- * (a release outranks its own prereleases); unparseable inputs compare equal so
- * we never claim an update we can't verify.
- */
+/** Stable installs see stable releases; prerelease installs see their channel and stable releases. */
+function strictVersion(version: string) {
+  return /^\d/.test(version) && version.trim() === version ? parse(version) : null;
+}
+
 export function compareSemver(a: string, b: string): number {
-  const pa = parseSemver(a);
-  const pb = parseSemver(b);
-  if (!pa || !pb) {
-    return 0;
-  }
-  if (pa.nums[0] !== pb.nums[0]) {
-    return pa.nums[0] < pb.nums[0] ? -1 : 1;
-  }
-  if (pa.nums[1] !== pb.nums[1]) {
-    return pa.nums[1] < pb.nums[1] ? -1 : 1;
-  }
-  if (pa.nums[2] !== pb.nums[2]) {
-    return pa.nums[2] < pb.nums[2] ? -1 : 1;
-  }
-  return comparePrerelease(pa.pre, pb.pre);
+  const left = strictVersion(a), right = strictVersion(b);
+  return left && right ? compare(left, right) : 0;
 }
 
-function parseSemver(version: string): { nums: [number, number, number]; pre: string[] } | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(version.trim());
-  if (!match) {
-    return undefined;
-  }
-  return {
-    nums: [Number(match[1]), Number(match[2]), Number(match[3])],
-    pre: match[4] ? match[4].split(".") : [],
-  };
-}
-
-function comparePrerelease(a: string[], b: string[]): number {
-  if (a.length === 0 && b.length === 0) {
-    return 0;
-  }
-  // A version without a prerelease tag has higher precedence than one with it.
-  if (a.length === 0) {
-    return 1;
-  }
-  if (b.length === 0) {
-    return -1;
-  }
-  const length = Math.min(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const left = a[index] ?? "";
-    const right = b[index] ?? "";
-    const leftNumeric = /^\d+$/.test(left);
-    const rightNumeric = /^\d+$/.test(right);
-    if (leftNumeric && rightNumeric) {
-      const delta = Number(left) - Number(right);
-      if (delta !== 0) {
-        return delta < 0 ? -1 : 1;
-      }
-    } else if (leftNumeric) {
-      return -1; // numeric identifiers rank lower than alphanumeric
-    } else if (rightNumeric) {
-      return 1;
-    } else if (left !== right) {
-      return left < right ? -1 : 1;
-    }
-  }
-  if (a.length === b.length) {
-    return 0;
-  }
-  return a.length < b.length ? -1 : 1;
+export function hasCompatibleAsset(release: GitHubRelease, version: string, repository: string, platform: NodeJS.Platform, architecture: string): boolean {
+  if (!release.tag_name || !Array.isArray(release.assets)) return false;
+  const stem = `Agent-${version}-${architecture}`;
+  const names = platform === "win32" ? [`${stem}-setup.exe`, `${stem}-portable.exe`]
+    : platform === "darwin" ? [`${stem}.dmg`, `${stem}.zip`, `Agent-${version}-universal.dmg`, `Agent-${version}-universal.zip`]
+    : platform === "linux" ? [`${stem}.AppImage`, `Agent_${version}_${architecture}.deb`] : [];
+  return release.assets.some((asset) => {
+    if (!asset || !names.includes(asset.name ?? "") || !(typeof asset.size === "number" && asset.size > 0) || asset.state !== "uploaded") return false;
+    try {
+      const url = new URL(asset.browser_download_url ?? "");
+      const expected = new URL(`https://github.com/${repository}/releases/download/${encodeURIComponent(release.tag_name!)}/${encodeURIComponent(asset.name!)}`);
+      return url.href === expected.href;
+    } catch { return false; }
+  });
 }
