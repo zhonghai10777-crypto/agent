@@ -69,8 +69,8 @@ test("opens a workspace terminal with persistent output, tabs, and takeover cont
     await expect(window.getByTestId("settings-surface")).toHaveCount(0);
     await window.keyboard.press(desktopShortcut("Shift+O"));
     await expect(window.getByTestId("new-thread-composer")).toHaveCount(0);
-    await harness.electronApp.evaluate(({ clipboard, nativeImage }, pngBase64) => {
-      clipboard.writeImage(nativeImage.createFromDataURL(`data:image/png;base64,${pngBase64}`));
+    await harness.electronApp.evaluate(async ({ clipboard, ClipboardItem }, pngBase64) => {
+      await clipboard.write([new ClipboardItem({ "image/png": new Blob([new Uint8Array(Buffer.from(pngBase64, "base64"))], { type: "image/png" }) })]);
     }, TINY_PNG_BASE64);
     await window.keyboard.press(desktopShortcut("V"));
     await expect.poll(async () => (await getDesktopState(window)).composerAttachments.length).toBe(0);
@@ -145,8 +145,8 @@ test("pastes clipboard text into the integrated terminal once", async () => {
       { timeout: 15_000 },
     );
 
-    await harness.electronApp.evaluate(({ clipboard }) => {
-      clipboard.writeText("PI_TERMINAL_PASTE_ONCE");
+    await harness.electronApp.evaluate(async ({ clipboard }) => {
+      await clipboard.writeText("PI_TERMINAL_PASTE_ONCE");
     });
     await window.keyboard.press(desktopShortcut("V"));
 
@@ -206,8 +206,8 @@ test("writes an oversized terminal paste in chunks instead of dropping it", asyn
     await window.keyboard.press("Enter");
     await expect(terminal.locator(".xterm-rows")).toContainText(receiverReady, { timeout: 15_000 });
 
-    await harness.electronApp.evaluate(({ clipboard }, text) => {
-      clipboard.writeText(text);
+    await harness.electronApp.evaluate(async ({ clipboard }, text) => {
+      await clipboard.writeText(text);
     }, payload);
     await window.keyboard.press(desktopShortcut("V"));
     await expect(terminal.locator(".xterm-rows")).toContainText("ENDMARKER", { timeout: 30_000 });
@@ -249,8 +249,8 @@ test("keeps control keys working after the paste shortcut is intercepted", async
 
     // Ctrl+V must reach the shell as a paste, not as readline's quoted-insert
     // (0x16), which is what xterm does with the key by default.
-    await harness.electronApp.evaluate(({ clipboard }) => {
-      clipboard.writeText("echo PI_CONTROL_KEY_PROBE");
+    await harness.electronApp.evaluate(async ({ clipboard }) => {
+      await clipboard.writeText("echo PI_CONTROL_KEY_PROBE");
     });
     await window.keyboard.press("Control+V");
     await window.keyboard.press("Enter");

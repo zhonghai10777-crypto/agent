@@ -1,7 +1,7 @@
 appId: com.zhonghai10777.agent
 productName: Agent
 copyright: Copyright 2026 zhonghai10777-crypto
-electronVersion: 37.10.3
+electronVersion: 44.3.0
 
 directories:
   output: release

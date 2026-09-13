@@ -22,7 +22,6 @@ import { updateSnapshot } from "../app/desktop-app-state";
 import {
   extractFilesFromDataTransfer,
   extractImageFilesFromClipboardData,
-  handleClipboardImageShortcut,
   readComposerAttachmentsFromFiles,
 } from "../composer-attachments";
 import { buildModelOptions, parseTreeComposerCommand } from "../composer-commands";
@@ -303,10 +302,6 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
 
   const handleComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (handleClipboardImageShortcut(event, api?.readClipboardImage, appendAttachment, attachmentError)) {
-        return;
-      }
-
       if (mentionMenu.handleMentionKeyDown(event)) {
         return;
       }
@@ -329,7 +324,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
 
       startThread();
     },
-    [api, appendAttachment, attachments.length, mentionMenu, modelOnboarding.requiresModelSelection, prompt, slashMenu, startThread],
+    [attachments.length, mentionMenu, modelOnboarding.requiresModelSelection, prompt, slashMenu, startThread],
   );
 
   useEffect(() => {

@@ -9,7 +9,6 @@ import {
   useRef,
 } from "react";
 import {
-  type ComposerImageAttachment,
   type DesktopAppState,
   type SessionRecord,
 } from "../desktop-state";
@@ -17,7 +16,6 @@ import { updateSnapshot } from "../app/desktop-app-state";
 import {
   extractFilesFromDataTransfer,
   extractImageFilesFromClipboardData,
-  handleClipboardImageShortcut,
   readComposerAttachmentsFromFiles,
 } from "../composer-attachments";
 import { parseTreeComposerCommand } from "../composer-commands";
@@ -36,8 +34,6 @@ interface UseSessionComposerParams {
   readonly openTreeModal: () => void;
   readonly handleMentionKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   readonly handleSlashKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
-  readonly newThreadComposerRef: MutableRefObject<HTMLTextAreaElement | null>;
-  readonly appendNewThreadAttachment: (attachment: ComposerImageAttachment) => void;
 }
 
 export function useSessionComposer(params: UseSessionComposerParams) {
@@ -54,8 +50,6 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     openTreeModal,
     handleMentionKeyDown,
     handleSlashKeyDown,
-    newThreadComposerRef,
-    appendNewThreadAttachment,
   } = params;
 
   const [attachmentsClearedOnSubmit, setAttachmentsClearedOnSubmit] = useState(false);
@@ -210,31 +204,7 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     });
   };
 
-  function handlePastedClipboardImage(clipboardImage: ComposerImageAttachment) {
-    const activeElement = document.activeElement;
-    if (activeElement === composerRef.current) {
-      if (!api) {
-        return;
-      }
-      void updateSnapshot(api, setSnapshot, () => api.addComposerAttachments([clipboardImage]));
-      return;
-    }
-
-    if (activeElement === newThreadComposerRef.current) {
-      appendNewThreadAttachment(clipboardImage);
-    }
-  }
-
   const handleComposerKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (handleClipboardImageShortcut(event, api?.readClipboardImage, (clipboardImage) => {
-      if (!api) {
-        return;
-      }
-      void updateSnapshot(api, setSnapshot, () => api.addComposerAttachments([clipboardImage]));
-    }, attachmentError)) {
-      return;
-    }
-
     if (handleMentionKeyDown(event)) {
       return;
     }
@@ -275,7 +245,6 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     handleSteerQueuedMessage,
     handleComposerPaste,
     handleComposerDrop,
-    handlePastedClipboardImage,
     handleComposerKeyDown,
   };
 }

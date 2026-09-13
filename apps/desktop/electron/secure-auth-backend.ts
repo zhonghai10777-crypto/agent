@@ -1,5 +1,6 @@
 import type { SafeStorage } from "electron";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import {
@@ -31,15 +32,6 @@ export class SecureAuthStorageBackend implements CredentialStore {
   private readonly secureKeysPath: string;
   private readonly authJsonPath: string;
   private readonly modelsJsonPath?: string;
-  /**
-   * In-process serialization guard. The SDK's own FileAuthStorageBackend
-   * serializes readers/writers with proper-lockfile; because we split state
-   * across two files we cannot use a single file lock, so we serialize with a
-   * busy-flag instead. `withLockAsync` acquires it as a promise chain;
-   * `withLock` (sync, cannot await) spin-waits briefly while an async op is in
-   * flight, mirroring the SDK's sync lockSync retry. This prevents the OAuth
-   * refresh's async read-modify-write from clobbering a concurrent key set.
-   */
   /**
    * Async serialization guard. The SDK's own FileAuthStorageBackend serializes
    * concurrent operations with proper-lockfile; we split state across two files
@@ -200,43 +192,41 @@ export class SecureAuthStorageBackend implements CredentialStore {
     this.writeAuthJson(oauth, true);
   }
 
-  private readSecureKeys(): Record<string, unknown> {
+  private readSecureKeys(requireComplete = false): Record<string, unknown> {
     let raw: string;
     try {
       raw = readFileSync(this.secureKeysPath, "utf8");
-    } catch {
-      return {};
-    }
-    if (!raw.trim()) {
+    } catch (error) {
+      if (requireComplete && (error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error("Existing encrypted credentials could not be read. The original file was preserved.");
+      }
       return {};
     }
     try {
       const encryptedMap = JSON.parse(raw) as Record<string, string>;
+      if (!encryptedMap || typeof encryptedMap !== "object" || Array.isArray(encryptedMap)) throw new Error("Invalid encrypted credential map");
       const result: Record<string, unknown> = {};
       for (const [providerId, ciphertext] of Object.entries(encryptedMap)) {
-        if (this.safeStorage.isEncryptionAvailable()) {
-          try {
-            const plaintext = this.safeStorage.decryptString(Buffer.from(ciphertext, "base64"));
-            result[providerId] = JSON.parse(plaintext) as unknown;
-          } catch {
-            // Skip undecryptable entries (e.g. keychain re-encrypted after OS
-            // account migration); the provider simply reads as unauthenticated.
-          }
-        } else {
-          try {
-            result[providerId] = JSON.parse(Buffer.from(ciphertext, "base64").toString("utf8")) as unknown;
-          } catch {
-            // Ignore malformed entries.
-          }
+        try {
+          if (typeof ciphertext !== "string") throw new Error("Invalid ciphertext");
+          const bytes = Buffer.from(ciphertext, "base64");
+          const plaintext = this.safeStorage.isEncryptionAvailable() ? this.safeStorage.decryptString(bytes) : bytes.toString("utf8");
+          result[providerId] = JSON.parse(plaintext) as unknown;
+        } catch (error) {
+          // Reads can treat a locked key as unavailable. A full-store write
+          // must never turn that temporary absence into permanent deletion.
+          if (requireComplete) throw error;
         }
       }
       return result;
     } catch {
+      if (requireComplete) throw new Error("Existing credentials could not be decrypted. No credentials were overwritten; unlock secure storage and retry.");
       return {};
     }
   }
 
   private writeSecureKeys(keys: Record<string, unknown>): void {
+    this.readSecureKeys(true);
     if (Object.keys(keys).length === 0) {
       // Nothing to encrypt; ensure no stale encrypted file lingers.
       this.writeJson(this.secureKeysPath, {});
@@ -418,18 +408,17 @@ export class SecureAuthStorageBackend implements CredentialStore {
       }
     }
     if (mutated) {
-      mkdirSync(dirname(this.modelsJsonPath), { recursive: true });
-      writeFileSync(this.modelsJsonPath, `${JSON.stringify(data, null, 2)}\n`, {
-        encoding: "utf8",
-        mode: 0o600,
-      });
+      this.writeJson(this.modelsJsonPath, data);
     }
     return imported;
   }
 
   private writeJson(path: string, data: Record<string, unknown>): void {
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+    const staged = `${path}.${randomUUID()}.tmp`;
+    writeFileSync(staged, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx", flush: true });
+    // Failed writes/renames leave the old destination and diagnostic stage intact.
+    renameSync(staged, path);
   }
 }
 

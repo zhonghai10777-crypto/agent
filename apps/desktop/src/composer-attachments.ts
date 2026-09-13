@@ -1,30 +1,7 @@
 /// <reference lib="dom" />
 
-import type { KeyboardEvent } from "react";
 import type { ComposerAttachment, ComposerFileAttachment, ComposerImageAttachment } from "./desktop-state";
 import { assertImageSizes, assertImageMetadata, base64ImageSize } from "@pi-gui/session-driver/image-budget";
-
-export function handleClipboardImageShortcut(
-  event: KeyboardEvent<HTMLTextAreaElement>,
-  readClipboardImage: (() => ComposerImageAttachment | null) | undefined,
-  onImage: (attachment: ComposerImageAttachment) => void,
-  onError?: (error: unknown) => void,
-): boolean {
-  if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== "v") {
-    return false;
-  }
-
-  let clipboardImage: ComposerImageAttachment | null | undefined;
-  try { clipboardImage = readClipboardImage?.(); }
-  catch (error) { event.preventDefault(); onError?.(error); return true; }
-  if (!clipboardImage) {
-    return false;
-  }
-
-  event.preventDefault();
-  onImage(clipboardImage);
-  return true;
-}
 
 export const SUPPORTED_COMPOSER_IMAGE_TYPES = [
   { extension: "png", mimeType: "image/png" },
@@ -97,17 +74,7 @@ export function hasFilesInDataTransfer(dataTransfer: DataTransfer | null | undef
 }
 
 export function extractImageFilesFromClipboardData(clipboardData: DataTransfer | null | undefined): File[] {
-  if (!clipboardData) {
-    return [];
-  }
-
-  const itemFiles = Array.from(clipboardData.items ?? [])
-    .filter((item) => item.kind === "file")
-    .map((item) => item.getAsFile())
-    .filter((file): file is File => Boolean(file))
-    .filter(isImageFile);
-  const clipboardFiles = Array.from(clipboardData.files ?? []).filter(isImageFile);
-  return dedupeFiles([...itemFiles, ...clipboardFiles]);
+  return extractFilesFromDataTransfer(clipboardData).filter(isImageFile);
 }
 
 export function extractFilesFromDataTransfer(dataTransfer: DataTransfer | null | undefined): File[] {
@@ -115,12 +82,16 @@ export function extractFilesFromDataTransfer(dataTransfer: DataTransfer | null |
     return [];
   }
 
-  const itemFiles = Array.from(dataTransfer.items ?? [])
+  // These are two views of the same files. Chromium can give virtual clipboard
+  // files a new lastModified value per view, so merging both can duplicate images.
+  const transferFiles = Array.from(dataTransfer.files ?? []);
+  if (transferFiles.length > 0) {
+    return dedupeFiles(transferFiles);
+  }
+  return dedupeFiles(Array.from(dataTransfer.items ?? [])
     .filter((item) => item.kind === "file")
     .map((item) => item.getAsFile())
-    .filter((file): file is File => Boolean(file));
-  const transferFiles = Array.from(dataTransfer.files ?? []);
-  return dedupeFiles([...itemFiles, ...transferFiles]);
+    .filter((file): file is File => Boolean(file)));
 }
 
 export async function readComposerAttachmentsFromFiles(files: readonly File[], existing: readonly ComposerAttachment[] = []): Promise<ComposerAttachment[]> {

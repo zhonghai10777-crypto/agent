@@ -12,7 +12,6 @@ import type {
   AppView,
   AssistantDeltaEvent,
   ComposerAttachment,
-  ComposerImageAttachment,
   CreateSessionInput,
   CreateWorktreeInput,
   DesktopAppState,
@@ -166,7 +165,6 @@ export const desktopIpc = {
   assistantDelta: "pi-gui:assistant-delta",
   appCommand: "pi-gui:app-command",
   workspacePicked: "pi-gui:workspace-picked",
-  clipboardImagePasted: "pi-gui:clipboard-image-pasted",
   addWorkspacePath: "pi-gui:add-workspace-path",
   pickWorkspace: "pi-gui:pick-workspace",
   selectWorkspace: "pi-gui:select-workspace",
@@ -250,7 +248,6 @@ export const desktopIpc = {
   openSystemNotificationSettings: "pi-gui:open-system-notification-settings",
   notificationPermissionStatusChanged: "pi-gui:notification-permission-status-changed",
   pickComposerAttachments: "pi-gui:pick-composer-attachments",
-  readClipboardImage: "pi-gui:read-clipboard-image",
   readClipboardText: "pi-gui:read-clipboard-text",
   addComposerAttachments: "pi-gui:add-composer-attachments",
   removeComposerAttachment: "pi-gui:remove-composer-attachment",
@@ -454,7 +451,6 @@ export interface PiDesktopApi {
   onAssistantDelta(listener: PiDesktopAssistantDeltaListener): () => void;
   onCommand(listener: (command: PiDesktopCommand) => void): () => void;
   onWorkspacePicked(listener: (workspaceId: string) => void): () => void;
-  onClipboardImagePasted(listener: (attachment: ComposerImageAttachment) => void): () => void;
   getPathForFile(file: File): string;
   addWorkspacePath(path: string): Promise<DesktopAppState>;
   pickWorkspace(): Promise<DesktopAppState>;
@@ -577,8 +573,7 @@ export interface PiDesktopApi {
     callback: (status: DesktopNotificationPermissionStatus) => void,
   ): () => void;
   pickComposerAttachments(): Promise<DesktopAppState>;
-  readClipboardImage(): ComposerImageAttachment | null;
-  readClipboardText(): string;
+  readClipboardText(): Promise<string>;
   addComposerAttachments(attachments: readonly ComposerAttachment[]): Promise<DesktopAppState>;
   removeComposerAttachment(attachmentId: string): Promise<DesktopAppState>;
   editQueuedComposerMessage(messageId: string, currentDraft?: string): Promise<DesktopAppState>;

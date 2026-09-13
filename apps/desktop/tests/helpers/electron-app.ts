@@ -19,7 +19,6 @@ import type {
 
 const desktopDir = resolve(__dirname, "..", "..");
 const packagedReleaseDir = join(desktopDir, "release");
-const nativeClipboardImagePath = resolve(__dirname, "..", "..", "..", "website", "public", "og.png");
 const execFileAsync = promisify(execFile);
 const require = createRequire(__filename);
 const electronExecutablePath = require("electron") as string;
@@ -49,7 +48,7 @@ function isProviderAuthEnvVar(key: string): boolean {
   return key.endsWith("_API_KEY") || (NON_API_KEY_PROVIDER_ENV_VARS as readonly string[]).includes(key);
 }
 export const TINY_PNG_BASE64 =
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7ZfXQAAAAASUVORK5CYII=";
+  "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQVR4nGPQSLnzHx9mGBkKAOz6mcHK/OviAAAAAElFTkSuQmCC";
 
 export type PiAppWindow = Window & { piApp?: PiDesktopApi };
 export type DesktopTestMode = "foreground" | "background";
@@ -63,6 +62,8 @@ export interface DesktopHarness {
 }
 
 export interface LaunchDesktopOptions {
+  /** Dedicated runtime-upgrade proof with a test-owned legacy binary. */
+  readonly runtimeExecutable?: string;
   readonly initialWorkspaces?: readonly string[];
   readonly notificationLogPath?: string;
   readonly testMode?: DesktopTestMode;
@@ -120,6 +121,7 @@ export async function launchDesktop(
   const agentDir = await prepareAgentDir(userDataDir, normalized);
   const env = buildDesktopLaunchEnv(userDataDir, agentDir, normalized);
   const electronApp = await electron.launch({
+    ...(normalized.runtimeExecutable ? { executablePath: normalized.runtimeExecutable } : {}),
     args: [desktopDir],
     cwd: desktopDir,
     env,
@@ -945,9 +947,10 @@ export async function pasteTinyPngViaClipboard(
   const composer = window.getByTestId(composerTestId);
   await composer.click();
   await expect(composer).toBeFocused();
-  await harness.electronApp.evaluate(({ clipboard, nativeImage }, imagePath) => {
-    clipboard.writeImage(nativeImage.createFromPath(imagePath));
-  }, nativeClipboardImagePath);
+  await harness.electronApp.evaluate(async ({ clipboard, ClipboardItem }, pngBase64) => {
+    await clipboard.write([new ClipboardItem({ "image/png": new Blob([new Uint8Array(Buffer.from(pngBase64, "base64"))], { type: "image/png" }) })]);
+  }, TINY_PNG_BASE64);
+  expect(await harness.electronApp.evaluate(({ clipboard }) => clipboard.has("image/png"))).toBe(true);
   await composer.press(desktopShortcut("V"));
   await expect(window.locator(".composer-attachment")).toBeVisible();
 }

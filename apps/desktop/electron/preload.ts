@@ -38,7 +38,6 @@ import type {
   AppView,
   AssistantDeltaEvent,
   ComposerAttachment,
-  ComposerImageAttachment,
   CreateSessionInput,
   CreateWorktreeInput,
   DesktopAppState,
@@ -124,15 +123,6 @@ contextBridge.exposeInMainWorld("piApp", {
     ipcRenderer.on(desktopIpc.workspacePicked, handle);
     return () => {
       ipcRenderer.removeListener(desktopIpc.workspacePicked, handle);
-    };
-  },
-  onClipboardImagePasted: (listener: (attachment: ComposerImageAttachment) => void) => {
-    const handle = (_event: Electron.IpcRendererEvent, attachment: ComposerImageAttachment) => {
-      listener(attachment);
-    };
-    ipcRenderer.on(desktopIpc.clipboardImagePasted, handle);
-    return () => {
-      ipcRenderer.removeListener(desktopIpc.clipboardImagePasted, handle);
     };
   },
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
@@ -302,12 +292,7 @@ contextBridge.exposeInMainWorld("piApp", {
     };
   },
   pickComposerAttachments: () => ipcRenderer.invoke(desktopIpc.pickComposerAttachments) as Promise<DesktopAppState>,
-  readClipboardImage: () => {
-    const result = ipcRenderer.sendSync(desktopIpc.readClipboardImage) as ComposerImageAttachment | { error: string } | null;
-    if (result && "error" in result) throw new Error(result.error);
-    return result;
-  },
-  readClipboardText: () => ipcRenderer.sendSync(desktopIpc.readClipboardText) as string,
+  readClipboardText: () => ipcRenderer.invoke(desktopIpc.readClipboardText) as Promise<string>,
   addComposerAttachments: (attachments: readonly ComposerAttachment[]) =>
     ipcRenderer.invoke(desktopIpc.addComposerAttachments, attachments) as Promise<DesktopAppState>,
   removeComposerAttachment: (attachmentId: string) =>

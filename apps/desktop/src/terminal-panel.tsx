@@ -235,12 +235,11 @@ export function TerminalPanel({
         // Returning false only tells xterm to skip the key; the browser would
         // still paste into its hidden textarea and send the text a second time.
         event.preventDefault();
-        const clipboardText = api.readClipboardText();
-        if (clipboardText) {
+        void api.readClipboardText().then((clipboardText) => {
           // `paste` honours bracketed-paste mode rather than shoving raw bytes
           // at the pty, and reaches the pty through the same `onData` hook.
-          terminal.paste(clipboardText);
-        }
+          if (clipboardText && terminalRef.current === terminal && activeTerminalIdRef.current === activeSession.id) terminal.paste(clipboardText);
+        }).catch((error) => setError(error instanceof Error ? error.message : String(error)));
         return false;
       }
       if (api.platform === "darwin" && event.metaKey) {
