@@ -1,4 +1,5 @@
 import type { VisionErrorCode } from "@pi-gui/session-driver/vision-types";
+import { ImageBudgetError } from "@pi-gui/session-driver/image-budget";
 
 /** Error text is application-owned: never attach provider bodies, OCR or credentials. */
 export class VisionError extends Error {
@@ -26,6 +27,7 @@ export function assertVisionActive(signal?: AbortSignal): void {
 
 export function asVisionError(error: unknown): VisionError {
   if (error instanceof VisionError) return error;
+  if (error instanceof ImageBudgetError) return new VisionError(error.code, error.message.replace(/^VISION_[A-Z_]+: /, ""));
   if (error instanceof Error && error.name === "AbortError") return abortVisionError();
   return new VisionError("VISION_NETWORK", "The image service could not be reached. Try again.", true);
 }

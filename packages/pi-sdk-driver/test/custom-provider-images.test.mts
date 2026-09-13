@@ -36,7 +36,7 @@ test("official Flash defaults are narrow and explicit text-only choices win", as
   for (const id of ["deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp"]) {
     assert.deepEqual(defaultCustomModelInput("https://api.deepseek.com/v1/", id), ["text", "image"]);
   }
-  for (const url of ["https://api.deepseek.com.example.org/v1", "http://localhost:8080/v1", "https://api.deepseek.com/other"]) {
+  for (const url of ["https://api.deepseek.com.example.org/v1", "http://localhost:8080/v1", "https://api.deepseek.com/other", "https://user@api.deepseek.com/v1", "https://api.deepseek.com/v1?proxy=true", "https://api.deepseek.com/v1#other"]) {
     assert.deepEqual(defaultCustomModelInput(url, "deepseek-flash"), ["text"]);
   }
   assert.deepEqual(defaultCustomModelInput("https://api.deepseek.com", "deepseek-v4-pro"), ["text"]);
@@ -64,6 +64,7 @@ test("legacy migration changes only missing official Flash capabilities and pres
   const migrated = JSON.parse(await readFile(path, "utf8"));
   const expected = JSON.parse(original);
   expected.providers["deepseek-api"].models[0].input = ["text", "image"];
+  expected.providers.deepseek = { modelOverrides: { "deepseek-v4-flash": { input: ["text", "image"] } } };
   assert.deepEqual(migrated, expected);
   assert.equal(await readFile(`${path}.bak`, "utf8"), original);
   const firstStat = await stat(path);
@@ -111,4 +112,24 @@ test("actual pi request serialization preserves screenshots after legacy capabil
   assert.deepEqual(after.map((block: any) => block.type), ["text", "image_url"]);
   assert.equal(after[1].image_url.url, `data:${image.mimeType};base64,${image.data}`);
   assert.equal(context.messages[0]?.content[1], image);
+});
+
+test("built-in Flash capability reaches the real Pi serializer and respects explicit overrides and foreign endpoints", async () => {
+  for (const config of [undefined, { modelOverrides: { "deepseek-v4-flash": { input: ["text"] } } }, { baseUrl: "https://third-party.invalid/v1" }]) {
+    const { directory, path, store } = await fixture();
+    await writeFile(path, JSON.stringify({ providers: config ? { deepseek: config } : {} }));
+    await store.migrateImageCapabilities();
+    const once = await readFile(path, "utf8");
+    await store.migrateImageCapabilities();
+    assert.equal(await readFile(path, "utf8"), once);
+    const runtime = await ModelRuntime.create({ modelsPath: path, authPath: join(directory, "auth.json"), refreshOnCreate: false, allowModelNetwork: false });
+    const model = runtime.getModel("deepseek", "deepseek-v4-flash");
+    assert.ok(model);
+    assert.deepEqual(model.input, config ? ["text"] : ["text", "image"]);
+    let payload: any;
+    await runtime.complete(model, { messages: [{ role: "user", content: [{ type: "image", mimeType: "image/png", data: "aGVsbG8=" }], timestamp: 0 }] }, {
+      apiKey: "synthetic-key", onPayload(value) { payload = value; throw new Error("Captured before HTTP"); },
+    });
+    assert.equal(payload.messages[0].content[0].type, config ? "text" : "image_url");
+  }
 });

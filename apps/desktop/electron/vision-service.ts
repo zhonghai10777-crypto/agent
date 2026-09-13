@@ -5,11 +5,12 @@ import { DEFAULT_VISION_ROUTING_SETTINGS, type VisionRoutingSettings } from "@pi
 import { assertVisionActive, VisionError, type VisionServices } from "@pi-gui/pi-sdk-driver/vision";
 import { JsonFileStore } from "./json-file-store";
 import { VisionStore } from "./vision-store";
+import { readMigratedVisionSettings } from "./vision-settings";
 
 export class VisionService {
   readonly store: VisionStore;
   readonly dependencies: VisionServices;
-  private readonly settingsFile: JsonFileStore<VisionRoutingSettings>;
+  private readonly settingsFile: JsonFileStore<unknown>;
   private settings = DEFAULT_VISION_ROUTING_SETTINGS;
 
   constructor(userDataDir: string) {
@@ -51,9 +52,7 @@ export class VisionService {
   }
 
   async initialize(): Promise<void> {
-    const settings = await this.settingsFile.read("settings");
-    // Fixed security/resource policy remains application-owned. Only the UI switch is mutable.
-    this.settings = { ...DEFAULT_VISION_ROUTING_SETTINGS, enabled: settings?.enabled ?? true };
+    this.settings = await readMigratedVisionSettings(this.settingsFile);
   }
 
   readSettings(): VisionRoutingSettings { return { ...this.settings }; }

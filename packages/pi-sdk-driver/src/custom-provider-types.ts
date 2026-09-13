@@ -14,7 +14,7 @@ const DEEPSEEK_IMAGE_MODELS = new Set([
 export function defaultCustomModelInput(baseUrl: string, modelId: string): readonly ("text" | "image")[] {
   try {
     const url = new URL(baseUrl);
-    if (url.origin === "https://api.deepseek.com" &&
+    if (url.origin === "https://api.deepseek.com" && !url.username && !url.password && !url.search && !url.hash &&
         ["", "/v1"].includes(url.pathname.replace(/\/+$/, "")) && DEEPSEEK_IMAGE_MODELS.has(modelId)) {
       return ["text", "image"];
     }

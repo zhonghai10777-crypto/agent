@@ -180,7 +180,9 @@ test("global image policy blocks both routing and the connection image test", as
     await pasteVisionImage(f.page);
     await f.page.getByTestId("composer").fill("Blocked by global policy");
     await f.page.getByTestId("send").click();
-    await expect(f.page.getByTestId("vision-status")).toHaveAttribute("data-stage", "failed");
+    await expect.poll(async () => (await getDesktopState(f.page)).lastError).toContain("disabled in the runtime settings");
+    await expect(f.page.getByTestId("composer")).toHaveValue("Blocked by global policy");
+    await expect(f.page.locator(".composer-attachment")).toHaveCount(1);
     expect(f.http.requests).toHaveLength(1);
     await f.page.keyboard.press(desktopShortcut(","));
     await f.page.getByRole("button", { name: "Models", exact: true }).click();
@@ -378,8 +380,9 @@ test("settings disable blocks image loss; authentication failure is actionable a
     await pasteVisionImage(f.page);
     await f.page.getByTestId("composer").fill("Keep this image");
     await f.page.getByTestId("send").click();
-    await expect(f.page.getByTestId("vision-status")).toHaveAttribute("data-stage", "failed");
-    await expect(f.page.getByTestId("vision-status")).toContainText("Enable image assistance");
+    await expect.poll(async () => (await getDesktopState(f.page)).lastError).toContain("Enable automatic image analysis");
+    await expect(f.page.getByTestId("composer")).toHaveValue("Keep this image");
+    await expect(f.page.locator(".composer-attachment")).toHaveCount(1);
     expect(f.http.requests).toHaveLength(1);
     await f.page.keyboard.press(desktopShortcut(","));
     await expect(f.page.getByLabel("Automatic image analysis")).toBeEnabled();
@@ -387,7 +390,7 @@ test("settings disable blocks image loss; authentication failure is actionable a
     await expect(f.page.getByLabel("Automatic image analysis")).toBeEnabled();
     await f.page.getByRole("button", { name: "Back to app" }).click();
     f.http.setVisionMode("auth");
-    await f.page.getByRole("button", { name: "Retry", exact: true }).click();
+    await f.page.getByTestId("send").click();
     await expect(f.page.getByTestId("vision-status")).toContainText("credentials");
     expect(f.http.requests.filter((request) => request.kind === "vision")).toHaveLength(1);
     f.http.setVisionMode("success");

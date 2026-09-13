@@ -22,6 +22,7 @@ import {
 } from "./app-store-utils";
 import type { AppStoreInternals } from "./app-store-internals";
 import { withDocumentText } from "./document-attachments";
+import { assertImageAttachments } from "@pi-gui/session-driver/image-budget";
 
 /* ── Public methods ─────────────────────────────────────── */
 
@@ -65,6 +66,7 @@ export async function addComposerAttachments(
   const existing = store.sessionState.composerAttachmentsBySession.get(key) ?? [];
   const next = [...existing, ...attachments];
   try {
+    assertImageAttachments(next);
     await store.attachmentStore.write(key, cloneComposerAttachments(next));
   } catch (error) {
     return store.withSessionError(sessionRef, error);

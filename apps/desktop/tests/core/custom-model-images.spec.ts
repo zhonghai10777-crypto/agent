@@ -16,7 +16,7 @@ import {
   TINY_PNG_BASE64,
   waitForWorkspaceByPath,
 } from "../helpers/electron-app";
-import { pasteVisionImage, seedVisionAgentDir, startVisionHttpFixture, VISION_PNG, VISION_TEST_PROVIDER } from "../helpers/vision-fixture";
+import { pasteVisionImage, seedVisionAgentDir, startVisionHttpFixture, VISION_PNG, VISION_TEST_KEY, VISION_TEST_PROVIDER } from "../helpers/vision-fixture";
 
 interface CompletionRequest {
   readonly model: string;
@@ -283,7 +283,7 @@ test("a new image-only thread keeps its screenshot after rejection and can retry
   }
 });
 
-test("legacy official Flash uses native image input without an auxiliary-model notice or request", async ({}, testInfo) => {
+for (const builtIn of [false, true]) test(`${builtIn ? "built-in" : "custom"} official Flash uses native image input with assistance disabled`, async ({}, testInfo) => {
   const userDataDir = await makeUserDataDir("native-deepseek-flash-");
   const agentDir = join(userDataDir, "agent");
   const workspacePath = await makeWorkspace("native-deepseek-flash-workspace");
@@ -291,13 +291,23 @@ test("legacy official Flash uses native image input without an auxiliary-model n
   const path = join(agentDir, "models.json");
   const legacy = JSON.parse(await readFile(path, "utf8"));
   delete legacy.providers[VISION_TEST_PROVIDER].models.find((model: { id: string }) => model.id === "deepseek-v4-flash").input;
-  await writeFile(path, JSON.stringify(legacy));
+  if (builtIn) {
+    // Desktop lists app-managed endpoints. Supply no model definitions: Pi must
+    // use its built-in DeepSeek catalog, with only the capability migration.
+    await writeFile(path, JSON.stringify({ providers: { deepseek: { baseUrl: "https://api.deepseek.com", piGuiCustomEndpoint: true } } }));
+    await writeFile(join(agentDir, "auth.json"), JSON.stringify({ deepseek: { type: "api_key", key: VISION_TEST_KEY } }));
+    await writeFile(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "deepseek", defaultModel: "deepseek-v4-flash", enabledModels: ["deepseek/deepseek-v4-flash"], compaction: { enabled: false } }));
+  } else await writeFile(path, JSON.stringify(legacy));
   const http = await startVisionHttpFixture();
   const harness = await launchDesktop(userDataDir, { agentDir, initialWorkspaces: [workspacePath], scrubProviderEnv: true, testMode: "background" });
   try {
     const window = await harness.firstWindow();
     await http.install(harness);
     await waitForWorkspaceByPath(window, workspacePath);
+    await window.keyboard.press(desktopShortcut(","));
+    await window.getByRole("button", { name: "Models", exact: true }).click();
+    await window.getByLabel("Automatic image analysis").uncheck();
+    await window.getByRole("button", { name: "Back to app" }).click();
     await openNewThread(window);
     await pasteTinyPng(window, "native-first-screenshot.png", "new-thread-composer");
     await expect(window.getByTestId("vision-disclosure")).toHaveCount(0);

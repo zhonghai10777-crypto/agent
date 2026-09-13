@@ -961,7 +961,7 @@ export class SessionSupervisor {
       throw new Error("Session is already streaming. Specify deliverAs ('steer' or 'followUp') to queue the message.");
     }
 
-    prepareSessionImageInput(session, isExtensionCommand ? undefined : input.attachments, this.visionRouter ? shouldRouteVision : undefined);
+    prepareSessionImageInput(session, isExtensionCommand ? undefined : input.attachments, this.visionRouter ? (model) => this.visionRouter!.canAcceptImageInput(model) : undefined);
 
     const alreadyQueued = record.queuedMessages.some((message) => message.id === input.clientMessageId);
     const isQueuedMessage = !isExtensionCommand && Boolean(input.deliverAs) && (session.isStreaming || alreadyQueued);
@@ -1052,7 +1052,7 @@ export class SessionSupervisor {
     const session = this.requireSession(record);
     const cancelGeneration = record.cancelGeneration;
     for (const message of messages) {
-      prepareSessionImageInput(session, message.attachments, this.visionRouter ? shouldRouteVision : undefined);
+      prepareSessionImageInput(session, message.attachments, this.visionRouter ? (model) => this.visionRouter!.canAcceptImageInput(model) : undefined);
     }
     if (this.visionRouter) {
       for (const message of messages) {
