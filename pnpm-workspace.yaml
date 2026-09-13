@@ -2,6 +2,10 @@ packages:
   - apps/*
   - packages/*
 
+overrides:
+  # Electron 44 is absent from the ABI registry locked by electron-builder 26.8.1.
+  '@electron/rebuild>node-abi': 4.35.0
+
 onlyBuiltDependencies:
   - electron
   - electron-winstaller
