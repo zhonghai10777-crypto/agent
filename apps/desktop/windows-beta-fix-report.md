@@ -2,9 +2,9 @@
 
 日期：2026-09-13。任务依据：`/Users/z/Downloads/Agent_Windows_Beta_修复任务书.md`。
 
-**当前结论：不建议分发当前产物，等待打包界面启动复核。** F01–F09 的代码修复、针对性回归、Electron 升级和 Windows 验证入口已落地。开发态 Electron、本机资料库测量、实际目录包的原生模块和文档 Worker 检查有通过记录。但是目录包的 GUI 启动测试超时，随后系统工具报告 Mac 锁屏；目前不能确认锁屏是唯一原因，须在解锁后排除启动回归。Windows 安装、升级、真实接口等未执行，不能据此批准普通用户 Beta。
+**当前结论：可生成候选包。** F01–F09 的代码修复、针对性回归、Electron 升级和 Windows 验证入口已落地。开发态 Electron、本机资料库测量、实际目录包的原生模块和文档 Worker 检查均有通过记录。Mac 解锁后，同一目录包的 5 个 GUI 用例全部通过，退出码 0、重试 0：文档、Worker 故障恢复、原生 Flash、辅助 Pro 和终端退出已完成本机打包验证。此前启动超时未在这次运行中复现，原失败日志仍保留。
 
-如果解锁后的目录包界面回归通过，可将结论提升为任务书定义的**可生成候选包**。提升为“可受控内测”仍需要 Windows 最终产物的关键链路实测。
+Windows 构建、安装、升级及真实接口等仍未执行，不能据此批准普通用户 Beta。提升为“可受控内测”仍需要 Windows 最终产物的关键链路实测；当前 Mac 目录包也只是 ad-hoc 签名、未公证的本地验证产物。
 
 ## 1. 基线、范围和操作边界
 
@@ -36,17 +36,17 @@
 
 | ID | 当前状态 | 原因与修改文件 | 实际测试命令 / 用例 | 未完成验证与风险 |
 | --- | --- | --- | --- | --- |
-| F01 | 已修复，部分验证待执行 | 会话级适配器继续保留主模型；集中处理原生/辅助路由、完整序列化请求预算、历史/当前/队列/重试图片。新增共享 `image-budget.ts`；修改 provider store、image-input、vision-router、stream adapter、session supervisor、main/composer；新增 `vision-settings.ts` 幂等迁移 | U4/U5；E3/E4/E5；真实 Pi 序列化、原生辅助请求数为 0、禁用保留草稿、内置/自定义官方能力、第三方隔离、队列/重启/取消 | 真实 DeepSeek 未执行；新 packaged Flash/Pro GUI 用例尚未完成。内置 Pi 目录只有旧 Flash 别名，未擅自创建或切换主模型 |
+| F01 | 已修复，部分验证待执行 | 会话级适配器继续保留主模型；集中处理原生/辅助路由、完整序列化请求预算、历史/当前/队列/重试图片。新增共享 `image-budget.ts`；修改 provider store、image-input、vision-router、stream adapter、session supervisor、main/composer；新增 `vision-settings.ts` 幂等迁移 | U4/U5；E3/E4/E5；P5 实际 Mac 目录包；真实 Pi 序列化、原生辅助请求数为 0、禁用保留草稿、内置/自定义官方能力、第三方隔离、队列/重启/取消 | 真实 DeepSeek 和 Windows 最终产物未执行。内置 Pi 目录只有旧 Flash 别名，未擅自创建或切换主模型 |
 | F02 | 已修复并验证 | `permission-mode.ts` 增加跨线程发送限制；`app-store-orchestration.ts` 在真实派发入口检查调用方权限、会话及运行模式；未知调用方按 Plan 拒绝。main bridge、store internals 同步收口 | U1 14 个；E1 3 个实际 Electron 用例，包含 Plan → Auto、直接 Store 绕过和正常 Auto 派发 | 本机合成服务验证，不是 Windows shell 实机证明 |
 | F03 | 已修复，部分验证待执行 | 新增 `document-access.ts`、`document-file.ts`；真实路径和显式附件授权；读取前后核对版本/文件身份；接入文档 runtime 和资料库 | U2 的真实 symlink/越界/缺失路径，Windows drive/UNC 词法边界；E2 的实际 runtime 拒绝；Windows junction 用例已进入候选工作流 | Windows junction 实际分支未执行；这是应用授权层，不是抵御恶意本地进程替换的 OS 沙箱 |
-| F04 | 已修复，部分验证待执行 | 新增有界 `document-worker-client.ts`；一个可复用 Worker、16 个任务上限、30 秒含排队超时、同版本合并、独立订阅取消、失败重建、192 MiB V8 heap；删除主进程重解析回退 | U2 的真实 Worker/超时/取消/崩溃/exit 0/队列；E2/E4 界面；P3 实际 `app.asar` Worker 读取四种格式 | Windows 和目录包 GUI 故障恢复待执行；Node 模式 Worker 通过不能替代完整窗口交互 |
+| F04 | 已修复，部分验证待执行 | 新增有界 `document-worker-client.ts`；一个可复用 Worker、16 个任务上限、30 秒含排队超时、同版本合并、独立订阅取消、失败重建、192 MiB V8 heap；删除主进程重解析回退 | U2 的真实 Worker/超时/取消/崩溃/exit 0/队列；E2/E4 界面；P3 实际 `app.asar` Worker；P5 包内正常解析及故障后的界面响应/恢复 | Windows 最终产物及其 Worker 路径仍待实测 |
 | F05 | 已修复并验证 | 预览 400k 与完整分块 4M 分离；`complete/charLimit/sourceVersion/nextPart` 贯穿 cache/runtime/附件提示；Excel 保留 sheet/row 范围；修改文档模块、合同类型和附件预处理 | U2、U3、E2/E4；TXT/DOCX/XLSX 的 >400k 尾部可检索/分页；P3 实际包内 Worker；P0 三档资料库实测 | 超过 4M 字符明确标记不完整，不能宣称整本读完；不含 Windows 最终安装验收 |
 | F06 | 已修复并验证 | `document-cache.ts`、`library-index.ts` 区分成功、临时失败、永久失败和容量失败；临时退避 1–60 秒，永久失败 24 小时，明确重试跳过失败复用，容量重新评估 | U2/U3：相同文件版本失败后恢复、显式重试、释放容量、旧失败缓存迁移 | 真实共享盘/杀毒软件锁文件行为待 Windows 验证 |
 | F07 | 已修复并验证 | `library-index.ts` / `library-runtime.ts` 保留仍授权的已提交快照；离线/部分扫描带状态和旧时间；撤权立即生效；generation 校验、串行原子保存和清空 tombstone 避免旧任务复活 | U2/U3：重建中查询、首次离线未就绪、撤权、删除、换根目录、保存失败、清空竞态；E2；P0 | 部分扫描不能证明文件删除，会保守保留旧片段；真实网络共享目录和长期使用未测 |
 | F08 | 已修复并验证 | 新增 `document-zip.ts`，按受限 ZIP 目录和内容类型识别；4096 entries、32 MiB/entry、64 MiB 总展开、压缩比 1000；禁止任意磁盘释放 | U2 合法 OOXML 的关键部件排在 12k padding 后、普通 ZIP/损坏/超限；E2；P3 包内 DOCX/XLSX | 覆盖合成及仓库夹具，不代表所有 Office 版本和加密变种 |
 | F09 | 已修复并验证 | `update-checker.ts` 用 SemVer 选择最高适配版本；stable/同预发布通道策略；校验已上传且非空的平台架构资产和同仓库 URL；最多 5×30 条，覆盖不足显式报错；UI/i18n 同步 | U6 18 个 Node/夹具用例；E3 的实际设置界面/IPC/main；乱序、beta.9/10、缺包、分页、鉴权、超时 | 未验证真实 GitHub 分发源的权限/可用性，仍是打开发布页，不自动安装 |
-| R01 | 已修复，部分验证待执行 | Electron/package/builder/lock 同步为 44.3.0；必要的 node-abi 4.35.0 scoped override；异步剪贴板适配；密文不可读时禁止覆盖、凭据文件原子替换；实际运行时/原生探针脚本 | E4 12 通过/1 Windows 条件跳过；E5 4 次真实剪贴板通过；E6 当前源码在 37→44 的合成 profile 升级通过；U7；P1/P2/P3 | 目录包 GUI 启动超时尚待解锁排除回归；Windows `.node`、DPAPI、真正旧安装包升级未执行；37→44 开发二进制测试不是安装升级 |
-| R02 | 环境受阻 | 两条 Windows 工作流增加原生 Flash、权限/junction/凭据、包内文档/终端、实际 Electron 元数据和日志入口；新增 production specs、native probe、资料库测量；README 更新 | 静态 YAML/路径检查、9 个 production 用例发现；P1–P3、P0 本机已执行 | 未触发 Actions；没有 Windows EXE/NSIS/portable 产物或安装证据；Mac GUI 批次 3 超时、2 未运行，单例诊断也超时 |
+| R01 | 已修复，部分验证待执行 | Electron/package/builder/lock 同步为 44.3.0；必要的 node-abi 4.35.0 scoped override；异步剪贴板适配；密文不可读时禁止覆盖、凭据文件原子替换；实际运行时/原生探针脚本 | E4 12 通过/1 Windows 条件跳过；E5 4 次真实剪贴板通过；E6 当前源码在 37→44 的合成 profile 升级通过；E7 终端聚焦回归；U7；P1/P2/P3/P5 | Windows `.node`、DPAPI、真正旧安装包升级未执行；37→44 开发二进制测试不是安装升级 |
+| R02 | 已修复，部分验证待执行 | 两条 Windows 工作流增加原生 Flash、权限/junction/凭据、包内文档/终端、实际 Electron 元数据和日志入口；新增 production specs、native probe、资料库测量；README 更新 | 静态 YAML/路径检查、9 个 production 用例发现；P0–P3 本机已执行；P5 Mac 目录包 5 个 GUI 用例通过，未启用重试 | 按用户要求未实测 Windows 打包；未触发 Actions，没有 Windows EXE/NSIS/portable 产物或安装证据 |
 
 ## 3. 关键实现和迁移
 
@@ -116,8 +116,9 @@
 | E4 | `PI_APP_TEST_MODE=background CORE(custom-model-images, document-regressions, integrated-terminal)` | 12 通过、1 跳过；0；仅跳过 macOS 上不适用的 Windows Control 键用例 | electron44-core.log |
 | E5 | `PI_APP_TEST_MODE=foreground PW apps/desktop/tests/native/paste.spec.ts --repeat-each=2 --retries=0 --output=…/electron44-native-paste-v4` | 4 次通过；0；2 个不同用例各执行 2 次，真实 OS 剪贴板 | electron44-native-paste-v4.log |
 | E6 | `PI_APP_TEST_MODE=background PI_APP_TEST_OLD_ELECTRON=E/electron37-runtime/Electron.app/Contents/MacOS/Electron PROD(runtime-upgrade) --output=…/runtime-upgrade-v4` | 1 通过；0；实际 37/44、safeStorage、两窗口、草稿、2 次本地 HTTP | runtime-upgrade-v4.log |
+| E7 | `PI_APP_TEST_MODE=background CORE(integrated-terminal) --grep 'opens a workspace terminal with persistent output, tabs, and takeover controls' --retries=0 --output=…/electron44-terminal-focus-final-v2` | 1 通过、0 跳过、0 重试；0；最终 PNG 夹具下验证终端聚焦、图片粘贴不新增附件、会话隔离、标签页与接管控制 | electron44-terminal-focus-final-v2.log |
 
-E6 在两个 Electron 二进制上使用**当前源码**和同一合成 profile，不是运行上一正式安装包，也不证明不同签名身份之间的 Keychain 或 Windows DPAPI 升级。E4 后共享 PNG 夹具已修正，并完成 E5；终端聚焦时的图片剪贴板分支没有在该夹具修正后再单独重跑。
+E6 在两个 Electron 二进制上使用**当前源码**和同一合成 profile，不是运行上一正式安装包，也不证明不同签名身份之间的 Keychain 或 Windows DPAPI 升级。E4 后共享 PNG 夹具已修正，并完成 E5；终端聚焦时的图片剪贴板分支已由 E7 在该夹具修正后重跑通过。
 
 ### 4.3 构建、版本、静态与产物检查
 
@@ -136,7 +137,7 @@ E6 在两个 Electron 二进制上使用**当前源码**和同一合成 profile�
 | Node/YAML 解析两条修改后的 workflow，并核对引用的 spec/script 存在 | 通过；0；没有执行 PowerShell、Actions 或 Windows | workflow-static-check.log、workflow-static-check-final.log |
 | `PW` 指定六个 production 文件并加 `--list` | 发现 9 个用例；执行 0；退出 0 | production-entry-discovery.log |
 | `git diff --check`；`node --check` 检查修改后的 runtime/packaging/probe 脚本 | 通过；0；静态检查，无功能用例数 | 工具执行记录 |
-| Python 核对报告文件清单、状态行、日志存在性、用户模型常量和产物 SHA-256；`git diff --check c0d9fe0 HEAD`、`git diff --cached --check` | 通过；0；仅检查交付记录一致性，没有新增应用通过数 | report-audit.log |
+| Python 核对报告文件清单、状态行、日志存在性、用户模型常量和产物 SHA-256；`git diff --check c0d9fe0 HEAD`、`git diff --cached --check`；补验后再次核对 Playwright 状态和包内哈希 | 通过；0；仅检查交付记录一致性，没有新增应用通过数 | report-audit.log、report-audit-unlocked.log |
 
 ### 4.4 目录包与测量命令
 
@@ -177,7 +178,7 @@ ELECTRON_RUN_AS_NODE=1 /Users/z/Desktop/agent/.codex-tasks/20260913-windows-beta
 
 探针和合成数据均在 E/ 下。新数据通过已有 `tests/helpers/long-documents.ts` 的 `makeLongDocuments()`（由本地 jiti 加载）生成，不复用已被负例测试改写的文件。独立 PTY 调查命令使用 E/packaged-native-node.cjs，修正后的 E/mac-native-node-v2.log 退出 0；可复用的最终 native 探针已纳入源码和 P2。
 
-**P4（未通过）**：
+**P4（原始未通过记录，解锁后另见 P5）**：
 
 ```bash
 PI_APP_TEST_RELEASE_DIR=/Users/z/Desktop/agent/.codex-tasks/20260913-windows-beta-fixes/mac-package-3b5864e PI_APP_TEST_MODE=background PI_APP_TEST_PACKAGED_DOCUMENTS=1 PI_APP_TEST_PACKAGED_NATIVE_VISION=1 PI_APP_TEST_PACKAGED_VISION=1 pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/document-packaged.spec.ts apps/desktop/tests/production/vision-native-packaged.spec.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts apps/desktop/tests/production/packaged-terminal.spec.ts --output=.codex-tasks/20260913-windows-beta-fixes/mac-packaged-targeted
@@ -185,7 +186,23 @@ PI_APP_TEST_RELEASE_DIR=/Users/z/Desktop/agent/.codex-tasks/20260913-windows-bet
 
 3 个用例在 launch 阶段各超时 60 秒，2 个视觉用例未运行；为调查共同启动问题发 SIGINT，退出 **130**。E/mac-packaged-targeted.log 保留实际失败、trace。随后加 `DEBUG=pw:browser`，只选文档首例、`--timeout=20000`，再次超时，退出 1，E/mac-launch-diagnostic.log。日志显示 Node inspector 已连接，但 browser debugging WebSocket 未完成连接。
 
-系统工具 `cua.getState()` 报告 Mac 锁定且无法自动解锁。已异步请用户手动解锁，没有索取密码或绕过保护。详见 E/desktop-environment-blocker.txt。**锁屏是已确认的环境状态，但不能仅凭它断言包没有启动问题。** 解锁后的重跑仍是关闭该问题的条件。后续为文档用例增加的 PDF 断言、终端行级输出断言也尚未通过 GUI 执行。
+系统工具 `cua.getState()` 当时报告 Mac 锁定且无法自动解锁。已异步请用户手动解锁，没有索取密码或绕过保护。详见 E/desktop-environment-blocker.txt。**锁屏是当时确认的环境状态，不足以单独解释全部启动超时。** 本轮桌面恢复可用后执行了 P5；PDF 断言及终端行级输出断言都实际运行并通过。
+
+**P5（解锁后的实际目录包 GUI，2026-09-13 14:40–14:41 CST）**：
+
+```bash
+PI_APP_TEST_RELEASE_DIR=/Users/z/Desktop/agent/.codex-tasks/20260913-windows-beta-fixes/mac-package-3b5864e PI_APP_TEST_MODE=background PI_APP_TEST_PACKAGED_DOCUMENTS=1 PI_APP_TEST_PACKAGED_NATIVE_VISION=1 PI_APP_TEST_PACKAGED_VISION=1 pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/document-packaged.spec.ts apps/desktop/tests/production/vision-native-packaged.spec.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts apps/desktop/tests/production/packaged-terminal.spec.ts --output=.codex-tasks/20260913-windows-beta-fixes/mac-packaged-unlocked-v1 --retries=0
+```
+
+**5 通过、0 失败、0 跳过、0 重试；退出 0，总计 48.9 秒。** 日志：E/mac-packaged-unlocked-v1.log；运行状态与 5 张截图：E/mac-packaged-unlocked-v1/。使用与 P1–P4 相同的目录包，没有重新打包或改动产品源码。实际覆盖：
+
+- 包内 `app.asar` Worker 读取 PDF，以及长 TXT/DOCX/XLSX 的尾部正文；界面保持可编辑。
+- 注入 Worker 启动失败后得到 `DOCUMENT_WORKER_UNAVAILABLE`，输入框仍响应；移除测试故障后真实包内解析器恢复。
+- 真实集成终端产生独立的 `PI_PACKAGED_TERMINAL_OK` 输出行，执行 `exit` 后显示已退出。
+- 原生 Flash 关闭辅助识图后仍发送原图，历史和排队图片保留；取消、重启及本地 HTTP 503 自动重试后仍完整，辅助请求数为 0。
+- Pro 辅助识图保留原主模型，Stop 后可 Retry，证据可展开；重启后原图、证据仍在且没有新增识图请求。
+
+人工查看了原生 Flash、辅助证据和 Worker 恢复的实际截图，未发现遮挡或错乱。此轮关闭了此前“未能完成目录包启动与交互验证”的待验收项，但不把一次通过扩展为所有启动条件均已覆盖，也不把本地 HTTP 夹具写成真实 DeepSeek API 或 Windows 安装验收。
 
 ### 4.5 失败与修正保留记录
 
@@ -205,10 +222,11 @@ PI_APP_TEST_RELEASE_DIR=/Users/z/Desktop/agent/.codex-tasks/20260913-windows-bet
 | runtime-upgrade-v3.log | 1 失败；1 | 后台窗口快捷键未创建第二窗口；改用现有共享 application-menu helper；v4 通过 |
 | library-capacity-profile.log | 3 失败；1 | 异步受控开关的 `.check()` 立即断言；等待文件夹保存，再点击并等待 checked；v2/v3 各 3 通过 |
 | mac-package.log | 构建失败；1 | node-abi 4.28 不识别 Electron 44；窄依赖更新后 P1 通过 |
-| mac-packaged-targeted.log、mac-launch-diagnostic.log | 3 超时/2 未运行；130，单例超时；1 | 尚未关闭，见 P4；不改成跳过获取绿色结果 |
+| mac-packaged-targeted.log、mac-launch-diagnostic.log | 3 超时/2 未运行；130，单例超时；1 | 原失败记录保留；解锁后同一目录包 P5 的 5 个 GUI 用例全部通过、0 重试，见 mac-packaged-unlocked-v1.log |
 | mac-native-node.log | 失败；1 | 调查脚本从 `.asar.unpacked` 直接加载 JS，node-pty 再替换路径产生双 unpacked；改为真实应用使用的 `.asar` 入口，v2 和 P2 通过 |
 | mac-document-node.log、mac-document-node-v2.log | 失败；均 1 | 误复用先前 stale-version 负例已经改成 20 字节的合成文件；未放宽断言，使用共享生成器重新生成数据，v3/v4 通过 |
 | report-audit-initial.log | 报告核对脚本失败；1 | 脚本误将 `git diff --no-index --check` 对新增文件返回的差异码 1 当成空白错误；命令无诊断输出。暂存明确指定的报告后改用 `git diff --cached --check`，report-audit.log 通过；不是应用测试失败 |
+| electron44-terminal-focus-final.log | 0 个用例执行；1 | `--grep '^opens a workspace terminal with persistent output, tabs, and takeover controls$'` 锚定了单独的用例名，未匹配 Playwright 含文件名的完整标题；去掉首尾锚定后 E7 单例通过，没有更改测试断言 |
 
 ## 5. 三档合成资料库测量
 
@@ -248,7 +266,6 @@ PI_APP_TEST_RELEASE_DIR=/Users/z/Desktop/agent/.codex-tasks/20260913-windows-bet
 
 | 未执行 / 未完成项 | 原因与可重放入口 |
 | --- | --- |
-| 当前 macOS 目录包 GUI | 先手动解锁，再重放 P4；必须实际看到五个用例结果，不能以 P2/P3 替代 |
 | Windows 开发/目录 EXE | 本机是 Mac；两条 workflow 仅完成静态检查，没有触发；可在已授权的 Windows runner 运行新增入口 |
 | Windows 构建、NSIS、portable 启动器 | 按用户“Windows 打包暂不用实测”约束未执行；后续分别执行 `pnpm package:win`、依赖验证、目录 EXE、setup 和 portable 运行验收 |
 | Win10/Win11、标准用户、中文/空格用户名、Git/Git Bash/WSL、junction、共享盘 | 尚无相应 Windows OS build 和环境证据；不能用词法单元测试或 macOS symlink 代替 |
@@ -271,8 +288,9 @@ Windows 入口已使用本地 synthetic HTTP，包含 native Flash 图片/历史
 | c95dd76 | R01，Electron 44、剪贴板、凭据保护 |
 | 3b5864e | R01 打包发现的 ABI registry 依赖补充 |
 | 1da28fb | R02，Windows 验证入口、实际原生探针、容量测量 |
+| 05e543a | 首版中文交付报告，保留当时尚未完成的打包界面验收记录 |
 
-人工简化审查去掉重复图片快捷键/IPC 路径，收敛剪贴板文件视图、统一预算和授权入口，复用测试 harness 与文件生成器，移除陈旧注释/无效依赖。没有为获得绿色结果禁用权限、sandbox、contextIsolation，或放宽失败用例的关键断言。仍需复核的 GUI 启动问题保留为未关闭项。
+人工简化审查去掉重复图片快捷键/IPC 路径，收敛剪贴板文件视图、统一预算和授权入口，复用测试 harness 与文件生成器，移除陈旧注释/无效依赖。没有为获得绿色结果禁用权限、sandbox、contextIsolation，或放宽失败用例的关键断言。解锁后只新增 P5/E7 的执行证据和本报告更新，没有再次修改产品或测试源码；本机打包界面待验收项已关闭，Windows/真实 API 等剩余发布验收仍单独列于第 7 节。
 
 ## 9. 完整修改文件列表
 
