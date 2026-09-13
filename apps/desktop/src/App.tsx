@@ -471,7 +471,6 @@ function AppShell({
     handleSteerQueuedMessage,
     handleComposerPaste,
     handleComposerDrop,
-    handlePastedClipboardImage,
     handleComposerKeyDown,
   } = useSessionComposer({
     api,
@@ -486,8 +485,6 @@ function AppShell({
     openTreeModal,
     handleMentionKeyDown: mentionMenu.handleMentionKeyDown,
     handleSlashKeyDown: slashMenu.handleSlashKeyDown,
-    newThreadComposerRef: newThread.composerRef,
-    appendNewThreadAttachment: newThread.appendAttachment,
   });
 
   useEffect(() => {
@@ -574,7 +571,6 @@ function AppShell({
       newThread.setPendingWorkspaceId(workspaceId);
       newThread.resetSurface();
     });
-    const removeClipboardImageListener = window.piApp?.onClipboardImagePasted?.(handlePastedClipboardImage);
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (isEventInsideTerminal(event)) {
         const command = getDesktopCommandFromShortcut({
@@ -619,7 +615,6 @@ function AppShell({
     return () => {
       removeCommandListener?.();
       removeWorkspacePickedListener?.();
-      removeClipboardImageListener?.();
       window.removeEventListener("keydown", handleKeyDown);
     };
   }, [

@@ -18,7 +18,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
 import { VisionService } from "./vision-service";
 import { VISION_MODEL_ID } from "@pi-gui/session-driver/vision-types";
-import { assertImageAttachments, assertImageDimensions, assertImageMetadata, assertImageSizes, base64ImageSize } from "@pi-gui/session-driver/image-budget";
+import { assertImageAttachments, assertImageMetadata, assertImageSizes, base64ImageSize } from "@pi-gui/session-driver/image-budget";
 import { createImageInspectionRuntimeExtension } from "./image-inspection-runtime";
 import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
@@ -437,27 +437,6 @@ function openExternalWebUrl(url: string): boolean {
   return true;
 }
 
-function readClipboardImageAttachment(): ComposerImageAttachment | null {
-  const image = clipboard.readImage();
-  if (image.isEmpty()) {
-    return null;
-  }
-
-  const size = image.getSize();
-  assertImageDimensions(size.width, size.height);
-
-  const png = image.toPNG();
-  assertImageSizes([png.length]);
-
-  return {
-    id: randomUUID(),
-    kind: "image",
-    name: "pasted-image.png",
-    mimeType: "image/png",
-    data: png.toString("base64"),
-  };
-}
-
 function createWindow(): BrowserWindow {
   const backgroundTestMode = windowTestMode === "background";
   const enableTransparency = store ? store.state.enableTransparency : false;
@@ -523,21 +502,6 @@ function createWindow(): BrowserWindow {
       event.preventDefault();
       void pickWorkspaceViaDialog(window);
       return;
-    }
-
-    if (platformModifier && !input.shift && lowerKey === "v") {
-      try {
-        const clipboardImage = readClipboardImageAttachment();
-        if (clipboardImage) {
-          event.preventDefault();
-          window.webContents.send(desktopIpc.clipboardImagePasted, clipboardImage);
-          return;
-        }
-      } catch (error) {
-        event.preventDefault();
-        void runWindowScopedForWindow(window, () => store.withError(error));
-        return;
-      }
     }
 
     const command = getDesktopCommandFromShortcut({
@@ -1341,7 +1305,12 @@ app.whenReady().then(async () => {
   // in auth.json (and custom-endpoint keys a pre-encryption build left in
   // models.json) into the encrypted store and scrub the plaintext. Safe no-op
   // once secure-keys.json already covers every provider.
-  secureAuthStorageBackend.migratePlaintextKeys();
+  let credentialMigrationError: string | undefined;
+  try { secureAuthStorageBackend.migratePlaintextKeys(); }
+  catch {
+    credentialMigrationError = "Secure credential migration could not finish. Existing credentials were kept. Unlock secure storage and restart to retry.";
+    console.warn(credentialMigrationError);
+  }
   const visionService = new VisionService(configuredUserDataDir);
   await visionService.initialize();
   const driverOptions = {
@@ -1417,6 +1386,7 @@ app.whenReady().then(async () => {
     generateThreadTitleOverride: async (workspace, options) => generateThreadTitleOverride?.(workspace, options),
   });
   await store.initialize();
+  if (credentialMigrationError) store.withError(credentialMigrationError);
   themeManager.setMode(store.state.themeMode);
   integratedTerminalShell = (await store.getState()).integratedTerminalShell;
   stopPruningTerminals = store.subscribe((state) => {
@@ -1903,13 +1873,7 @@ app.whenReady().then(async () => {
       return errors.length ? store.withError(errors.join("\n")) : state;
     });
   });
-  ipcMain.on(desktopIpc.readClipboardImage, (event) => {
-    try { event.returnValue = readClipboardImageAttachment(); }
-    catch (error) { event.returnValue = { error: error instanceof Error ? error.message : String(error) }; }
-  });
-  ipcMain.on(desktopIpc.readClipboardText, (event) => {
-    event.returnValue = clipboard.readText();
-  });
+  ipcMain.handle(desktopIpc.readClipboardText, () => clipboard.readText());
   ipcMain.handle(desktopIpc.addComposerAttachments, async (event, attachments: readonly ComposerAttachment[]) => {
     assertImageAttachments(attachments);
     const validated = attachments.flatMap(validateComposerAttachmentPayload);
