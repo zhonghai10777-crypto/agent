@@ -365,6 +365,8 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.updates.rateLimited": "更新服务请求次数已达上限，请稍后重试。",
   "settings.updates.invalidResponse": "更新服务返回的数据无效，请稍后重试。",
   "settings.updates.noReleases": "更新源尚未发布可用版本。",
+  "settings.updates.noCompatibleRelease": "没有确认可用于当前系统、架构和更新通道的安装包。",
+  "settings.updates.incompleteCoverage": "发布记录超过本次检查上限，无法确认最新适配版本。请查看发布页或稍后重试。",
   "settings.updates.serviceError": "更新服务暂时不可用，请稍后重试。",
   "settings.general.language": "语言",
   "settings.general.thisWorkspace": "此工作区",

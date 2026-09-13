@@ -74,7 +74,6 @@
     "test:prod:open-folder-real": "pnpm build && cross-env PI_APP_TEST_MODE=foreground pnpm --dir ../.. exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/open-folder-real.spec.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "0.84.4",
     "@anthropic-ai/sdk": "0.91.1",
     "@aws-crypto/sha256-browser": "5.2.0",
     "@aws-crypto/sha256-js": "5.2.0",
@@ -90,6 +89,7 @@
     "@aws-sdk/types": "^3.973.8",
     "@aws-sdk/xml-builder": "^3.972.33",
     "@aws/lambda-invoke-store": "^0.2.2",
+    "@earendil-works/pi-ai": "0.84.4",
     "@earendil-works/pi-coding-agent": "0.84.4",
     "@google/genai": "1.52.0",
     "@mistralai/mistralai": "2.2.6",
@@ -166,6 +166,7 @@
     "@types/node": "^22.13.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "@types/semver": "7.7.1",
     "@vitejs/plugin-react": "^4.3.4",
     "app-builder-bin": "5.0.0-alpha.12",
     "cross-env": "^7.0.3",

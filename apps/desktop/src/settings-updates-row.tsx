@@ -12,6 +12,8 @@ const errorKeys: Record<UpdateCheckErrorCode, MessageKey> = {
   "rate-limited": "settings.updates.rateLimited",
   "invalid-response": "settings.updates.invalidResponse",
   "no-releases": "settings.updates.noReleases",
+  "no-compatible-release": "settings.updates.noCompatibleRelease",
+  "incomplete-coverage": "settings.updates.incompleteCoverage",
   http: "settings.updates.serviceError",
 };
 

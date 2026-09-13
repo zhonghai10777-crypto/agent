@@ -6,6 +6,8 @@ export type UpdateCheckErrorCode =
   | "rate-limited"
   | "invalid-response"
   | "no-releases"
+  | "no-compatible-release"
+  | "incomplete-coverage"
   | "http";
 
 export type UpdateCheckResult =

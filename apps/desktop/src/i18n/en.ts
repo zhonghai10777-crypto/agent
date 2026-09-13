@@ -366,6 +366,8 @@ const enMessages = {
   "settings.updates.rateLimited": "The update service's request limit was reached. Please try again later.",
   "settings.updates.invalidResponse": "The update service returned an invalid response. Please try again later.",
   "settings.updates.noReleases": "The update source has no published versions yet.",
+  "settings.updates.noCompatibleRelease": "No verified package matches your platform, architecture and update channel.",
+  "settings.updates.incompleteCoverage": "The release list exceeds the check limit. The latest compatible version could not be confirmed; view the release page or retry later.",
   "settings.updates.serviceError": "The update service is temporarily unavailable. Please try again later.",
   "settings.general.language": "Language",
   "settings.general.thisWorkspace": "this workspace",

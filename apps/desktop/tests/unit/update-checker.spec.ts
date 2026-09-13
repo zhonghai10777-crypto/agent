@@ -1,10 +1,16 @@
 import { expect, test } from "@playwright/test";
-import { checkForUpdate, resolveUpdateSource } from "../../electron/update-checker";
+import { checkForUpdate as checkForUpdateImpl, resolveUpdateSource } from "../../electron/update-checker";
 
 const json = (data: unknown, status = 200, headers?: HeadersInit) =>
   new Response(JSON.stringify(data), { status, headers });
+const checkForUpdate: typeof checkForUpdateImpl = (options) => checkForUpdateImpl({ platform: "win32", architecture: "x64", ...options });
 const publicEnv = { PI_APP_UPDATE_REPOSITORY: "publisher/agent-releases" };
-const published = [{ tag_name: "v1.1.0", html_url: "https://github.com/publisher/agent-releases/releases/tag/v1.1.0" }];
+function release(version: string, architecture = "x64") {
+  const tag = `v${version}`, name = `Agent-${version}-${architecture}-setup.exe`;
+  return { tag_name: tag, html_url: `https://github.com/publisher/agent-releases/releases/tag/${tag}`,
+    assets: [{ name, size: 1000, state: "uploaded", browser_download_url: `https://github.com/publisher/agent-releases/releases/download/${tag}/${name}` }] };
+}
+const published = [release("1.1.0")];
 
 test("anonymous update checks use the distribution repository and its exact download tag", async () => {
   let request: { url: string; init: RequestInit } | undefined;
@@ -12,7 +18,7 @@ test("anonymous update checks use the distribution repository and its exact down
     env: { ...publicEnv, GH_TOKEN: "unrelated-credential" }, currentVersion: "1.0.0",
     fetch: async (url, init) => { request = { url, init }; return json(published); },
   });
-  expect(request?.url).toBe("https://api.github.com/repos/publisher/agent-releases/releases?per_page=10");
+  expect(request?.url).toBe("https://api.github.com/repos/publisher/agent-releases/releases?per_page=30&page=1");
   expect(new Headers(request?.init.headers).has("Authorization")).toBe(false);
   expect(request?.init.redirect).toBe("error");
   expect(result).toEqual({ status: "update-available", currentVersion: "1.0.0", latestVersion: "1.1.0", releaseUrl: published[0]!.html_url });
@@ -25,7 +31,7 @@ test("private updates use only the user's dedicated credential and never expose 
     env: { ...publicEnv, PI_APP_UPDATE_TOKEN: token }, currentVersion: "1.0.0",
     fetch: async (_url, init) => {
       authorization = new Headers(init.headers).get("Authorization");
-      return json([{ tag_name: "v1.1.0", html_url: "https://elsewhere.invalid/download" }]);
+      return json([{ ...release("1.1.0"), html_url: "https://elsewhere.invalid/download" }]);
     },
   });
   expect(authorization).toBe(`Bearer ${token}`);
@@ -82,4 +88,44 @@ test("invalid source identifiers are rejected before a request or credential can
     })).toMatchObject({ status: "error", code: "configuration" });
     expect(called).toBe(false);
   }
+});
+
+test("highest compatible SemVer wins regardless of publication order, invalid tags or republished old versions", async () => {
+  const result = await checkForUpdate({ env: publicEnv, currentVersion: "1.1.0-beta.9", fetch: async () => json([
+    { tag_name: "invalid-first" }, release("1.1.0-beta.10"), release("1.0.0"), release("1.1.0"),
+    { ...release("9.0.0"), draft: true }, release("2.0.0", "arm64"), release("1.2.0-beta.1"), release("99.0.0-alpha.1"),
+  ]) });
+  expect(result).toMatchObject({ status: "update-available", latestVersion: "1.2.0-beta.1" });
+  const stable = await checkForUpdate({ env: publicEnv, currentVersion: "1.0.0", fetch: async () => json([
+    release("2.0.0-beta.10"), { ...release("3.0.0"), prerelease: true }, release("1.1.0"),
+  ]) });
+  expect(stable).toMatchObject({ status: "update-available", latestVersion: "1.1.0" });
+});
+
+test("candidate selection rejects non-SemVer tags and missing, foreign, unfinished or wrong-architecture assets", async () => {
+  for (const version of ["01.2.3", "1.2.3-beta.01", "1.2.3-beta..1", "1.2.3+", "1.2.3 "]) {
+    expect(await checkForUpdate({ env: publicEnv, currentVersion: "1.0.0", fetch: async () => json([release(version)]) })).toMatchObject({ status: "error", code: "invalid-response" });
+  }
+  const good = release("1.1.0");
+  for (const assets of [[], release("1.1.0", "arm64").assets, [{ ...good.assets[0], state: "new" }], [{ ...good.assets[0], size: 0 }], [{ ...good.assets[0], browser_download_url: "https://third-party.invalid/Agent.exe" }]]) {
+    expect(await checkForUpdate({ env: publicEnv, currentVersion: "1.0.0", fetch: async () => json([{ ...good, assets }]) })).toMatchObject({ status: "error", code: "no-compatible-release" });
+  }
+});
+
+test("pagination reaches later valid candidates and an incomplete bounded scan never claims to be current", async () => {
+  const urls: string[] = [];
+  const later = await checkForUpdate({ env: publicEnv, currentVersion: "1.0.0", fetch: async (url) => {
+    urls.push(url);
+    return urls.length === 1 ? json(Array(30).fill(release("2.0.0", "arm64"))) : json([release("1.1.0")]);
+  } });
+  expect(later).toMatchObject({ status: "update-available", latestVersion: "1.1.0" });
+  expect(urls[1]).toContain("page=2");
+  let calls = 0;
+  const incomplete = await checkForUpdate({ env: publicEnv, currentVersion: "1.0.0", fetch: async (url) => {
+    calls++;
+    expect(url).toMatch(/^https:\/\/api.github.com\/repos\/publisher\/agent-releases\//);
+    return json([release("1.1.0")], 200, { link: '<https://foreign.invalid/steal>; rel="next"' });
+  } });
+  expect(calls).toBe(5);
+  expect(incomplete).toMatchObject({ status: "error", code: "incomplete-coverage" });
 });
