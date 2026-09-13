@@ -12,7 +12,7 @@ const executable = resolve(arg("--executable") ?? require("electron"));
 const expected = JSON.parse(readFileSync(resolve(desktop, "package.json"), "utf8")).devDependencies.electron;
 const builder = parse(readFileSync(resolve(desktop, "electron-builder.yml"), "utf8"));
 if (builder.electronVersion !== expected) throw new Error("Desktop and builder Electron versions disagree.");
-const runtime = JSON.parse(execFileSync(executable, ["-p", "JSON.stringify({ electronVersion: process.versions.electron, nodeVersion: process.versions.node, chromeVersion: process.versions.chrome, platform: process.platform, architecture: process.arch })"], {
+const runtime = JSON.parse(execFileSync(executable, ["-p", "JSON.stringify({ electronVersion: process.versions.electron, nodeVersion: process.versions.node, chromeVersion: process.versions.chrome, modulesAbi: process.versions.modules, nodeApiVersion: process.versions.napi, platform: process.platform, architecture: process.arch })"], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 15_000,
 }));
 if (runtime.electronVersion !== expected) throw new Error(`Actual Electron ${runtime.electronVersion} does not match configured ${expected}.`);
