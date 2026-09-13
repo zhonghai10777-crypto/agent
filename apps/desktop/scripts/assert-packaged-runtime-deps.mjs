@@ -88,10 +88,11 @@ const requiredPackages = [
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
 const packagePlatform = (process.env.PI_APP_PACKAGE_PLATFORM ?? process.platform).trim().toLowerCase();
-const asarPath = resolveAsarPath(desktopDir, packagePlatform);
+const releaseDir = path.resolve(desktopDir, process.env.PI_APP_TEST_RELEASE_DIR ?? "release");
+const asarPath = resolveAsarPath(releaseDir, packagePlatform);
 const notificationHelperPath =
   packagePlatform === "darwin"
-    ? path.join(desktopDir, "release", "mac-arm64", "Agent.app", "Contents", "MacOS", "pi-gui-notification-status-helper")
+    ? path.join(releaseDir, "mac-arm64", "Agent.app", "Contents", "MacOS", "pi-gui-notification-status-helper")
     : undefined;
 const pnpmBinary = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const piCodingAgentPackageName = "@earendil-works/pi-coding-agent";
@@ -155,9 +156,12 @@ try {
   await verifyPackagedPiRuntime(extractedDir);
   await verifyPackagedRuntimeImports(extractedDir);
   await verifyNativeNodePty(asarPath);
+  if (packagePlatform === process.platform) verifyPackagedNativeRuntime(asarPath, extractedDir);
+  else console.log("Native execution not run: package target differs from the current OS.");
 } finally {
   try {
-    rmSync(extractedDir, {
+    if (process.env.PI_APP_KEEP_PACKAGE_DIAGNOSTICS === "1") console.log(`Retained package diagnostics: ${extractedDir}`);
+    else rmSync(extractedDir, {
       recursive: true,
       force: true,
       maxRetries: process.platform === "win32" ? 5 : 0,
@@ -188,13 +192,25 @@ function verifyLegacyLazystreamDependency(extractedDir) {
 
 console.log(`Verified packaged runtime dependencies in ${asarPath}`);
 
-function resolveAsarPath(desktopDir, packagePlatform) {
+function verifyPackagedNativeRuntime(asarPath, workingDirectory) {
+  const executable = packagePlatform === "darwin"
+    ? path.resolve(path.dirname(asarPath), "..", "MacOS", "Agent")
+    : path.resolve(path.dirname(asarPath), "..", packagePlatform === "win32" ? "agent.exe" : "pi-gui");
+  const output = execFileSync(executable, [path.join(scriptDir, "probe-packaged-native.cjs"), asarPath], {
+    cwd: workingDirectory, env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8", timeout: 15_000,
+  });
+  const result = JSON.parse(output);
+  const expected = JSON.parse(readFileSync(path.join(desktopDir, "package.json"), "utf8")).devDependencies.electron;
+  if (result.electronVersion !== expected) throw new Error(`Packaged native probe used Electron ${result.electronVersion}, expected ${expected}.`);
+  console.log(`Packaged native execution: ${JSON.stringify(result)}`);
+}
+
+function resolveAsarPath(releaseDir, packagePlatform) {
   if (packagePlatform === "darwin") {
-    return path.join(desktopDir, "release", "mac-arm64", "Agent.app", "Contents", "Resources", "app.asar");
+    return path.join(releaseDir, "mac-arm64", "Agent.app", "Contents", "Resources", "app.asar");
   }
 
   if (packagePlatform === "linux") {
-    const releaseDir = path.join(desktopDir, "release");
     const unpackedAsarPath = readdirSync(releaseDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^linux(?:-[\w]+)?-unpacked$/.test(entry.name))
       .map((entry) => path.join(releaseDir, entry.name, "resources", "app.asar"))
@@ -208,7 +224,6 @@ function resolveAsarPath(desktopDir, packagePlatform) {
   }
 
   if (packagePlatform === "win32") {
-    const releaseDir = path.join(desktopDir, "release");
     const unpackedAsarPath = readdirSync(releaseDir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && /^win(?:-[\w]+)?-unpacked$/.test(entry.name))
       .map((entry) => path.join(releaseDir, entry.name, "resources", "app.asar"))
@@ -245,7 +260,7 @@ async function verifyPackagedPiRuntime(extractedDir) {
 
   const runtimeEntry = path.join(extractedDir, "node_modules", ...piCodingAgentPackageName.split("/"), "dist", "index.js");
   const { ModelRuntime } = await import(pathToFileURL(runtimeEntry).href);
-  const runtime = await ModelRuntime.create({ modelsPath: null });
+  const runtime = await ModelRuntime.create({ modelsPath: null, authPath: path.join(extractedDir, "verification-auth.json"), allowModelNetwork: false, refreshOnCreate: false });
   const models = runtime.getModels();
   for (const check of modelChecks) {
     const model = models.find((entry) => entry.provider === check.provider && entry.id === check.id);
@@ -278,9 +293,17 @@ async function verifyNativeNodePty(asarPath) {
   if (!existsSync(nodePtyDir) || !hasFileWithExtension(nodePtyDir, ".node")) {
     throw new Error(`Packaged app is missing unpacked node-pty native module under ${nodePtyDir}`);
   }
-  if (packagePlatform !== "darwin") {
+  if (packagePlatform === "win32") {
+    // Windows packaging intentionally uses npmRebuild=false. node-pty 1.1 ships
+    // Node-API prebuilds, including ConPTY's companion binaries; prove presence
+    // here and execute them with the packaged-terminal smoke on Windows.
+    const prebuild = path.join(nodePtyDir, "prebuilds", `win32-${process.env.PI_APP_PACKAGE_ARCH ?? "x64"}`);
+    for (const file of ["conpty.node", "conpty_console_list.node", "conpty/OpenConsole.exe", "conpty/conpty.dll", "pty.node", "winpty-agent.exe", "winpty.dll"]) {
+      if (!existsSync(path.join(prebuild, file))) throw new Error(`Missing packaged Windows node-pty prebuild: ${file}`);
+    }
     return;
   }
+  if (packagePlatform !== "darwin") return;
   const helperPath = findFileNamed(nodePtyDir, "spawn-helper");
   if (!helperPath) {
     throw new Error(`Packaged app is missing unpacked node-pty spawn-helper under ${nodePtyDir}`);

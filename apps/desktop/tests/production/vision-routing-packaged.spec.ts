@@ -1,27 +1,32 @@
 import { cp, mkdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { expect, test } from "@playwright/test";
-import { getDesktopState, launchDesktopByExecutable, makeUserDataDir, makeWorkspace, setDeferredThreadTitleMode, startThreadFromSurface } from "../helpers/electron-app";
+import { getDesktopState, launchDesktopByExecutable, launchPackagedDesktop, makeUserDataDir, makeWorkspace, setDeferredThreadTitleMode, startThreadFromSurface } from "../helpers/electron-app";
 import { pasteVisionImage, seedVisionAgentDir, startVisionHttpFixture } from "../helpers/vision-fixture";
 
-test("Windows packaged EXE handles images, Stop, retry and reopen under a Chinese path", async ({}, info) => {
-  test.skip(process.platform !== "win32" || process.env.PI_APP_TEST_PACKAGED_VISION !== "1", "Requires an explicit Windows packaged vision run.");
+test("packaged auxiliary vision preserves Pro, evidence, Stop, retry and reopen", async ({}, info) => {
+  test.skip(process.env.PI_APP_TEST_PACKAGED_VISION !== "1", "Requires an explicit packaged vision run.");
   test.setTimeout(180_000);
-  const sourceExecutable = resolve(process.env.PI_APP_TEST_VISION_EXE ?? "apps/desktop/release/win-unpacked/agent.exe");
-  const installedDir = join(await makeUserDataDir("Agent-打包验证-"), "中文用户", "应用程序", "Agent");
-  await mkdir(installedDir, { recursive: true });
-  await cp(dirname(sourceExecutable), installedDir, { recursive: true });
-  const executable = join(installedDir, "agent.exe");
+  let executable: string | undefined;
+  if (process.platform === "win32") {
+    const sourceExecutable = resolve(process.env.PI_APP_TEST_VISION_EXE ?? "apps/desktop/release/win-unpacked/agent.exe");
+    const installedDir = join(await makeUserDataDir("Agent-打包验证-"), "中文用户", "应用程序", "Agent");
+    await mkdir(installedDir, { recursive: true });
+    await cp(dirname(sourceExecutable), installedDir, { recursive: true });
+    executable = join(installedDir, "agent.exe");
+  }
   const userDataDir = await makeUserDataDir("Agent-中文用户-");
   const agentDir = join(userDataDir, "agent");
   const workspace = await makeWorkspace("视觉-中文工程");
   await seedVisionAgentDir(agentDir);
   const http = await startVisionHttpFixture();
   const options = { agentDir, initialWorkspaces: [workspace], scrubProviderEnv: true, testMode: "background" as const };
-  let harness = await launchDesktopByExecutable(executable, userDataDir, options);
+  const launch = () => executable ? launchDesktopByExecutable(executable, userDataDir, options) : launchPackagedDesktop(userDataDir, options);
+  let harness = await launch();
   try {
     let page = await harness.firstWindow();
-    expect(await harness.electronApp.evaluate(() => process.execPath)).toBe(executable);
+    if (executable) expect(await harness.electronApp.evaluate(() => process.execPath)).toBe(executable);
+    expect(await harness.electronApp.evaluate(({ app }) => app.getAppPath())).toMatch(/\.asar$/);
     await http.install(harness);
     await setDeferredThreadTitleMode(harness);
     await startThreadFromSurface(page, { prompt: "Packaged text baseline" });
@@ -45,7 +50,7 @@ test("Windows packaged EXE handles images, Stop, retry and reopen under a Chines
     expect(state.workspaces.flatMap((entry) => entry.sessions).find((entry) => entry.id === state.selectedSessionId)?.config?.modelId).toBe("deepseek-v4-pro");
     await harness.close();
     const count = http.requests.length;
-    harness = await launchDesktopByExecutable(executable, userDataDir, options);
+    harness = await launch();
     page = await harness.firstWindow();
     await http.install(harness);
     await expect(page.locator(".timeline-item__attachment--image")).toHaveCount(1);

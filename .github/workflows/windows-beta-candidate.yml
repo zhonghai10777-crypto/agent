@@ -1,7 +1,6 @@
 # Place this file at .github/workflows/windows-beta-candidate.yml.
 # Generates Windows x64 candidate artifacts only. It does NOT publish a Release,
 # require a publishing token, or replace full Windows UI / installer acceptance.
-# The referenced packaging commands were reviewed at commit 687ec3d.
 name: Windows Beta Candidate
 
 on:
@@ -86,8 +85,32 @@ jobs:
       - name: Build NSIS installer and portable executable
         run: pnpm package:win
 
+      - name: Verify permissions, Windows junctions and credential recovery
+        run: |
+          New-Item -ItemType Directory -Force windows-candidate-results | Out-Null
+          pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/unit/permission.spec.ts apps/desktop/tests/unit/orchestration-permission.spec.ts apps/desktop/tests/unit/document-access.spec.ts apps/desktop/tests/unit/secure-auth-recovery.spec.ts --output=windows-candidate-results/boundaries 2>&1 | Tee-Object -FilePath windows-candidate-results/boundaries.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify packaged dependencies
         run: pnpm --dir apps/desktop run verify:packaged-runtime-deps:windows
+
+      - name: Record the actual packaged Electron runtime
+        run: |
+          node apps/desktop/scripts/inspect-electron-runtime.mjs --executable apps/desktop/release/win-unpacked/agent.exe --output apps/desktop/release/electron-runtime.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # These launch win-unpacked/agent.exe with synthetic local fixtures. They
+      # do not launch the NSIS installer or portable wrapper or call real APIs.
+      - name: Verify packaged documents, vision and native terminal
+        env:
+          PI_APP_TEST_MODE: background
+          PI_APP_TEST_PACKAGED_DOCUMENTS: '1'
+          PI_APP_TEST_PACKAGED_NATIVE_VISION: '1'
+          PI_APP_TEST_PACKAGED_VISION: '1'
+        run: |
+          New-Item -ItemType Directory -Force windows-candidate-results | Out-Null
+          pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/document-packaged.spec.ts apps/desktop/tests/production/vision-native-packaged.spec.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts apps/desktop/tests/production/packaged-terminal.spec.ts --output=windows-candidate-results/packaged 2>&1 | Tee-Object -FilePath windows-candidate-results/packaged.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Record build identity, signatures and SHA-256 checksums
         run: |
@@ -95,6 +118,7 @@ jobs:
           $desktop = Get-Content apps/desktop/package.json -Raw | ConvertFrom-Json
           $version = $desktop.version
           $releaseDir = Join-Path $PWD 'apps/desktop/release'
+          $runtime = Get-Content (Join-Path $releaseDir 'electron-runtime.json') -Raw | ConvertFrom-Json
           $names = @(
             "Agent-$version-x64-setup.exe",
             "Agent-$version-x64-portable.exe"
@@ -123,10 +147,15 @@ jobs:
             version = $version
             platform = 'win32'
             architecture = 'x64'
+            electronVersion = $runtime.electronVersion
+            nodeVersion = $runtime.nodeVersion
+            chromeVersion = $runtime.chromeVersion
+            osBuild = [Environment]::OSVersion.VersionString
             createdAtUtc = [DateTime]::UtcNow.ToString('o')
             updateRepositoryOverride = $env:PI_APP_UPDATE_REPOSITORY
             runId = $env:GITHUB_RUN_ID
-            acceptance = 'Candidate only: full Windows UI and installer acceptance not run by this workflow.'
+            runAttempt = $env:GITHUB_RUN_ATTEMPT
+            acceptance = 'Candidate only: targeted unpacked EXE tests use local fixtures. NSIS, portable launcher, upgrade, real API and full Windows acceptance remain separate.'
             artifacts = $artifacts
           } | ConvertTo-Json -Depth 5 |
             Set-Content (Join-Path $releaseDir 'build-info.json') -Encoding utf8
@@ -140,6 +169,18 @@ jobs:
             apps/desktop/release/*-x64-portable.exe
             apps/desktop/release/SHA256SUMS.txt
             apps/desktop/release/build-info.json
+            apps/desktop/release/electron-runtime.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+      - name: Save targeted verification logs and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-beta-verification-${{ github.sha }}
+          path: |
+            windows-candidate-results/
+            apps/desktop/release/electron-runtime.json
+          if-no-files-found: warn
+          retention-days: 14
