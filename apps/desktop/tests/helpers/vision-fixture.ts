@@ -9,21 +9,22 @@ export const VISION_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAYAAADED76LAAAAEklEQ
 export const VISION_TEST_KEY = "pi-app-vision-fixture-key";
 export const VISION_TEST_PROVIDER = "vision-fixture";
 
-export async function seedVisionAgentDir(agentDir: string, options: { modelId?: string; blockImages?: boolean } = {}): Promise<void> {
+export async function seedVisionAgentDir(agentDir: string, options: { modelId?: string; blockImages?: boolean; nativeFlash?: boolean } = {}): Promise<void> {
+  const ids = ["deepseek-v4-pro", "deepseek-v4-flash", "native-vision-fixture", ...(options.nativeFlash ? ["deepseek-flash"] : [])];
   await mkdir(agentDir, { recursive: true });
   await writeFile(join(agentDir, "auth.json"), JSON.stringify({ [VISION_TEST_PROVIDER]: { type: "api_key", key: VISION_TEST_KEY } }));
   await writeFile(join(agentDir, "models.json"), JSON.stringify({ providers: { [VISION_TEST_PROVIDER]: {
     baseUrl: "https://api.deepseek.com/v1", api: "openai-completions", apiKey: VISION_TEST_KEY,
-    models: ["deepseek-v4-pro", "deepseek-v4-flash", "native-vision-fixture"].map((id) => ({
-      id, name: id, reasoning: true, input: id === "native-vision-fixture" ? ["text", "image"] : ["text"],
+    models: ids.map((id) => ({
+      id, name: id, reasoning: true, input: (id === "native-vision-fixture" || id === "deepseek-flash") ? ["text", "image"] : ["text"],
       contextWindow: 131072, maxTokens: 8192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       compat: { supportsDeveloperRole: false, supportsReasoningEffort: true, supportsStore: false },
     })),
   } } }));
   await writeFile(join(agentDir, "settings.json"), JSON.stringify({
-    defaultProvider: VISION_TEST_PROVIDER, defaultModel: options.modelId ?? "deepseek-v4-pro", defaultThinkingLevel: "high",
+    defaultProvider: VISION_TEST_PROVIDER, defaultModel: options.modelId ?? (options.nativeFlash ? "deepseek-flash" : "deepseek-v4-pro"), defaultThinkingLevel: "high",
     images: { blockImages: options.blockImages ?? false },
-    enabledModels: ["deepseek-v4-pro", "deepseek-v4-flash", "native-vision-fixture"].map((id) => `${VISION_TEST_PROVIDER}/${id}`),
+    enabledModels: ids.map((id) => `${VISION_TEST_PROVIDER}/${id}`),
     compaction: { enabled: false }, retry: { enabled: true, maxRetries: 2, baseDelayMs: 10 },
   }));
 }
@@ -36,6 +37,7 @@ export async function startVisionHttpFixture() {
   const held: Array<() => void> = [];
   let visionMode: "success" | "hold" | "auth" | "invalid" = "success";
   let primaryMode: "success" | "hold" | "inspect" | "write" = "success";
+  let failNextPrimary = false;
   const server = createServer(async (req, res) => {
     if (req.headers.authorization !== `Bearer ${VISION_TEST_KEY}`) { res.writeHead(403); res.end(); return; }
     const chunks: Buffer[] = [];
@@ -53,6 +55,12 @@ export async function startVisionHttpFixture() {
         res.end(JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: visionMode === "invalid" ? "{}" : JSON.stringify(evidence) } }], usage: { prompt_tokens: 37, completion_tokens: 19, prompt_cache_hit_tokens: 2 } }));
       };
       if (visionMode === "hold") held.push(respond); else respond();
+      return;
+    }
+    if (failNextPrimary) {
+      failNextPrimary = false;
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: { message: "Synthetic temporary service failure" } }));
       return;
     }
     const respond = () => {
@@ -84,6 +92,7 @@ export async function startVisionHttpFixture() {
     requests,
     setVisionMode(mode: typeof visionMode) { visionMode = mode; },
     setPrimaryMode(mode: typeof primaryMode) { primaryMode = mode; },
+    failNextPrimary() { failNextPrimary = true; },
     release() { for (const respond of held.splice(0)) respond(); },
     async install(harness: DesktopHarness) {
       await harness.electronApp.evaluate(({ net }, { url, key }) => {

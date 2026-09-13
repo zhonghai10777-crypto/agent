@@ -168,13 +168,46 @@ pnpm --filter @pi-gui/pi-sdk-driver exec node --test test/vision-live.test.mts
 
 The manually dispatched **DeepSeek Vision Windows** workflow builds the actual
 Windows installer and portable package, checks packaged dependencies and launches
-`win-unpacked/agent.exe` from a Chinese path for image/Stop/retry/reopen coverage.
+`win-unpacked/agent.exe` for native Flash and auxiliary Pro image coverage. The
+auxiliary test also copies the unpacked app into a Chinese path for Stop/retry/reopen coverage.
 It does not publish a release. A local Windows run uses `pnpm package:win`,
 `pnpm --dir apps/desktop run verify:packaged-runtime-deps:windows`, then the
 `tests/production/vision-routing-packaged.spec.ts` Playwright spec with
 `PI_APP_TEST_PACKAGED_VISION=1`. The packaged test retains its copied installation
 outside the report directory. Ordinary-user installation without development
 dependencies is a separate release acceptance step.
+
+The **Windows Beta Candidate** workflow additionally runs the packaged document
+Worker and terminal tests, permission guards, actual Windows junction boundaries
+and credential recovery. It records the actual packaged Electron/Node/Chromium
+versions, commit, run identity, SHA-256 and Authenticode status. These tests use
+synthetic local HTTP responses; they do not exercise the NSIS installer, portable
+launcher, previous-version installation upgrades or real provider accounts.
+
+The packaged dependency verifier also starts the target Electron binary in Node
+mode to decode a synthetic PNG through Photon WASM and check `node-pty` output
+and exit. That check proves package loading on the current OS; the Playwright
+specs below are still required to verify desktop interaction.
+
+After building a directory package, run only the relevant opt-in specs:
+
+```bash
+pnpm exec cross-env PI_APP_TEST_MODE=background PI_APP_TEST_PACKAGED_DOCUMENTS=1 PI_APP_TEST_PACKAGED_NATIVE_VISION=1 PI_APP_TEST_PACKAGED_VISION=1 pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/document-packaged.spec.ts apps/desktop/tests/production/vision-native-packaged.spec.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts apps/desktop/tests/production/packaged-terminal.spec.ts --output=packaged-beta-results
+node apps/desktop/scripts/inspect-electron-runtime.mjs --executable apps/desktop/release/win-unpacked/agent.exe --output apps/desktop/release/electron-runtime.json
+```
+
+`PI_APP_TEST_RELEASE_DIR` selects a separate package directory for the shared
+packaged harness and dependency verifier. On Windows, the copied auxiliary-vision
+test uses `PI_APP_TEST_VISION_EXE` to override its source EXE. The same document,
+native-vision, auxiliary-vision and terminal specs can run on macOS directory
+packages, with their results reported as macOS evidence only.
+
+For bounded library measurements, build once and run
+`tests/production/library-capacity-profile.spec.ts` with
+`PI_APP_TEST_LIBRARY_PROFILE=1` and `PI_APP_TEST_MODE=background`. Each of the
+three synthetic sizes retains a `measurement.json` with input bytes, actual
+indexed text characters, memory, event-loop delay and search latency. Host
+measurements do not establish Windows 4 GB or 8 GB hardware support.
 
 ## Test Lanes
 

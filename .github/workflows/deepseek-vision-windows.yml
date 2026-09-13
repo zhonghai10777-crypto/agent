@@ -32,20 +32,25 @@ jobs:
       - name: Build driver contracts
         run: pnpm --filter @pi-gui/session-driver --filter @pi-gui/catalogs --filter @pi-gui/pi-sdk-driver run build
       - name: Vision driver and SDK contracts
-        run: pnpm --filter @pi-gui/pi-sdk-driver exec node --test test/vision-client.test.mts test/vision-router.test.mts test/vision-stream-adapter.test.mts test/vision-sdk-contract.test.mts
+        run: pnpm --filter @pi-gui/pi-sdk-driver exec node --test test/vision-client.test.mts test/vision-router.test.mts test/vision-stream-adapter.test.mts test/vision-sdk-contract.test.mts test/image-budget.test.mts test/image-input.test.mts test/custom-provider-images.test.mts
       - name: Desktop typecheck
         run: pnpm --filter @pi-gui/desktop typecheck
       - name: Vision persistence and image validation
-        run: pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/unit/vision-store.spec.ts apps/desktop/tests/unit/vision-image.spec.ts --output=vision-results/unit
+        run: pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/unit/vision-store.spec.ts apps/desktop/tests/unit/vision-image.spec.ts apps/desktop/tests/unit/vision-settings.spec.ts apps/desktop/tests/unit/composer-clipboard.spec.ts --output=vision-results/unit
       - name: Build actual Windows installer and portable executable
         run: pnpm package:win
       - name: Verify packaged runtime dependencies
         run: pnpm --dir apps/desktop run verify:packaged-runtime-deps:windows
+      - name: Record actual packaged Electron version
+        run: node apps/desktop/scripts/inspect-electron-runtime.mjs --executable apps/desktop/release/win-unpacked/agent.exe --output apps/desktop/release/electron-runtime.json
       - name: Start packaged EXE and verify vision through the real UI
         env:
           PI_APP_TEST_PACKAGED_VISION: '1'
+          PI_APP_TEST_PACKAGED_NATIVE_VISION: '1'
           PI_APP_TEST_MODE: background
-        run: pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts --output=vision-results/packaged
+        run: |
+          pnpm exec playwright test -c apps/desktop/playwright.config.ts apps/desktop/tests/production/vision-routing-packaged.spec.ts apps/desktop/tests/production/vision-native-packaged.spec.ts --output=vision-results/packaged 2>&1 | Tee-Object -FilePath vision-results/packaged.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save feature verification artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -55,6 +60,7 @@ jobs:
             vision-results/
             apps/desktop/release/*-x64-setup.exe
             apps/desktop/release/*-x64-portable.exe
+            apps/desktop/release/electron-runtime.json
           if-no-files-found: warn
           retention-days: 14
           compression-level: 0

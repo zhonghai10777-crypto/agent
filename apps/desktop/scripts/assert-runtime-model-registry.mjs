@@ -1,6 +1,11 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-const runtime = await ModelRuntime.create({ modelsPath: null });
+// This checks the shipped catalog, without user credentials or model refreshes.
+const verificationDir = mkdtempSync(join(tmpdir(), "agent-model-registry-"));
+const runtime = await ModelRuntime.create({ modelsPath: null, authPath: join(verificationDir, "auth.json"), allowModelNetwork: false, refreshOnCreate: false });
 const models = runtime.getModels();
 const modelChecks = [
   ...["luna", "sol", "terra"].map((variant) => ({
