@@ -34,6 +34,7 @@ import type { SettingsSection } from "../settings-view";
 import { useMentionMenu } from "./use-mention-menu";
 import { useSlashMenu } from "./use-slash-menu";
 import { resolveRepoWorkspaceId } from "../workspace-roots";
+import { assertImageAttachments } from "@pi-gui/session-driver/image-budget";
 
 interface UseNewThreadControllerParams {
   readonly api: PiDesktopApi | undefined;
@@ -67,6 +68,8 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
   const [environment, setEnvironment] = useState<NewThreadEnvironment>("local");
   const [prompt, setPrompt] = useState("");
   const [attachments, setAttachments] = useState<readonly ComposerAttachment[]>([]);
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const [provider, setProvider] = useState<string | undefined>();
   const [modelId, setModelId] = useState<string | undefined>();
   const [thinkingLevel, setThinkingLevel] = useState<string | undefined>();
@@ -99,22 +102,26 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
     setPrompt(value);
   }, []);
 
+  const attachmentError = useCallback((error: unknown) => setComposerError(error instanceof Error ? error.message : String(error)), []);
+  const appendAttachments = useCallback((added: readonly ComposerAttachment[]) => {
+    try {
+      const next = [...attachmentsRef.current, ...added];
+      assertImageAttachments(next);
+      attachmentsRef.current = next;
+      setAttachments(next);
+    } catch (error) { attachmentError(error); }
+  }, [attachmentError]);
   const addAttachments = useCallback((files: File[]) => {
-    void readComposerAttachmentsFromFiles(files).then((added) => {
-      if (added.length === 0) {
-        return;
-      }
-      setAttachments((current) => [...current, ...added]);
-    });
-  }, []);
+    void readComposerAttachmentsFromFiles(files, attachmentsRef.current).then(appendAttachments).catch(attachmentError);
+  }, [appendAttachments, attachmentError]);
 
   const removeAttachment = useCallback((attachmentId: string) => {
     setAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
   }, []);
 
   const appendAttachment = useCallback((attachment: ComposerAttachment) => {
-    setAttachments((current) => [...current, attachment]);
-  }, []);
+    appendAttachments([attachment]);
+  }, [appendAttachments]);
 
   const resetSurface = useCallback(
     (workspaceId?: string) => {
@@ -296,7 +303,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
 
   const handleComposerKeyDown = useCallback(
     (event: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (handleClipboardImageShortcut(event, api?.readClipboardImage, appendAttachment)) {
+      if (handleClipboardImageShortcut(event, api?.readClipboardImage, appendAttachment, attachmentError)) {
         return;
       }
 

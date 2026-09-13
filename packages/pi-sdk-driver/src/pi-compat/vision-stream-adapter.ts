@@ -14,7 +14,35 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
   const original = agent.streamFunction;
   const lifetime = new AbortController();
   const wrapper: Stream = (model, context, options) => {
-    if (model.input.includes("image")) return original(model, context, options);
+    if (model.input.includes("image")) {
+      try {
+        assertVisionActive(lifetime.signal);
+        assertVisionActive(options?.signal);
+        router.assertInputBudget(context, binding);
+        return original(model, context, {
+          ...options,
+          onPayload: async (payload, requestModel) => {
+            await binding.beforeRequest?.();
+            const transformed = await options?.onPayload?.(payload, requestModel);
+            const final = transformed === undefined ? payload : transformed;
+            assertVisionActive(lifetime.signal);
+            assertVisionActive(options?.signal);
+            router.assertPayloadBudget(final, binding);
+            return final;
+          },
+        });
+      } catch (error) {
+        const stream = createAssistantMessageEventStream();
+        const reason = error instanceof VisionError && error.code === "VISION_CANCELLED" ? "aborted" : "error";
+        const message: AssistantMessage = {
+          role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id,
+          stopReason: reason, errorMessage: error instanceof Error ? error.message : "Image input was rejected.", timestamp: Date.now(),
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+        };
+        stream.push({ type: "error", reason, error: message });
+        return stream;
+      }
+    }
     const output = createAssistantMessageEventStream();
     const generation = router.currentGeneration(binding.ref);
     const controller = new AbortController();
@@ -43,6 +71,7 @@ export function installVisionStreamAdapter(session: Pick<AgentSession, "agent">,
             const final = transformed === undefined ? payload : transformed;
             assertCurrent();
             assertTextOnlyPayload(final);
+            router.assertPayloadBudget(final, binding);
             return final;
           },
         };

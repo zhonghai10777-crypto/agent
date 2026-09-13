@@ -2,17 +2,21 @@
 
 import type { KeyboardEvent } from "react";
 import type { ComposerAttachment, ComposerFileAttachment, ComposerImageAttachment } from "./desktop-state";
+import { assertImageSizes, assertImageMetadata, base64ImageSize } from "@pi-gui/session-driver/image-budget";
 
 export function handleClipboardImageShortcut(
   event: KeyboardEvent<HTMLTextAreaElement>,
   readClipboardImage: (() => ComposerImageAttachment | null) | undefined,
   onImage: (attachment: ComposerImageAttachment) => void,
+  onError?: (error: unknown) => void,
 ): boolean {
   if (!(event.metaKey || event.ctrlKey) || event.shiftKey || event.key.toLowerCase() !== "v") {
     return false;
   }
 
-  const clipboardImage = readClipboardImage?.();
+  let clipboardImage: ComposerImageAttachment | null | undefined;
+  try { clipboardImage = readClipboardImage?.(); }
+  catch (error) { event.preventDefault(); onError?.(error); return true; }
   if (!clipboardImage) {
     return false;
   }
@@ -119,9 +123,19 @@ export function extractFilesFromDataTransfer(dataTransfer: DataTransfer | null |
   return dedupeFiles([...itemFiles, ...transferFiles]);
 }
 
-export async function readComposerAttachmentsFromFiles(files: readonly File[]): Promise<ComposerAttachment[]> {
-  const attachments = await Promise.all(dedupeFiles(files).map(readComposerAttachmentFromFile));
-  return attachments.filter((attachment): attachment is ComposerAttachment => Boolean(attachment));
+export async function readComposerAttachmentsFromFiles(files: readonly File[], existing: readonly ComposerAttachment[] = []): Promise<ComposerAttachment[]> {
+  const unique = dedupeFiles(files);
+  assertImageSizes([
+    ...existing.flatMap((item) => item.kind === "image" ? [base64ImageSize(item.data)] : []),
+    ...unique.filter(isImageFile).map((file) => file.size),
+  ]);
+  const attachments: ComposerAttachment[] = [];
+  // Bound peak buffers and reject sizes before reading or Base64 conversion.
+  for (const file of unique) {
+    const attachment = await readComposerAttachmentFromFile(file);
+    if (attachment) attachments.push(attachment);
+  }
+  return attachments;
 }
 
 async function readComposerAttachmentFromFile(file: File): Promise<ComposerAttachment | null> {
@@ -132,8 +146,9 @@ async function readComposerAttachmentFromFile(file: File): Promise<ComposerAttac
   return readFileAttachmentFromFile(file as FileWithPath);
 }
 
-function readImageAttachmentFromFile(file: File): Promise<ComposerImageAttachment | null> {
-  return new Promise((resolve) => {
+async function readImageAttachmentFromFile(file: File): Promise<ComposerImageAttachment> {
+  assertImageMetadata(new Uint8Array(await file.arrayBuffer()), inferImageMimeType(file) ?? "image/png");
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
@@ -146,7 +161,7 @@ function readImageAttachmentFromFile(file: File): Promise<ComposerImageAttachmen
         data: dataUrl.slice(commaIndex + 1),
       });
     };
-    reader.onerror = () => resolve(null);
+    reader.onerror = () => reject(new Error(`Could not read image: ${file.name}`));
     reader.readAsDataURL(file);
   });
 }

@@ -18,6 +18,10 @@
       "types": "./dist/vision-types.d.ts",
       "default": "./dist/vision-types.js"
     },
+    "./image-budget": {
+      "types": "./dist/image-budget.d.ts",
+      "default": "./dist/image-budget.js"
+    },
     "./runtime-types": {
       "types": "./dist/runtime-types.d.ts",
       "default": "./dist/runtime-types.js"

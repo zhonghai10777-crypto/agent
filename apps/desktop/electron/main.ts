@@ -18,12 +18,13 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { SecureAuthStorageBackend } from "./secure-auth-backend";
 import { VisionService } from "./vision-service";
 import { VISION_MODEL_ID } from "@pi-gui/session-driver/vision-types";
+import { assertImageAttachments, assertImageDimensions, assertImageMetadata, assertImageSizes, base64ImageSize } from "@pi-gui/session-driver/image-budget";
 import { createImageInspectionRuntimeExtension } from "./image-inspection-runtime";
 import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
 import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { lstat, readFile, stat } from "node:fs/promises";
+import { lstat, open, readFile, stat } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -368,8 +369,6 @@ function createTestExtensionContext(sessionRef: SessionRef): ExtensionContext {
 const OPEN_FOLDER_MENU_ITEM_ID = "file.open-folder";
 const CHECK_FOR_UPDATES_MENU_ITEM_ID = "app.check-for-updates";
 const QUIT_FLUSH_TIMEOUT_MS = 5_000;
-const MAX_CLIPBOARD_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_CLIPBOARD_IMAGE_DIMENSION = 8_192;
 
 async function getTerminalService(): Promise<TerminalService> {
   if (terminalService) {
@@ -445,14 +444,10 @@ function readClipboardImageAttachment(): ComposerImageAttachment | null {
   }
 
   const size = image.getSize();
-  if (size.width > MAX_CLIPBOARD_IMAGE_DIMENSION || size.height > MAX_CLIPBOARD_IMAGE_DIMENSION) {
-    return null;
-  }
+  assertImageDimensions(size.width, size.height);
 
   const png = image.toPNG();
-  if (png.length === 0 || png.length > MAX_CLIPBOARD_IMAGE_BYTES) {
-    return null;
-  }
+  assertImageSizes([png.length]);
 
   return {
     id: randomUUID(),
@@ -531,10 +526,16 @@ function createWindow(): BrowserWindow {
     }
 
     if (platformModifier && !input.shift && lowerKey === "v") {
-      const clipboardImage = readClipboardImageAttachment();
-      if (clipboardImage) {
+      try {
+        const clipboardImage = readClipboardImageAttachment();
+        if (clipboardImage) {
+          event.preventDefault();
+          window.webContents.send(desktopIpc.clipboardImagePasted, clipboardImage);
+          return;
+        }
+      } catch (error) {
         event.preventDefault();
-        window.webContents.send(desktopIpc.clipboardImagePasted, clipboardImage);
+        void runWindowScopedForWindow(window, () => store.withError(error));
         return;
       }
     }
@@ -1879,29 +1880,38 @@ app.whenReady().then(async () => {
     if (result.canceled || result.filePaths.length === 0) {
       return stateForWindow(window);
     }
-    // Per-file tolerance: a single unreadable path used to reject the whole
-    // Promise.all and silently drop every other file the user picked.
-    const settled = await Promise.allSettled(result.filePaths.map(readComposerAttachment));
-    const attachments = settled.flatMap((outcome) => {
-      if (outcome.status === "fulfilled") {
-        return [outcome.value];
-      }
-      console.error("Failed to attach file", outcome.reason);
-      return [];
-    });
-    if (attachments.length === 0) {
-      return stateForWindow(window);
+    const files: string[] = [];
+    const sizes = (await stateForWindow(window)).composerAttachments.flatMap((item) => item.kind === "image" ? [base64ImageSize(item.data)] : []);
+    const errors: string[] = [];
+    // Stat all selected images before allocating buffers; retain per-file I/O tolerance.
+    for (const file of result.filePaths) {
+      try {
+        if (mimeTypeForPath(file).startsWith("image/")) sizes.push((await stat(file)).size);
+        files.push(file);
+      } catch (error) { errors.push(String(error)); }
+    }
+    try { assertImageSizes(sizes); }
+    catch (error) { return runWindowScopedForWindow(window, () => store.withError(error)); }
+    const attachments: ComposerAttachment[] = [];
+    for (const file of files) {
+      try { attachments.push(await readComposerAttachment(file)); }
+      catch (error) { errors.push(String(error)); }
     }
     const enriched = await withExtractionMetadata(attachments);
-    return runWindowScopedForWindow(window, () => store.addComposerAttachments(enriched));
+    return runWindowScopedForWindow(window, async () => {
+      const state = await store.addComposerAttachments(enriched);
+      return errors.length ? store.withError(errors.join("\n")) : state;
+    });
   });
   ipcMain.on(desktopIpc.readClipboardImage, (event) => {
-    event.returnValue = readClipboardImageAttachment();
+    try { event.returnValue = readClipboardImageAttachment(); }
+    catch (error) { event.returnValue = { error: error instanceof Error ? error.message : String(error) }; }
   });
   ipcMain.on(desktopIpc.readClipboardText, (event) => {
     event.returnValue = clipboard.readText();
   });
   ipcMain.handle(desktopIpc.addComposerAttachments, async (event, attachments: readonly ComposerAttachment[]) => {
+    assertImageAttachments(attachments);
     const validated = attachments.flatMap(validateComposerAttachmentPayload);
     const enriched = await withExtractionMetadata(validated);
     return runWindowScopedForEvent(event, () => store.addComposerAttachments(enriched));
@@ -2121,7 +2131,23 @@ async function readComposerAttachment(filePath: string): Promise<ComposerAttachm
 }
 
 async function readComposerImageAttachment(filePath: string, mimeType: string): Promise<ComposerImageAttachment> {
-  const buffer = await readFile(filePath);
+  const handle = await open(filePath, "r");
+  let buffer: Buffer;
+  try {
+    const info = await handle.stat();
+    assertImageSizes([info.size]);
+    if (!info.isFile()) throw new Error("The image is not a regular file.");
+    buffer = Buffer.alloc(info.size);
+    let offset = 0;
+    while (offset < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, offset, Math.min(64 * 1024, buffer.length - offset), offset);
+      if (!bytesRead) throw new Error("The image changed while reading. Select it again.");
+      offset += bytesRead;
+    }
+    const after = await handle.stat();
+    if (after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new Error("The image changed while reading. Select it again.");
+  } finally { await handle.close(); }
+  assertImageMetadata(buffer, mimeType);
   return {
     id: randomUUID(),
     kind: "image",

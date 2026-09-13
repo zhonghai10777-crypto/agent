@@ -61,9 +61,9 @@ export class CustomProviderStore {
   async migrateImageCapabilities(): Promise<void> {
     await this.enqueue(async () => {
       const data = await readModelsJson(this.modelsJsonPath);
-      if (!data.providers || typeof data.providers !== "object") return;
+      const providers = ensureProvidersRecord(data);
       let changed = false;
-      for (const [providerId, raw] of Object.entries(data.providers)) {
+      for (const [providerId, raw] of Object.entries(providers)) {
         if (!raw || typeof raw !== "object") continue;
         const config = raw as Record<string, unknown>;
         if (!isPiGuiCustomProviderConfig(providerId, config) || typeof config.baseUrl !== "string" || !Array.isArray(config.models)) continue;
@@ -74,6 +74,25 @@ export class CustomProviderStore {
             model.input = input;
             changed = true;
           }
+        }
+      }
+      // Pi 0.84.4's built-in V4 Flash catalog predates native vision. Use Pi's
+      // supported models.json override, retaining explicit user capabilities and
+      // endpoint overrides. The selected model ID and credentials never change.
+      const raw = providers.deepseek;
+      if (raw === undefined || raw && typeof raw === "object" && !Array.isArray(raw)) {
+        const config = (raw ?? {}) as Record<string, unknown>;
+        const overrides = (config.modelOverrides ?? {}) as Record<string, Record<string, unknown>>;
+        const id = "deepseek-v4-flash";
+        const model = Array.isArray(config.models) ? config.models.find((entry) => entry?.id === id) : undefined;
+        const override = overrides[id];
+        const endpoint = model?.baseUrl ?? override?.baseUrl ?? config.baseUrl ?? "https://api.deepseek.com";
+        const api = model?.api ?? override?.api ?? config.api ?? OPENAI_COMPLETIONS_API;
+        if (overrides && typeof overrides === "object" && !Array.isArray(overrides) &&
+            model?.input === undefined && override?.input === undefined && api === OPENAI_COMPLETIONS_API &&
+            typeof endpoint === "string" && defaultCustomModelInput(endpoint, id).includes("image")) {
+          providers.deepseek = { ...config, modelOverrides: { ...overrides, [id]: { ...override, input: ["text", "image"] } } };
+          changed = true;
         }
       }
       if (changed) await writeJsonFileAtomic(this.modelsJsonPath, data, { backup: true });

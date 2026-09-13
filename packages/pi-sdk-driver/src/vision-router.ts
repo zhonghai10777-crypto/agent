@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { SessionRef } from "@pi-gui/session-driver";
+import { assertImageMetadata, assertImageSizes, base64ImageSize } from "@pi-gui/session-driver/image-budget";
 import {
   VISION_MODEL_ID,
   type InspectImagesInput,
@@ -94,9 +95,7 @@ export function visionHash(data: string | Uint8Array): string {
 }
 
 export function imageBytes(image: Pick<VisionImageContent, "data">, maxBytes = 10 * 1024 * 1024): Buffer {
-  if (!image.data || image.data.length > Math.ceil(maxBytes / 3) * 4 + 4 || image.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(image.data)) {
-    throw new VisionError("VISION_IMAGE_INVALID", "The image data is invalid or exceeds the image size limit.");
-  }
+  try { base64ImageSize(image.data, maxBytes); } catch (error) { throw asVisionError(error); }
   const bytes = Buffer.from(image.data, "base64");
   if (!bytes.length || bytes.length > maxBytes || bytes.toString("base64") !== image.data) throw new VisionError("VISION_IMAGE_LIMIT", "The image exceeds the size limit or is not valid Base64.");
   return bytes;
@@ -216,13 +215,59 @@ export class VisionRouter {
     return current.operations.at(-1);
   }
 
-  async project(model: VisionModel<VisionApi>, context: VisionContext, binding: VisionSessionBinding, signal?: AbortSignal): Promise<VisionContext> {
-    assertVisionActive(signal);
-    if (model.input.includes("image")) return context;
+  assertInputBudget(context: VisionContext, binding: VisionSessionBinding): void {
     if (!binding.imagesAllowed() && context.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "text" && part.text === "Image reading is disabled."))) {
       // Pi applies this global policy in convertToLlm, before streamFunction.
       throw new VisionError("VISION_DISABLED", "Image reading is disabled in the runtime settings.");
     }
+    const settings = this.services.getSettings();
+    try {
+      for (const message of context.messages) {
+        const images = Array.isArray(message.content) ? message.content.filter((part) => part.type === "image") : [];
+        if (images.length && !binding.imagesAllowed()) throw new VisionError("VISION_DISABLED", "Image reading is disabled in the runtime settings.");
+        assertImageSizes(images.map((image) => base64ImageSize(image.data, settings.maxImageBytes)), settings);
+        for (const image of images) assertImageMetadata(imageBytes(image, settings.maxImageBytes), image.mimeType, settings);
+      }
+    } catch (error) { throw asVisionError(error); }
+  }
+
+  assertPayloadBudget(payload: unknown, binding: VisionSessionBinding): void {
+    const settings = this.services.getSettings();
+    const limit = settings.maxRequestBodyBytes;
+    if (Buffer.byteLength(JSON.stringify(payload), "utf8") > limit) throw new VisionError("VISION_PAYLOAD", `The complete request, including history and image encoding, exceeds ${limit / 1024 / 1024} MiB. Use smaller images or start a new conversation.`);
+    // Inspect only protocol content blocks, not arbitrary tool arguments. Each
+    // serializer retains its own protocol; the common check measures its output.
+    const root = payload as Record<string, any> | undefined;
+    const messages = root?.messages ?? root?.input ?? root?.contents;
+    if (!Array.isArray(messages)) return;
+    try {
+      for (const message of messages) {
+        const blocks = message?.content ?? message?.parts ?? [message];
+        if (!Array.isArray(blocks)) continue;
+        const images = blocks.filter((block) => block && (["image", "image_url", "input_image"].includes(block.type) || block.inlineData || block.inline_data));
+        if (images.length && !binding.imagesAllowed()) throw new VisionError("VISION_DISABLED", "Image reading is disabled in the runtime settings.");
+        assertImageSizes(images.map((block) => {
+          const url = block.image_url?.url ?? block.image_url;
+          const data = block.source?.data ?? block.inlineData?.data ?? block.inline_data?.data ?? block.data ??
+            (typeof url === "string" && url.startsWith("data:") ? url.slice(url.indexOf(",") + 1) : undefined);
+          // Remote references add no local image bytes, but do count as images.
+          return typeof data === "string" ? base64ImageSize(data, settings.maxImageBytes) : 1;
+        }), settings);
+      }
+    } catch (error) { throw asVisionError(error); }
+    if (!binding.imagesAllowed()) assertTextOnlyPayload(payload);
+  }
+
+  canAcceptImageInput(model: VisionModel<VisionApi>): boolean {
+    if (!shouldRouteVision(model)) return false;
+    if (!this.services.getSettings().enabled) throw new VisionError("VISION_DISABLED", "Enable automatic image analysis in Settings or choose an image-capable model. Your attachments have been retained.");
+    return true;
+  }
+
+  async project(model: VisionModel<VisionApi>, context: VisionContext, binding: VisionSessionBinding, signal?: AbortSignal): Promise<VisionContext> {
+    assertVisionActive(signal);
+    this.assertInputBudget(context, binding);
+    if (model.input.includes("image")) return context;
     const hasImages = context.messages.some((message) => Array.isArray(message.content) && message.content.some((part) => part.type === "image"));
     if (!hasImages) {
       assertTextOnlyPayload(context);
@@ -593,10 +638,8 @@ function locateImages(context: VisionContext, entries: readonly VisionSourceEntr
     if ((message.role !== "user" && message.role !== "toolResult") || !Array.isArray(message.content)) return;
     const images = message.content.filter((part) => part.type === "image");
     if (!images.length) return;
-    if (images.length > settings.maxImagesPerMessage) throw new VisionError("VISION_IMAGE_LIMIT", "A message can contain at most eight images.");
     const entry = bySignature.get(visionMessageSignature(message))?.shift();
     if (!entry) throw new VisionError("VISION_UNAUTHORIZED_IMAGE", "The image is not bound to an original message in this session branch.");
-    let total = 0;
     let imageIndex = 0;
     const latestQuestion = context.messages.slice(0, messageIndex + 1).reverse().find((item) => item.role === "user");
     const question = textOf(latestQuestion).replace(/^<pi-gui-file-attachments>[\s\S]*?<\/pi-gui-file-attachments>\n?/, "").slice(0, 16_384);
@@ -605,8 +648,6 @@ function locateImages(context: VisionContext, entries: readonly VisionSourceEntr
     message.content.forEach((part, contentIndex) => {
       if (part.type !== "image") return;
       const bytes = imageBytes(part, settings.maxImageBytes);
-      total += bytes.length;
-      if (total > settings.maxMessageImageBytes) throw new VisionError("VISION_IMAGE_LIMIT", "The total image size in this message is too large.");
       sources.push({ messageIndex, contentIndex, entryId: entry.id, imageIndex: imageIndex++, image: part, hash: visionHash(bytes), question, contextText });
     });
   });

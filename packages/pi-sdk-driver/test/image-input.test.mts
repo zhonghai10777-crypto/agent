@@ -4,7 +4,7 @@ import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { ImageInputDisabledError, prepareSessionImageInput } from "../dist/image-input.js";
 import { shouldRouteVision } from "../dist/vision-router.js";
 
-const screenshot = [{ kind: "image" as const, mimeType: "image/png", data: "synthetic-image" }];
+const screenshot = [{ kind: "image" as const, mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jmioAAAAASUVORK5CYII=" }];
 
 function fixture(input: ("text" | "image")[], latestInput: ("text" | "image")[]) {
   const original = { provider: "custom", id: "vision", input, contextWindow: 64000 };
@@ -12,6 +12,7 @@ function fixture(input: ("text" | "image")[], latestInput: ("text" | "image")[])
   const state = { streaming: false };
   const session = {
     agent,
+    settingsManager: { getBlockImages: () => false },
     get model() { return agent.state.model; },
     get isStreaming() { return state.streaming; },
     modelRuntime: { getModel: () => ({ ...original, input: latestInput, contextWindow: 99999 }) },

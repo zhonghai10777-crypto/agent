@@ -1,5 +1,8 @@
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { SessionAttachment } from "@pi-gui/session-driver";
+import { assertImageAttachments, assertImageMetadata } from "@pi-gui/session-driver/image-budget";
+import { VisionError } from "./vision-errors.js";
+import { imageBytes } from "./vision-router.js";
 
 export class ImageInputDisabledError extends Error {
   readonly code = "IMAGE_INPUT_DISABLED";
@@ -24,6 +27,10 @@ export function prepareSessionImageInput(
   attachments?: readonly SessionAttachment[],
   canRouteImages?: (model: NonNullable<AgentSession["model"]>) => boolean,
 ): void {
+  assertImageAttachments(attachments ?? []);
+  const images = attachments?.filter((attachment) => attachment.kind === "image") ?? [];
+  if (images.length && session.settingsManager.getBlockImages()) throw new VisionError("VISION_DISABLED", "Image reading is disabled in the runtime settings. Your attachments have been retained.");
+  for (const image of images) assertImageMetadata(imageBytes(image), image.mimeType);
   let model = session.model;
   if (!model) return;
   const selectedInput = model.input;

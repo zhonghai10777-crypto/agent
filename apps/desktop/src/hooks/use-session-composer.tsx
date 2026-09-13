@@ -61,6 +61,7 @@ export function useSessionComposer(params: UseSessionComposerParams) {
   const [attachmentsClearedOnSubmit, setAttachmentsClearedOnSubmit] = useState(false);
   const submitting = useRef(new Set<string>());
   const composerAttachments = attachmentsClearedOnSubmit ? [] : (snapshot?.composerAttachments ?? []);
+  const attachmentError = (error: unknown) => setSnapshot((current) => current ? { ...current, lastError: error instanceof Error ? error.message : String(error) } : current);
 
   const submitComposerDraft = (options: { readonly deliverAs?: "steer" | "followUp" } = {}) => {
     if (!api || !selectedSession) {
@@ -189,11 +190,12 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     if (!api) {
       return;
     }
-    const valid = await readComposerAttachmentsFromFiles(files);
-    if (valid.length === 0) {
-      return;
+    try {
+      const valid = await readComposerAttachmentsFromFiles(files, composerAttachments);
+      if (valid.length) await updateSnapshot(api, setSnapshot, () => api.addComposerAttachments(valid));
+    } catch (error) {
+      attachmentError(error);
     }
-    void updateSnapshot(api, setSnapshot, () => api.addComposerAttachments(valid));
   }
 
   const handleComposerPaste = (event: ClipboardEvent<HTMLDivElement>) => {
@@ -229,7 +231,7 @@ export function useSessionComposer(params: UseSessionComposerParams) {
         return;
       }
       void updateSnapshot(api, setSnapshot, () => api.addComposerAttachments([clipboardImage]));
-    })) {
+    }, attachmentError)) {
       return;
     }
 
