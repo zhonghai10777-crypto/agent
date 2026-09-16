@@ -208,6 +208,7 @@ const zhMessages: Record<MessageKey, string> = {
   "newThread.openFolderToBeginBody": "先从侧边栏选择一个文件夹，然后开始新的对话。",
 
   /* ── Conversation / timeline ─────────────────────── */
+  "timeline.paneLabel": "对话记录",
   "timeline.newActivityBelow": "下方有新活动",
   "timeline.runRetrying": "连接出错，正在自动重试…",
   "timeline.promptsInThread": "此对话中的提问",

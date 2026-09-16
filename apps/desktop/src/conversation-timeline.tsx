@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type MutableRefObject, type RefCallback, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MutableRefObject, type RefCallback, type RefObject } from "react";
 import type { TranscriptMessage } from "./desktop-state";
 import type { DisplayTimelineItem } from "./timeline-types";
 import { buildDisplayTimelineItems } from "./timeline-turns";
@@ -11,6 +11,7 @@ const OVERSCAN_PX = 720;
 const ROW_GAP_PX = 14;
 const SCROLL_TO_PADDING_PX = 16;
 export const VIRTUALIZATION_THRESHOLD = 80;
+const TIMELINE_SCROLL_KEYS = new Set(["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "]);
 
 interface ThreadSearchModel {
   readonly isOpen: boolean;
@@ -231,14 +232,27 @@ export function ConversationTimeline({
     };
   }, [onTimelineScroll, timelinePaneRef]);
 
+  // Register scroll intent for the keys that actually move a focused, scrollable
+  // element — without this, keyboard-only scrolling (PageUp/PageDown/Home/End/arrows/
+  // Space) looked like unintentional layout drift to the bottom-pinning engine and got
+  // snapped back to the bottom mid-scroll.
+  const handleTimelinePaneKeyDown = useCallback((event: KeyboardEvent<HTMLDivElement>) => {
+    if (TIMELINE_SCROLL_KEYS.has(event.key)) {
+      onTimelineScrollIntent?.();
+    }
+  }, [onTimelineScrollIntent]);
+
   return (
     <div className="timeline-surface">
     <div
       className="timeline-pane timeline-pane--thread"
       data-testid="timeline-pane"
       ref={assignTimelinePaneRef}
+      tabIndex={0}
+      aria-label={t("timeline.paneLabel")}
       onPointerDown={onTimelineScrollIntent}
       onWheel={onTimelineScrollIntent}
+      onKeyDown={handleTimelinePaneKeyDown}
     >
       {threadSearch.isOpen ? (
         <ThreadSearchBar

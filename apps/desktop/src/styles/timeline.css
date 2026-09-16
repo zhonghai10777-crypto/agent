@@ -47,6 +47,15 @@
   scroll-behavior: auto;
 }
 
+/* The base [tabindex]:focus-visible rule (base.css) uses a box-shadow ring, but
+ * `overflow: auto` here clips a box-shadow at the scrollport edge, hiding it. An
+ * inset outline isn't subject to that clipping, so the pane gets its own rule. */
+.timeline-pane:focus-visible {
+  outline: 2px solid var(--focus-ring-color);
+  outline-offset: -2px;
+  box-shadow: none;
+}
+
 /* Row wrapper holding the scrolling transcript and the right context rail. It
  * takes over the vertical flex growth the pane used to own, so the pane keeps
  * its own bounded height + internal scroll while the rail sits beside it. */
