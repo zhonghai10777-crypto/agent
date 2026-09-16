@@ -45,6 +45,7 @@ import { useSlashMenu } from "./hooks/use-slash-menu";
 import { useMentionMenu } from "./hooks/use-mention-menu";
 import { useThreadSearch } from "./hooks/use-thread-search";
 import { useWorkspaceMenu } from "./hooks/use-workspace-menu";
+import { useNarrowLayout } from "./hooks/use-narrow-layout";
 import { useNewThreadController } from "./hooks/use-new-thread-controller";
 import { buildExtensionDockModel, ExtensionDialog, hasExtensionDockContent } from "./extension-session-ui";
 import { TreeModal } from "./tree-modal";
@@ -129,19 +130,35 @@ function AppShell({
   const [promptRailVisible, setPromptRailVisible] = useState(loadPromptRailVisible);
   const threadSearch = useThreadSearch(timelinePaneRef);
   const api = window.piApp;
+  const isNarrowLayout = useNarrowLayout();
+  // Narrow-window drawer open/closed is local, session-only UI state — it must never
+  // reach the persisted sidebarCollapsed preference, or widening the window back out
+  // would leave the sidebar permanently collapsed for the user.
+  const [narrowDrawerOpen, setNarrowDrawerOpen] = useState(false);
+  const wasNarrowLayoutRef = useRef(isNarrowLayout);
+  useEffect(() => {
+    if (isNarrowLayout && !wasNarrowLayoutRef.current) {
+      setNarrowDrawerOpen(false);
+    }
+    wasNarrowLayoutRef.current = isNarrowLayout;
+  }, [isNarrowLayout]);
+  const isSidebarVisible = isNarrowLayout ? narrowDrawerOpen : !snapshot?.sidebarCollapsed;
   const sidebarToggleStateRef = useRef<{
     readonly api: typeof window.piApp;
     readonly activeView: AppView | undefined;
     readonly sidebarCollapsed: boolean;
+    readonly isNarrowLayout: boolean;
   }>({
     api,
     activeView: undefined,
     sidebarCollapsed: false,
+    isNarrowLayout: false,
   });
   sidebarToggleStateRef.current = {
     api,
     activeView: snapshot?.activeView,
     sidebarCollapsed: snapshot?.sidebarCollapsed ?? false,
+    isNarrowLayout,
   };
 
   useEffect(() => {
@@ -539,8 +556,15 @@ function AppShell({
   const primarySidebarToggleVisible = canTogglePrimarySidebar(snapshot?.activeView);
   const handleTogglePrimarySidebar = useCallback(() => {
     const sidebarState = sidebarToggleStateRef.current;
+    if (!canTogglePrimarySidebar(sidebarState.activeView)) {
+      return false;
+    }
+    if (sidebarState.isNarrowLayout) {
+      setNarrowDrawerOpen((current) => !current);
+      return true;
+    }
     const sidebarApi = sidebarState.api;
-    if (!sidebarApi || !canTogglePrimarySidebar(sidebarState.activeView)) {
+    if (!sidebarApi) {
       return false;
     }
     void updateSnapshot(sidebarApi, setSnapshot, () => sidebarApi.setSidebarCollapsed(!sidebarState.sidebarCollapsed));
@@ -618,21 +642,28 @@ function AppShell({
         toggleChangesPanel();
         return;
       }
-      // Escape backs out of a secondary surface (settings/skills/extensions) once no dialog
-      // claims it — either a true aria-modal dialog, or a page-level dialog that already
-      // handled Escape itself (and called preventDefault) without being aria-modal.
-      if (
-        event.key === "Escape" &&
-        !event.defaultPrevented &&
-        !hasOpenModalDialog() &&
-        api &&
-        (snapshot?.activeView === "settings" ||
-          snapshot?.activeView === "skills" ||
-          snapshot?.activeView === "extensions")
-      ) {
-        event.preventDefault();
-        void updateSnapshot(api, setSnapshot, () => api.setActiveView("threads"));
-        return;
+      // Escape priority: a modal dialog (checked above via hasOpenModalDialog) wins first,
+      // then the narrow-window sidebar drawer, then a secondary surface.
+      if (event.key === "Escape" && !event.defaultPrevented && !hasOpenModalDialog()) {
+        if (isNarrowLayout && narrowDrawerOpen) {
+          event.preventDefault();
+          setNarrowDrawerOpen(false);
+          return;
+        }
+
+        // Backs out of a secondary surface (settings/skills/extensions) once no dialog
+        // claims it — either a true aria-modal dialog, or a page-level dialog that already
+        // handled Escape itself (and called preventDefault) without being aria-modal.
+        if (
+          api &&
+          (snapshot?.activeView === "settings" ||
+            snapshot?.activeView === "skills" ||
+            snapshot?.activeView === "extensions")
+        ) {
+          event.preventDefault();
+          void updateSnapshot(api, setSnapshot, () => api.setActiveView("threads"));
+          return;
+        }
       }
       const command = getDesktopCommandFromShortcut({
         modifier: event.metaKey || event.ctrlKey,
@@ -657,6 +688,8 @@ function AppShell({
     selectedWorkspace?.id,
     selectedWorkspace?.rootWorkspaceId,
     snapshot?.activeView,
+    isNarrowLayout,
+    narrowDrawerOpen,
     threadSearch,
     api,
     toggleChangesPanel,
@@ -819,6 +852,9 @@ function AppShell({
     saveCurrentTimelineScrollState();
     setOpenTerminalSessionKey("");
     setTakeoverTerminalSessionKey("");
+    if (isNarrowLayout) {
+      setNarrowDrawerOpen(false);
+    }
     void updateSnapshot(api, setSnapshot, () => api.selectSession(target)).then(() => {
       focusComposer();
     });
@@ -882,18 +918,31 @@ function AppShell({
     );
   }
 
-  const shellClassName = `shell${snapshot.sidebarCollapsed ? " shell--sidebar-collapsed" : ""}`;
+  // "Collapsed" here means "not currently shown" in either mode: the persisted wide-mode
+  // preference, or the narrow-mode drawer being closed. Reusing shell--sidebar-collapsed's
+  // existing grid/topbar-padding rules for both keeps the main content full-width whenever
+  // the sidebar isn't actually rendered, instead of leaving a column reserved for nothing.
+  const shellClassName = `shell${!isSidebarVisible ? " shell--sidebar-collapsed" : ""}${
+    isNarrowLayout && narrowDrawerOpen ? " shell--narrow-drawer-open" : ""
+  }`;
 
   return (
     <div className={shellClassName}>
       {primarySidebarToggleVisible ? (
         <SidebarToggleButton
-          collapsed={snapshot.sidebarCollapsed}
+          collapsed={!isSidebarVisible}
           shortcutLabel={sidebarToggleShortcutLabel}
           onToggle={handleTogglePrimarySidebar}
         />
       ) : null}
-      {!snapshot.sidebarCollapsed ? (
+      {isNarrowLayout && narrowDrawerOpen ? (
+        <div
+          className="shell__sidebar-backdrop"
+          data-testid="sidebar-drawer-backdrop"
+          onClick={() => setNarrowDrawerOpen(false)}
+        />
+      ) : null}
+      {isSidebarVisible ? (
         <Sidebar
           activeView={snapshot.activeView}
           agentFeaturesAvailable={snapshot.activeRuntimeMode === "agent"}
