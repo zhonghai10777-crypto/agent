@@ -67,9 +67,13 @@ export async function addComposerAttachments(
   const next = [...existing, ...attachments];
   try {
     assertImageAttachments(next);
-    await store.attachmentStore.write(key, cloneComposerAttachments(next));
   } catch (error) {
     return store.withSessionError(sessionRef, error);
+  }
+  try {
+    await store.attachmentStore.write(key, cloneComposerAttachments(next));
+  } catch (error) {
+    return store.withSessionError(sessionRef, describeAttachmentStorageError(error));
   }
   store.sessionState.sessionErrorsBySession.delete(key);
   store.sessionState.composerAttachmentsBySession.set(key, next);
@@ -81,6 +85,20 @@ export async function addComposerAttachments(
   };
   await store.persistUiState();
   return store.emit();
+}
+
+/**
+ * Replaces a filesystem permission/capacity failure with a localized, actionable
+ * message. Scoped to a narrow allow-list of unambiguous errno codes so it never
+ * recasts an unrelated failure as a storage problem; anything else passes through
+ * unchanged for `describeStoreError`'s raw-message fallback.
+ */
+function describeAttachmentStorageError(error: unknown): unknown {
+  const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+  if (code === "EACCES" || code === "EPERM" || code === "EROFS" || code === "ENOSPC") {
+    return new Error(tGlobal("composer.error.storageUnavailable"));
+  }
+  return error;
 }
 
 export async function removeComposerAttachment(

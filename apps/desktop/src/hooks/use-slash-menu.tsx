@@ -391,6 +391,10 @@ export function useSlashMenu(params: UseSlashMenuParams): SlashMenuState {
   };
 
   const handleSlashKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (event.nativeEvent.isComposing) {
+      return false;
+    }
+
     if ((showSlashMenu || showSlashOptionMenu) && event.key === "Escape") {
       event.preventDefault();
       resetSlashUi();

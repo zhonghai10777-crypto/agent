@@ -22,6 +22,7 @@ import { VisionUploadNotice } from "./vision-ui";
 interface ComposerPanelProps {
   readonly selectedSession: SessionRecord;
   readonly lastError?: string;
+  readonly onDismissError?: () => void;
   readonly runtime?: RuntimeSnapshot;
   readonly activeSlashCommand?: ComposerSlashCommand;
   readonly activeSlashCommandMeta?: string;
@@ -75,6 +76,7 @@ interface ComposerPanelProps {
 export function ComposerPanel({
   selectedSession,
   lastError,
+  onDismissError,
   runtime,
   activeSlashCommand,
   activeSlashCommandMeta,
@@ -136,6 +138,7 @@ export function ComposerPanel({
       <div className="conversation conversation--composer">
         <ComposerSurface
           lastError={lastError}
+          onDismissError={onDismissError}
           activeSlashCommand={activeSlashCommand}
           activeSlashCommandMeta={activeSlashCommandMeta}
           topNotice={(
