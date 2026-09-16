@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type Dispatch, type MouseEvent as ReactMou
 import type { DesktopAppState, WorkspaceRecord, WorktreeRecord } from "../desktop-state";
 import { useI18n } from "../i18n/I18nProvider";
 import type { PiDesktopApi } from "../ipc";
-import { PRODUCT } from "../product";
+import { workspaceDisplayName } from "../workspace-context";
 
 interface UseWorkspaceMenuParams {
   readonly api: PiDesktopApi | undefined;
@@ -33,6 +33,9 @@ export interface WorkspaceMenuState {
   readonly submitRename: (workspace: WorkspaceRecord) => void;
   readonly cancelRename: () => void;
   readonly removeWorkspace: (workspace: WorkspaceRecord) => void;
+  readonly pendingRemoveWorkspace: WorkspaceRecord | null;
+  readonly confirmRemoveWorkspace: () => void;
+  readonly cancelRemoveWorkspace: () => void;
   readonly toggleArchived: (workspaceId: string, open: boolean) => void;
   readonly toggleWorkspaceCollapsed: (workspaceId: string) => void;
   readonly expandWorkspace: (workspaceId: string) => void;
@@ -52,6 +55,7 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   const [expandedArchivedByWorkspace, setExpandedArchivedByWorkspace] = useState<Record<string, boolean>>({});
   const [collapsedWorkspaces, setCollapsedWorkspaces] = useState<Record<string, boolean>>({});
   const [environmentMenuOpen, setEnvironmentMenuOpen] = useState(false);
+  const [pendingRemoveWorkspace, setPendingRemoveWorkspace] = useState<WorkspaceRecord | null>(null);
 
   const workspaceMenuWrapRef = useRef<HTMLSpanElement | null>(null);
   const workspaceRenamePanelRef = useRef<HTMLFormElement | null>(null);
@@ -113,14 +117,15 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   const startRename = (workspace: WorkspaceRecord) => {
     setWorkspaceMenuId(null);
     setWorkspaceRenameId(workspace.id);
-    setWorkspaceRenameDraft(workspace.name);
+    setWorkspaceRenameDraft(workspaceDisplayName(workspace, t));
   };
 
   const submitRename = (workspace: WorkspaceRecord) => {
     const nextName = workspaceRenameDraft.trim();
+    const currentDisplayName = workspaceDisplayName(workspace, t);
     setWorkspaceMenuId(null);
     setWorkspaceRenameId(null);
-    if (!nextName || nextName === workspace.name) {
+    if (!nextName || nextName === currentDisplayName) {
       setWorkspaceRenameDraft("");
       return;
     }
@@ -137,13 +142,22 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
   };
 
   const removeWorkspace = (workspace: WorkspaceRecord) => {
-    const confirmed = window.confirm(t("sidebar.removeWorkspaceConfirm", { name: workspace.name, product: PRODUCT.name }));
     setWorkspaceMenuId(null);
     setWorkspaceRenameId(null);
-    if (!confirmed || !api) {
+    setPendingRemoveWorkspace(workspace);
+  };
+
+  const confirmRemoveWorkspace = () => {
+    const workspace = pendingRemoveWorkspace;
+    setPendingRemoveWorkspace(null);
+    if (!workspace || !api) {
       return;
     }
     void updateSnapshot(api, setSnapshot, () => api.removeWorkspace(workspace.id));
+  };
+
+  const cancelRemoveWorkspace = () => {
+    setPendingRemoveWorkspace(null);
   };
 
   const toggleArchived = (workspaceId: string, open: boolean) => {
@@ -220,6 +234,9 @@ export function useWorkspaceMenu(params: UseWorkspaceMenuParams): WorkspaceMenuS
     submitRename,
     cancelRename,
     removeWorkspace,
+    pendingRemoveWorkspace,
+    confirmRemoveWorkspace,
+    cancelRemoveWorkspace,
     toggleArchived,
     toggleWorkspaceCollapsed,
     expandWorkspace,

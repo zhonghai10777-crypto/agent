@@ -4,7 +4,29 @@ import {
   type WorkspaceRecord,
   type WorktreeRecord,
 } from "./desktop-state";
+import type { Translator } from "./i18n";
 import { resolveRepoWorkspaceId } from "./workspace-roots";
+
+/**
+ * The literal name the main process seeds the built-in personal workspace with
+ * (electron/app-store.ts). It's written once at first launch and never migrated
+ * on disk, so `workspaceDisplayName` below localizes it at render time instead —
+ * this constant is the anchor that lets us tell "still the untouched default"
+ * apart from "the user renamed it to this exact string, which we must respect".
+ */
+export const DEFAULT_PERSONAL_WORKSPACE_NAME = "个人空间";
+
+/**
+ * Renders a workspace's display name, localizing the built-in personal
+ * workspace's name if it's still at its untouched default. A user-renamed
+ * personal workspace (or any non-personal workspace) is returned as-is.
+ */
+export function workspaceDisplayName(workspace: Pick<WorkspaceRecord, "kind" | "name">, t: Translator): string {
+  if (workspace.kind === "personal" && workspace.name === DEFAULT_PERSONAL_WORKSPACE_NAME) {
+    return t("workspace.personal");
+  }
+  return workspace.name;
+}
 
 export interface WorkspaceContext {
   readonly selectedWorkspace: WorkspaceRecord | undefined;
