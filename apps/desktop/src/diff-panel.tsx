@@ -136,11 +136,11 @@ export function DiffPanel({
     setLoading(true);
     void Promise.all(
       refreshContexts.map(async (context) => {
-        const [workspaceFiles, changedFiles] = await Promise.all([
+        const [workspaceFileList, changedFiles] = await Promise.all([
           api.listWorkspaceFiles(context.workspace.id, { force: options.force ?? false }),
           api.getChangedFiles(context.workspace.id),
         ]);
-        return { workspaceId: context.workspace.id, workspaceFiles, changedFiles };
+        return { workspaceId: context.workspace.id, workspaceFiles: workspaceFileList.files, changedFiles };
       }),
     )
       .then((results) => {

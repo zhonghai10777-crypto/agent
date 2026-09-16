@@ -35,6 +35,9 @@ interface UseMentionMenuParams {
 export interface MentionMenuState {
   readonly showMentionMenu: boolean;
   readonly mentionOptions: readonly MentionOption[];
+  /** True when the underlying file scan hit a bound before finishing (see
+   * listWorkspaceFiles), so the menu can note the file list may be incomplete. */
+  readonly filesTruncated: boolean;
   readonly selectedIndex: number;
   readonly handleMentionKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean;
   readonly insertMention: (option: MentionOption) => void;
@@ -63,20 +66,78 @@ export function useMentionMenu({
   onEnableExtension,
 }: UseMentionMenuParams): MentionMenuState {
   const [allFiles, setAllFiles] = useState<readonly string[]>([]);
+  const [filesTruncated, setFilesTruncated] = useState(false);
   const [pendingEnablePaths, setPendingEnablePaths] = useState<ReadonlySet<string>>(() => new Set());
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [suppressed, setSuppressed] = useState(false);
   const composerDraftRef = useRef(composerDraft);
   composerDraftRef.current = composerDraft;
+  const lastFilesFetchAtRef = useRef(0);
 
-  // Fetch file list when workspace changes
+  // Re-fetches the workspace file list, throttled client-side so rapid focus/blur or
+  // repeated `@` queries within the same interaction don't hammer IPC. Deliberately
+  // shorter than the main process's own 30s cache TTL (app-store-files.ts): this only
+  // needs to absorb same-interaction jitter, not enforce staleness.
+  //
+  // `force` bypasses that main-process cache too. It defaults to false (cheap — a Map
+  // lookup) for the frequent, low-stakes focus trigger, matching the "don't re-scan a
+  // huge repo on every focus" goal. The query-start trigger below passes force:true:
+  // the mount-time fetch and this refresh both otherwise run through the same
+  // force:false cache, so a file created moments after the thread starts (the common
+  // case — an agent just wrote it) would silently see the mount snapshot for up to 30s
+  // without it. That's the one moment worth an actual re-scan: it's driven by the user
+  // starting a new "@" query, not by every keystroke, and `git ls-files` itself is fast.
+  const refreshFiles = useCallback((options?: { readonly force?: boolean }) => {
+    if (!api || !workspaceId) {
+      return;
+    }
+    const now = Date.now();
+    if (!options?.force && now - lastFilesFetchAtRef.current < 3_000) {
+      return;
+    }
+    lastFilesFetchAtRef.current = now;
+    void api
+      .listWorkspaceFiles(workspaceId, { force: options?.force ?? false })
+      .then((result) => {
+        setAllFiles(result.files);
+        setFilesTruncated(result.truncated);
+      })
+      .catch(() => undefined);
+  }, [api, workspaceId]);
+
+  // Fetch file list when workspace changes. Deliberately doesn't touch
+  // lastFilesFetchAtRef: this mount-time fetch and refreshFiles()'s throttle govern
+  // different things, so the first focus/query-start refresh after mount should still
+  // fire right away rather than being blocked by this unrelated initial fetch.
   useEffect(() => {
     if (!api || !workspaceId) {
       setAllFiles([]);
+      setFilesTruncated(false);
       return;
     }
-    void api.listWorkspaceFiles(workspaceId).then(setAllFiles).catch(() => setAllFiles([]));
+    void api
+      .listWorkspaceFiles(workspaceId, { force: false })
+      .then((result) => {
+        setAllFiles(result.files);
+        setFilesTruncated(result.truncated);
+      })
+      .catch(() => {
+        setAllFiles([]);
+        setFilesTruncated(false);
+      });
   }, [api, workspaceId]);
+
+  // Refresh (throttled) whenever the composer regains focus, so files created since the last
+  // fetch are pickable without waiting on the main process's 30s TTL to expire on its own.
+  useEffect(() => {
+    const textarea = composerRef.current;
+    if (!textarea) {
+      return undefined;
+    }
+    const handleFocus = () => refreshFiles();
+    textarea.addEventListener("focus", handleFocus);
+    return () => textarea.removeEventListener("focus", handleFocus);
+  }, [composerRef, refreshFiles]);
 
   // Reset suppression when draft changes
   useEffect(() => {
@@ -110,6 +171,16 @@ export function useMentionMenu({
     return extractMentionQuery(composerDraft);
   }, [composerDraft, suppressed]);
 
+  // Refresh (throttled) the moment a new "@" query starts, not on every keystroke of it.
+  const hadMentionMatchRef = useRef(false);
+  useEffect(() => {
+    const hasMatch = Boolean(mentionMatch);
+    if (hasMatch && !hadMentionMatchRef.current) {
+      refreshFiles({ force: true });
+    }
+    hadMentionMatchRef.current = hasMatch;
+  }, [mentionMatch, refreshFiles]);
+
   const mentionOptions = useMemo<MentionOption[]>(() => {
     if (!mentionMatch) {
       return [];
@@ -128,7 +199,11 @@ export function useMentionMenu({
     return [...extensionOptions, ...fileOptions];
   }, [allFiles, mentionMatch, pendingEnablePaths, runtime?.extensions]);
 
-  const showMentionMenu = mentionOptions.length > 0;
+  // Show the menu whenever a query is active, even with zero candidates — an empty
+  // dropdown with a "no matches" explanation beats silently showing nothing, which
+  // previously left users unable to tell "no matches" apart from "@ mentions are
+  // broken here" (e.g. in a non-git workspace before the listWorkspaceFiles fallback).
+  const showMentionMenu = Boolean(mentionMatch);
 
   // Reset selection when options change
   useEffect(() => {
@@ -226,14 +301,17 @@ export function useMentionMenu({
         return true;
       }
       if (event.key === "Tab" || event.key === "Enter") {
-        event.preventDefault();
+        // Only consume the key when there's an actual candidate to pick — in the empty
+        // state (no matches) it must fall through so Enter still sends the message.
         const selected = mentionOptions[selectedIndex];
-        if (selected) {
-          if (selected.kind === "extension" && !selected.enabled) {
-            enableMentionExtension(selected);
-          } else {
-            insertMention(selected);
-          }
+        if (!selected) {
+          return false;
+        }
+        event.preventDefault();
+        if (selected.kind === "extension" && !selected.enabled) {
+          enableMentionExtension(selected);
+        } else {
+          insertMention(selected);
         }
         return true;
       }
@@ -251,6 +329,7 @@ export function useMentionMenu({
   return {
     showMentionMenu,
     mentionOptions,
+    filesTruncated,
     selectedIndex,
     handleMentionKeyDown,
     insertMention,

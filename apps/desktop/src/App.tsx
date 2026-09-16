@@ -1001,6 +1001,7 @@ function AppShell({
               slashOptionEmptyState={newThread.slashMenu.slashOptionEmptyState}
               showMentionMenu={newThread.mentionMenu.showMentionMenu}
               mentionOptions={newThread.mentionMenu.mentionOptions}
+              mentionFilesTruncated={newThread.mentionMenu.filesTruncated}
               selectedMentionIndex={newThread.mentionMenu.selectedIndex}
               onChangePrompt={newThread.setPrompt}
               onSelectEnvironment={newThread.setEnvironment}
@@ -1138,6 +1139,7 @@ function AppShell({
               slashSections={slashMenu.slashSections}
               showMentionMenu={mentionMenu.showMentionMenu}
               mentionOptions={mentionMenu.mentionOptions}
+              mentionFilesTruncated={mentionMenu.filesTruncated}
               selectedMentionIndex={mentionMenu.selectedIndex}
               onSelectMention={mentionMenu.insertMention}
               onEnableMentionExtension={mentionMenu.enableMentionExtension}
