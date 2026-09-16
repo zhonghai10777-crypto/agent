@@ -211,6 +211,9 @@ export function useMentionMenu({
       if (!showMentionMenu) {
         return false;
       }
+      if (event.nativeEvent.isComposing) {
+        return false;
+      }
 
       if (event.key === "ArrowDown") {
         event.preventDefault();

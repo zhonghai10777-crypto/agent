@@ -1,5 +1,6 @@
 import type { SessionAttachmentExtraction } from "@pi-gui/session-driver";
-import type { MessageKey } from "./i18n";
+import { ImageBudgetError } from "@pi-gui/session-driver/image-budget";
+import type { MessageKey, Translator } from "./i18n";
 
 /**
  * Turns an extraction result into the line shown under an attachment chip.
@@ -57,4 +58,26 @@ export function attachmentExtractionLabel(
     return { key: "composer.attachment.chars", params: { count: extraction.chars }, failed: false };
   }
   return undefined;
+}
+
+/**
+ * Turns an attachment-add failure into localized, actionable text for the composer
+ * error banner. Known categories (image budget violations, an unreadable local
+ * file) get a translated message; anything else falls back to the raw error text
+ * so unmapped failures stay diagnosable instead of being silently generalized.
+ */
+export function describeComposerError(error: unknown, t: Translator): string {
+  if (error instanceof ImageBudgetError) {
+    if (error.code === "VISION_ANIMATED_IMAGE") {
+      return t("composer.error.imageAnimated");
+    }
+    if (error.code === "VISION_IMAGE_LIMIT") {
+      return t("composer.error.imageTooLarge");
+    }
+    return t("composer.error.imageInvalid");
+  }
+  if (error instanceof Error && error.message.startsWith("Could not read image:")) {
+    return t("composer.error.imageReadFailed");
+  }
+  return error instanceof Error ? error.message : String(error);
 }

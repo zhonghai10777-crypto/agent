@@ -10,7 +10,12 @@ import {
 } from "./desktop-state";
 import { updateSnapshot, useDesktopAppState } from "./app/desktop-app-state";
 import { buildFileWorkbenchContexts } from "./app/file-workbench-contexts";
-import { canTogglePrimarySidebar, isEventInsideTerminal } from "./app/app-shell-utils";
+import {
+  canTogglePrimarySidebar,
+  hasOpenModalDialog,
+  isEventInsideTerminal,
+  isEventInsideTextEntry,
+} from "./app/app-shell-utils";
 import { useRunningLabel } from "./hooks/use-running-label";
 import { useTimelineScroll, type SidePanelMode } from "./hooks/use-timeline-scroll";
 import { restoreTopmostDialogFocus } from "./dialog-focus";
@@ -472,6 +477,7 @@ function AppShell({
     handleComposerPaste,
     handleComposerDrop,
     handleComposerKeyDown,
+    clearComposerError,
   } = useSessionComposer({
     api,
     snapshot,
@@ -552,7 +558,11 @@ function AppShell({
   useEffect(() => {
     const handleCommand = (command: PiDesktopCommand): boolean => {
       if (command === desktopCommands.openSettings) {
-        openSettings(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id);
+        if (snapshot?.activeView === "settings" && api) {
+          void updateSnapshot(api, setSnapshot, () => api.setActiveView("threads"));
+        } else {
+          openSettings(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id);
+        }
         return true;
       } else if (command === desktopCommands.openNewThread) {
         newThread.openSurface(selectedWorkspace?.rootWorkspaceId ?? selectedWorkspace?.id);
@@ -585,8 +595,12 @@ function AppShell({
         }
         return;
       }
-      // Cmd+F toggles thread search
+      // Cmd+F toggles thread search — but not while a modal dialog owns focus, or while the
+      // user is mid-edit in a text field (e.g. an inline session rename).
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f" && !event.shiftKey) {
+        if (hasOpenModalDialog() || isEventInsideTextEntry(event)) {
+          return;
+        }
         event.preventDefault();
         if (threadSearch.isOpen) {
           threadSearch.close();
@@ -595,10 +609,29 @@ function AppShell({
         }
         return;
       }
-      // Cmd+D toggles diff panel
+      // Cmd+D toggles diff panel — same guards as Cmd+F above.
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "d" && !event.shiftKey) {
+        if (hasOpenModalDialog() || isEventInsideTextEntry(event)) {
+          return;
+        }
         event.preventDefault();
         toggleChangesPanel();
+        return;
+      }
+      // Escape backs out of a secondary surface (settings/skills/extensions) once no dialog
+      // claims it — either a true aria-modal dialog, or a page-level dialog that already
+      // handled Escape itself (and called preventDefault) without being aria-modal.
+      if (
+        event.key === "Escape" &&
+        !event.defaultPrevented &&
+        !hasOpenModalDialog() &&
+        api &&
+        (snapshot?.activeView === "settings" ||
+          snapshot?.activeView === "skills" ||
+          snapshot?.activeView === "extensions")
+      ) {
+        event.preventDefault();
+        void updateSnapshot(api, setSnapshot, () => api.setActiveView("threads"));
         return;
       }
       const command = getDesktopCommandFromShortcut({
@@ -607,6 +640,9 @@ function AppShell({
         key: event.key,
         code: event.code,
       });
+      if (command && hasOpenModalDialog()) {
+        return;
+      }
       if (command && handleCommand(command)) {
         event.preventDefault();
       }
@@ -620,6 +656,7 @@ function AppShell({
   }, [
     selectedWorkspace?.id,
     selectedWorkspace?.rootWorkspaceId,
+    snapshot?.activeView,
     threadSearch,
     api,
     toggleChangesPanel,
@@ -947,6 +984,7 @@ function AppShell({
               prompt={newThread.prompt}
               attachments={newThread.attachments}
               lastError={newThread.composerError}
+              onDismissError={newThread.clearComposerError}
               provider={newThread.resolvedProvider}
               modelId={newThread.resolvedModelId}
               thinkingLevel={newThread.resolvedThinkingLevel}
@@ -1089,6 +1127,7 @@ function AppShell({
               runningLabel={runningLabel}
               selectedSession={selectedSession}
               lastError={snapshot.lastError}
+              onDismissError={clearComposerError}
               selectedSlashCommand={slashMenu.activeSlashOptionCommand ?? slashMenu.selectedSlashCommand}
               selectedSlashOption={slashMenu.selectedSlashOption}
               slashOptionEmptyState={slashMenu.slashOptionEmptyState}

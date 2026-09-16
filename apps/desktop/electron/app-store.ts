@@ -33,6 +33,7 @@ import type {
   WorkspaceRef,
 } from "@pi-gui/session-driver";
 import { DEFAULT_PERMISSION_MODE } from "@pi-gui/session-driver";
+import { ImageBudgetError } from "@pi-gui/session-driver/image-budget";
 import type {
   ModelSettingsSnapshot,
   RuntimeCommandRecord,
@@ -3647,6 +3648,9 @@ function describeStoreError(error: unknown): string {
     const where = holder.surface === "pi-cli" ? "the pi CLI" : "another pi instance";
     return `This session is currently open in ${where} (pid ${holder.pid} on host ${holder.hostname}). Close it there or wait a few minutes before continuing here.`;
   }
+  if (isImageBudgetError(error)) {
+    return describeImageBudgetErrorCode(error.code);
+  }
   return error instanceof Error ? error.message : String(error);
 }
 
@@ -3655,6 +3659,31 @@ function isSessionLeasedError(error: unknown): error is SessionLeasedError {
     error instanceof SessionLeasedError ||
     (typeof error === "object" && error !== null && (error as { code?: unknown }).code === "SESSION_LEASED")
   );
+}
+
+const IMAGE_BUDGET_ERROR_CODES = ["VISION_IMAGE_LIMIT", "VISION_IMAGE_INVALID", "VISION_ANIMATED_IMAGE", "VISION_PAYLOAD"] as const;
+
+function isImageBudgetError(error: unknown): error is ImageBudgetError {
+  return (
+    error instanceof ImageBudgetError ||
+    (typeof error === "object" &&
+      error !== null &&
+      (IMAGE_BUDGET_ERROR_CODES as readonly string[]).includes((error as { code?: unknown }).code as string))
+  );
+}
+
+/** Localized, actionable text for an image-budget violation. The exact byte/count
+ * limits stay in the driver's own message (not reproduced here); this only
+ * translates the *category* of failure so the composer error banner isn't stuck
+ * in English for Chinese-locale users. */
+function describeImageBudgetErrorCode(code: string): string {
+  if (code === "VISION_ANIMATED_IMAGE") {
+    return tGlobal("composer.error.imageAnimated");
+  }
+  if (code === "VISION_IMAGE_LIMIT") {
+    return tGlobal("composer.error.imageTooLarge");
+  }
+  return tGlobal("composer.error.imageInvalid");
 }
 
 /**

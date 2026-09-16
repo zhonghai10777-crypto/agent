@@ -18,7 +18,9 @@ import {
   extractImageFilesFromClipboardData,
   readComposerAttachmentsFromFiles,
 } from "../composer-attachments";
+import { describeComposerError } from "../composer-attachment-status";
 import { parseTreeComposerCommand } from "../composer-commands";
+import { useI18n } from "../i18n/I18nProvider";
 import type { PiDesktopApi } from "../ipc";
 
 interface UseSessionComposerParams {
@@ -51,11 +53,13 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     handleMentionKeyDown,
     handleSlashKeyDown,
   } = params;
+  const { t } = useI18n();
 
   const [attachmentsClearedOnSubmit, setAttachmentsClearedOnSubmit] = useState(false);
   const submitting = useRef(new Set<string>());
   const composerAttachments = attachmentsClearedOnSubmit ? [] : (snapshot?.composerAttachments ?? []);
-  const attachmentError = (error: unknown) => setSnapshot((current) => current ? { ...current, lastError: error instanceof Error ? error.message : String(error) } : current);
+  const attachmentError = (error: unknown) => setSnapshot((current) => current ? { ...current, lastError: describeComposerError(error, t) } : current);
+  const clearComposerError = () => setSnapshot((current) => current ? { ...current, lastError: undefined } : current);
 
   const submitComposerDraft = (options: { readonly deliverAs?: "steer" | "followUp" } = {}) => {
     if (!api || !selectedSession) {
@@ -246,5 +250,6 @@ export function useSessionComposer(params: UseSessionComposerParams) {
     handleComposerPaste,
     handleComposerDrop,
     handleComposerKeyDown,
+    clearComposerError,
   };
 }

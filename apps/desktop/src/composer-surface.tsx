@@ -10,7 +10,7 @@ import type {
 import { hasFilesInDataTransfer } from "./composer-attachments";
 import { attachmentExtractionLabel } from "./composer-attachment-status";
 import { ExtensionDock, type ExtensionDockModel } from "./extension-session-ui";
-import { ExtensionIcon, FileIcon, ModelIcon, ReasoningIcon, SettingsIcon, SkillIcon, SparkIcon, StatusIcon } from "./icons";
+import { CloseIcon, ExtensionIcon, FileIcon, ModelIcon, ReasoningIcon, SettingsIcon, SkillIcon, SparkIcon, StatusIcon } from "./icons";
 import { QueuedComposerMessages } from "./queued-composer-messages";
 import { useI18n } from "./i18n/I18nProvider";
 
@@ -19,6 +19,7 @@ type FileMentionOption = Extract<MentionOption, { kind: "file" }>;
 
 interface ComposerSurfaceProps {
   readonly lastError?: string;
+  readonly onDismissError?: () => void;
   readonly activeSlashCommand?: ComposerSlashCommand;
   readonly activeSlashCommandMeta?: string;
   readonly topNotice?: ReactNode;
@@ -63,6 +64,7 @@ interface ComposerSurfaceProps {
 
 export function ComposerSurface({
   lastError,
+  onDismissError,
   activeSlashCommand,
   activeSlashCommandMeta,
   topNotice,
@@ -226,7 +228,18 @@ export function ComposerSurface({
       ) : null}
       {lastError ? (
         <div className="composer__error error-banner" data-testid="composer-error-banner">
-          {lastError}
+          <span className="composer__error-text">{lastError}</span>
+          {onDismissError ? (
+            <button
+              className="icon-button composer__error-dismiss"
+              type="button"
+              title={t("composer.error.dismiss")}
+              aria-label={t("composer.error.dismiss")}
+              onClick={onDismissError}
+            >
+              <CloseIcon />
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="composer__editor">

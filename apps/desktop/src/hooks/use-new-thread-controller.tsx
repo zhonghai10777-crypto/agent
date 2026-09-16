@@ -24,6 +24,7 @@ import {
   extractImageFilesFromClipboardData,
   readComposerAttachmentsFromFiles,
 } from "../composer-attachments";
+import { describeComposerError } from "../composer-attachment-status";
 import { buildModelOptions, parseTreeComposerCommand } from "../composer-commands";
 import type { PiDesktopApi } from "../ipc";
 import { useI18n } from "../i18n/I18nProvider";
@@ -101,7 +102,8 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
     setPrompt(value);
   }, []);
 
-  const attachmentError = useCallback((error: unknown) => setComposerError(error instanceof Error ? error.message : String(error)), []);
+  const attachmentError = useCallback((error: unknown) => setComposerError(describeComposerError(error, t)), [t]);
+  const clearComposerError = useCallback(() => setComposerError(undefined), []);
   const appendAttachments = useCallback((added: readonly ComposerAttachment[]) => {
     try {
       const next = [...attachmentsRef.current, ...added];
@@ -404,6 +406,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
       startThread,
       openSurface,
       resetSurface,
+      clearComposerError,
     }),
     [
       workspace,
@@ -430,6 +433,7 @@ export function useNewThreadController(params: UseNewThreadControllerParams) {
       startThread,
       openSurface,
       resetSurface,
+      clearComposerError,
     ],
   );
 }
