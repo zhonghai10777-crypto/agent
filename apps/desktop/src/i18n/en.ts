@@ -109,6 +109,9 @@ const enMessages = {
   "sidebar.createPermanentWorktree": "Create permanent worktree",
   "sidebar.editName": "Edit name",
   "sidebar.removeWorkspaceConfirm": "Remove “{name}” from {product}? This will not delete any files.",
+  "sidebar.removeWorkspaceConfirmTitle": "Remove workspace",
+  "sidebar.removeWorkspaceConfirmAction": "Remove",
+  "workspace.personal": "Personal space",
   "sidebar.removeWorktreeConfirm": "Remove worktree “{name}”? This removes the git worktree from disk.",
 
   /* ── Sidebar aria labels ─────────────────────────── */

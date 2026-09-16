@@ -108,6 +108,9 @@ const zhMessages: Record<MessageKey, string> = {
   "sidebar.createPermanentWorktree": "创建永久工作树",
   "sidebar.editName": "编辑名称",
   "sidebar.removeWorkspaceConfirm": "把「{name}」从 {product} 里移除？不会删除任何文件。",
+  "sidebar.removeWorkspaceConfirmTitle": "移除工作区",
+  "sidebar.removeWorkspaceConfirmAction": "移除",
+  "workspace.personal": "个人空间",
   "sidebar.removeWorktreeConfirm": "移除工作树「{name}」？这会把该 git worktree 从磁盘上删除。",
 
   /* ── Sidebar aria labels ─────────────────────────── */

@@ -18,6 +18,8 @@ import type { AppView, SessionRecord, WorkspaceRecord, WorktreeRecord } from "./
 import { ArchiveIcon, ChevronDownIcon, ExtensionIcon, FolderIcon, PinIcon, PlusIcon, RestoreIcon, SettingsIcon, SkillIcon, WorktreeIcon } from "./icons";
 import { getShortcutLabel, type PiDesktopApi } from "./ipc";
 import type { WorkspaceMenuState } from "./hooks/use-workspace-menu";
+import { RemoveWorkspaceModal } from "./remove-workspace-modal";
+import { workspaceDisplayName } from "./workspace-context";
 import { useThreadMenu, type ThreadMenuState } from "./hooks/use-thread-menu";
 import { comparePinnedThreads, sessionThreadKey, type ThreadGroup, type ThreadListEntry } from "./thread-groups";
 import type { Dispatch, SetStateAction } from "react";
@@ -211,6 +213,7 @@ export function Sidebar(props: SidebarProps) {
     : undefined;
 
   return (
+    <>
     <aside className="sidebar">
       <div className="sidebar__top">
         <button
@@ -381,6 +384,14 @@ export function Sidebar(props: SidebarProps) {
         )}
       </div>
     </aside>
+    {wsMenu.pendingRemoveWorkspace ? (
+      <RemoveWorkspaceModal
+        workspace={wsMenu.pendingRemoveWorkspace}
+        onCancel={wsMenu.cancelRemoveWorkspace}
+        onConfirm={wsMenu.confirmRemoveWorkspace}
+      />
+    ) : null}
+    </>
   );
 }
 
@@ -478,14 +489,14 @@ function WorkspaceGroupContent(
             <span className="workspace-row__icon-folder"><FolderIcon /></span>
             <span className="workspace-row__icon-chevron"><ChevronDownIcon /></span>
           </span>
-          <span className="workspace-row__name">{rootWorkspace.name}</span>
+          <span className="workspace-row__name">{workspaceDisplayName(rootWorkspace, t)}</span>
         </button>
         <span
           className="workspace-row__menu-wrap"
           ref={wsMenu.workspaceMenuId === rootWorkspace.id ? wsMenu.workspaceMenuWrapRef : undefined}
         >
           <button
-            aria-label={t("aria.workspaceActionsFor", { name: rootWorkspace.name })}
+            aria-label={t("aria.workspaceActionsFor", { name: workspaceDisplayName(rootWorkspace, t) })}
             aria-haspopup="menu"
             className="icon-button workspace-row__menu-button"
             aria-expanded={wsMenu.workspaceMenuId === rootWorkspace.id}
