@@ -126,7 +126,7 @@ export interface OfficeRuntimeOptions {
   readonly getPermissionMode?: (ctx: ExtensionContext) => "plan" | "auto";
 }
 
-const MAX_OFFICE_BYTES = 50 * 1024 * 1024;
+export const MAX_OFFICE_BYTES = 50 * 1024 * 1024;
 const WORD_TOOLS = ["word_create", "word_replace", "word_append"] as const;
 const EXCEL_TOOLS = [
   "excel_create",
@@ -752,7 +752,7 @@ function createExcelSetColumnWidthTool(options: OfficeRuntimeOptions): ToolDefin
   };
 }
 
-async function runOfficeWrite(
+export async function runOfficeWrite(
   options: OfficeRuntimeOptions,
   ctx: ExtensionContext,
   format: OfficeFormat,
@@ -1044,7 +1044,7 @@ function recordParam(params: unknown, key: string): Readonly<Record<string, unkn
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
-function officeError(error: string): AgentToolResult<{ error: string }> {
+export function officeError(error: string): AgentToolResult<{ error: string }> {
   return { content: [{ type: "text", text: error }], details: { error } };
 }
 
