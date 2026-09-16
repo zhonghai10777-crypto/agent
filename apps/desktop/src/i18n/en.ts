@@ -209,6 +209,7 @@ const enMessages = {
   "newThread.openFolderToBeginBody": "Select a repository from the sidebar first, then start a local or worktree-backed thread.",
 
   /* ── Conversation / timeline ─────────────────────── */
+  "timeline.paneLabel": "Conversation transcript",
   "timeline.newActivityBelow": "New activity below",
   "timeline.runRetrying": "Request failed, retrying automatically…",
   "timeline.promptsInThread": "Prompts in this thread",
