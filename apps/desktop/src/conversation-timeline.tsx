@@ -3,6 +3,7 @@ import type { TranscriptMessage } from "./desktop-state";
 import type { DisplayTimelineItem } from "./timeline-types";
 import { buildDisplayTimelineItems } from "./timeline-turns";
 import { ThreadSearchBar } from "./thread-search";
+import type { ThreadSearchMatch } from "./hooks/use-thread-search";
 import { TimelineItem } from "./timeline-item";
 import { SparkIcon } from "./icons";
 import { useI18n } from "./i18n/I18nProvider";
@@ -18,6 +19,9 @@ interface ThreadSearchModel {
   readonly query: string;
   readonly matchCount: number;
   readonly activeIndex: number;
+  readonly matches: readonly ThreadSearchMatch[];
+  readonly matchedQuery: string;
+  readonly activeMatch: ThreadSearchMatch | undefined;
   readonly inputRef: RefObject<HTMLInputElement | null>;
   readonly search: (query: string) => void;
   readonly goToMatch: (direction: 1 | -1) => void;
@@ -75,8 +79,10 @@ export function ConversationTimeline({
 
   const displayItems = useMemo(() => buildDisplayTimelineItems(transcript), [transcript]);
 
+  // Search no longer needs virtualization disabled — matching runs over the full
+  // transcript data (use-thread-search.ts), independent of what's mounted, and
+  // highlighting/scrolling only need whatever's currently rendered.
   const shouldVirtualize =
-    !threadSearch.isOpen &&
     transcript.length > VIRTUALIZATION_THRESHOLD &&
     !disableVirtualization;
   const [expandedToolCallIds, setExpandedToolCallIds] = useState<Set<string>>(() => new Set());
@@ -231,6 +237,94 @@ export function ConversationTimeline({
       pane.removeEventListener("scroll", onTimelineScroll);
     };
   }, [onTimelineScroll, timelinePaneRef]);
+
+  // Jump to the active search match's row. Matching (use-thread-search.ts) is pure
+  // state with no DOM access; this is the one place that turns "which match is
+  // active" into an actual scroll, reusing the same virtualization-aware
+  // scrollToMessage used for jumping to a specific prompt.
+  const lastScrolledSearchMatchRef = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    const activeMatch = threadSearch.activeMatch;
+    const key = activeMatch ? `${activeMatch.itemId}:${activeMatch.occurrenceIndex}` : undefined;
+    if (!key || key === lastScrolledSearchMatchRef.current) {
+      return;
+    }
+    lastScrolledSearchMatchRef.current = key;
+    scrollToMessage(activeMatch!.itemId);
+  }, [threadSearch.activeMatch, scrollToMessage]);
+
+  // Paints search matches via the CSS Custom Highlight API instead of mutating the
+  // DOM (the prior <mark>-insertion approach fought React's own rendering — a
+  // streamed delta or a theme-triggered re-render could land mid-mark and corrupt
+  // it). Rebuilds whenever the match set changes or the rendered rows themselves
+  // change (virtualization scroll, streaming text), since only mounted rows have
+  // DOM to build Ranges over.
+  useLayoutEffect(() => {
+    if (!supportsHighlightApi()) {
+      return undefined;
+    }
+    const pane = timelinePaneRef.current;
+    if (!pane) {
+      return undefined;
+    }
+    // Skip installing the observer entirely while search is closed/empty — this
+    // effect's own cleanup already clears any stale highlight, and an idle
+    // MutationObserver watching the whole pane subtree would otherwise fire on
+    // every streaming delta for no benefit.
+    if (!threadSearch.matchedQuery.trim() || threadSearch.matches.length === 0) {
+      clearSearchHighlights();
+      return undefined;
+    }
+
+    let scheduled = false;
+    const rebuild = (): boolean =>
+      applySearchHighlights(pane, threadSearch.matches, threadSearch.matchedQuery, threadSearch.activeMatch);
+    const scheduleRebuild = () => {
+      if (scheduled) {
+        return;
+      }
+      scheduled = true;
+      requestAnimationFrame(() => {
+        scheduled = false;
+        rebuild();
+      });
+    };
+
+    // A jump to a match outside the mounted window (scrollToMessage) sets scrollTop
+    // synchronously, then relies on the resulting native `scroll` event to update the
+    // virtualization window and mount the target row a few frames later. A
+    // MutationObserver alone can race that: if this effect's own deps happen to
+    // change again before the mount's mutation record is delivered, tearing down and
+    // reinstalling the observer silently discards it (a MutationObserver gotcha —
+    // disconnect() drops any pending, undelivered records). Retrying every frame
+    // until the active match is actually found (or a generous frame budget runs
+    // out) closes that race without depending on delivery timing — bounded and
+    // self-terminating, and it stops immediately once the target is found, so the
+    // common (already-mounted) case pays for exactly one frame.
+    let settleAttemptsRemaining = 60;
+    const scheduleSettleRebuild = () => {
+      if (settleAttemptsRemaining <= 0) {
+        return;
+      }
+      settleAttemptsRemaining -= 1;
+      requestAnimationFrame(() => {
+        if (!rebuild()) {
+          scheduleSettleRebuild();
+        }
+      });
+    };
+
+    scheduleSettleRebuild();
+    const observer = new MutationObserver(scheduleRebuild);
+    observer.observe(pane, { childList: true, subtree: true, characterData: true });
+    pane.addEventListener("scroll", scheduleRebuild, { passive: true });
+
+    return () => {
+      observer.disconnect();
+      pane.removeEventListener("scroll", scheduleRebuild);
+      clearSearchHighlights();
+    };
+  }, [threadSearch.matches, threadSearch.matchedQuery, threadSearch.activeMatch, timelinePaneRef]);
 
   // Register scroll intent for the keys that actually move a focused, scrollable
   // element — without this, keyboard-only scrolling (PageUp/PageDown/Home/End/arrows/
@@ -634,4 +728,104 @@ function estimateTimelineItemHeight(item: DisplayTimelineItem): number {
     return item.presentation === "divider" ? 44 : 38;
   }
   return 38;
+}
+
+/* ── Thread search highlighting (CSS Custom Highlight API) ─────────────────
+ * Paints matches without touching the DOM: a Range per occurrence, registered
+ * under a named Highlight that ::highlight(thread-find) in timeline.css paints.
+ * This can't fight React's own re-renders the way inserting <mark> elements
+ * could (a streamed delta or a theme toggle re-rendering mid-mark), since a
+ * Range is just a pointer into existing text nodes, not new DOM structure. */
+
+const SEARCH_HIGHLIGHT_NAME = "thread-find";
+const SEARCH_ACTIVE_HIGHLIGHT_NAME = "thread-find-active";
+
+function supportsHighlightApi(): boolean {
+  return (
+    typeof CSS !== "undefined" &&
+    typeof CSS.highlights !== "undefined" &&
+    typeof Highlight !== "undefined"
+  );
+}
+
+function clearSearchHighlights(): void {
+  if (!supportsHighlightApi()) {
+    return;
+  }
+  CSS.highlights.delete(SEARCH_HIGHLIGHT_NAME);
+  CSS.highlights.delete(SEARCH_ACTIVE_HIGHLIGHT_NAME);
+}
+
+/** All occurrences of `lowerQuery` in `root`'s rendered text, in document order. */
+function findOccurrenceRangesInRow(root: Node, lowerQuery: string): Range[] {
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let node: Text | null;
+  while ((node = walker.nextNode() as Text | null)) {
+    const text = node.textContent ?? "";
+    const lowerText = text.toLowerCase();
+    let fromIndex = 0;
+    let foundAt = lowerText.indexOf(lowerQuery, fromIndex);
+    while (foundAt !== -1) {
+      const range = document.createRange();
+      range.setStart(node, foundAt);
+      range.setEnd(node, foundAt + lowerQuery.length);
+      ranges.push(range);
+      fromIndex = foundAt + lowerQuery.length;
+      foundAt = lowerText.indexOf(lowerQuery, fromIndex);
+    }
+  }
+  return ranges;
+}
+
+/**
+ * Rebuilds the two search highlights from whatever rows are currently mounted, and
+ * reports whether the *active* match specifically was found — the signal the
+ * settle-retry loop above uses to know it can stop. (General matches can be
+ * non-empty from already-mounted rows while the just-navigated-to active one still
+ * isn't — the row scrollToMessage is mid-jump toward — so activeRanges is the
+ * meaningful completion signal, not matchRanges.)
+ *
+ * Matches are computed against each item's *source* text (use-thread-search.ts),
+ * while this walks *rendered* (post-markdown) DOM text — the two agree on order
+ * and count for ordinary text, so `activeMatch.occurrenceIndex` (that match's
+ * position among same-row matches) reliably picks out the same occurrence in the
+ * rendered row. They can only disagree when the matched substring itself contains
+ * markdown syntax that rendering strips, in which case the active-highlight pick
+ * may be off within a many-match row — matches are still found and navigable
+ * (scrollToMessage targets the row itself, not a sub-position) either way.
+ */
+function applySearchHighlights(
+  pane: HTMLElement,
+  matches: readonly ThreadSearchMatch[],
+  lowerQueryRaw: string,
+  activeMatch: ThreadSearchMatch | undefined,
+): boolean {
+  const lowerQuery = lowerQueryRaw.trim().toLowerCase();
+  if (!lowerQuery || matches.length === 0) {
+    clearSearchHighlights();
+    return true;
+  }
+
+  const matchItemIds = new Set(matches.map((match) => match.itemId));
+  const matchRanges: Range[] = [];
+  const activeRanges: Range[] = [];
+
+  for (const row of pane.querySelectorAll<HTMLElement>("[data-message-id]")) {
+    const itemId = row.dataset.messageId;
+    if (!itemId || !matchItemIds.has(itemId)) {
+      continue;
+    }
+    const occurrences = findOccurrenceRangesInRow(row, lowerQuery);
+    occurrences.forEach((range, occurrenceIndex) => {
+      matchRanges.push(range);
+      if (activeMatch && activeMatch.itemId === itemId && activeMatch.occurrenceIndex === occurrenceIndex) {
+        activeRanges.push(range);
+      }
+    });
+  }
+
+  CSS.highlights.set(SEARCH_HIGHLIGHT_NAME, new Highlight(...matchRanges));
+  CSS.highlights.set(SEARCH_ACTIVE_HIGHLIGHT_NAME, new Highlight(...activeRanges));
+  return !activeMatch || activeRanges.length > 0;
 }

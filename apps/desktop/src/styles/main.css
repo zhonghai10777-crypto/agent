@@ -3052,16 +3052,15 @@
   gap: 2px;
 }
 
-mark.thread-find-match {
-  background: var(--find-match-bg);
+/* Painted via the CSS Custom Highlight API (conversation-timeline.tsx) rather than
+ * <mark> elements — ::highlight() only supports color/background-color/decoration
+ * properties (no border-radius/padding; a Highlight isn't a real box). */
+::highlight(thread-find) {
+  background-color: var(--find-match-bg);
   color: var(--find-match-ink);
-  border-radius: var(--radius-2xs);
-  padding: 0 1px;
 }
 
-mark.thread-find-active {
-  background: var(--find-active-bg);
+::highlight(thread-find-active) {
+  background-color: var(--find-active-bg);
   color: var(--find-active-ink);
-  border-radius: var(--radius-2xs);
-  padding: 0 1px;
 }

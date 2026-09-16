@@ -128,7 +128,6 @@ function AppShell({
   const [terminalHeight, setTerminalHeight] = useState(340);
   const [diffFileRequest, setDiffFileRequest] = useState<DiffPanelFileRequest | null>(null);
   const [promptRailVisible, setPromptRailVisible] = useState(loadPromptRailVisible);
-  const threadSearch = useThreadSearch(timelinePaneRef);
   const api = window.piApp;
   const isNarrowLayout = useNarrowLayout();
   // Narrow-window drawer open/closed is local, session-only UI state — it must never
@@ -241,6 +240,7 @@ function AppShell({
       ? selectedTranscript
       : null;
   const activeTranscript = selectedTranscriptForSession?.transcript ?? [];
+  const threadSearch = useThreadSearch(activeTranscript);
   const isTranscriptLoading = Boolean(selectedSession) && !selectedTranscriptForSession;
   const {
     setTimelinePaneElement,
