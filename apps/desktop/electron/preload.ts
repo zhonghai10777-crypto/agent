@@ -13,6 +13,7 @@ import {
   type DesktopNotificationPermissionStatus,
   type LibraryIndexStatusView,
   type LibrarySettingsView,
+  type WorkspaceFileListResult,
   type WorkspaceFilePreview,
   type PiDesktopCommand,
   type TerminalDataEvent,
@@ -317,7 +318,7 @@ contextBridge.exposeInMainWorld("piApp", {
       readonly result: NavigateSessionTreeResult;
     }>,
   listWorkspaceFiles: (workspaceId: string, options?: { readonly force?: boolean }) =>
-    ipcRenderer.invoke(desktopIpc.listWorkspaceFiles, workspaceId, options) as Promise<string[]>,
+    ipcRenderer.invoke(desktopIpc.listWorkspaceFiles, workspaceId, options) as Promise<WorkspaceFileListResult>,
   readWorkspaceFile: (workspaceId: string, filePath: string) =>
     ipcRenderer.invoke(desktopIpc.readWorkspaceFile, workspaceId, filePath) as Promise<WorkspaceFilePreview>,
   getChangedFiles: (workspaceId: string) =>

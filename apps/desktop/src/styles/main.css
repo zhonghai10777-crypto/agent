@@ -1694,6 +1694,32 @@
   line-height: 1.4;
 }
 
+.mention-menu__empty {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  color: var(--muted-soft);
+}
+
+.mention-menu__empty-title {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 560;
+}
+
+.mention-menu__empty-description {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mention-menu__truncated-notice {
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted-soft);
+  border-top: 1px solid var(--border-light);
+}
+
 .enable-transparency .composer__surface,
 .enable-transparency .tree-modal,
 .enable-transparency .slash-menu,

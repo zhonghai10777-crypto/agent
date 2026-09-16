@@ -42,6 +42,7 @@ interface NewThreadViewProps {
   readonly slashOptionEmptyState?: ComposerSlashOptionEmptyState;
   readonly showMentionMenu: boolean;
   readonly mentionOptions: readonly MentionOption[];
+  readonly mentionFilesTruncated: boolean;
   readonly selectedMentionIndex: number;
   readonly onChangePrompt: (prompt: string) => void;
   readonly onSelectEnvironment: (environment: NewThreadEnvironment) => void;
@@ -88,6 +89,7 @@ export function NewThreadView({
   slashOptionEmptyState,
   showMentionMenu,
   mentionOptions,
+  mentionFilesTruncated,
   selectedMentionIndex,
   onChangePrompt,
   onSelectEnvironment,
@@ -204,6 +206,7 @@ export function NewThreadView({
               onSelectSlashOption={onSelectSlashOption}
               showMentionMenu={showMentionMenu}
               mentionOptions={mentionOptions}
+              mentionFilesTruncated={mentionFilesTruncated}
               selectedMentionIndex={selectedMentionIndex}
               onSelectMention={onSelectMention}
               onEnableMentionExtension={onEnableMentionExtension}

@@ -352,6 +352,13 @@ export type ChangedFilesResult =
       readonly error: ChangedFilesError;
     };
 
+export interface WorkspaceFileListResult {
+  readonly files: readonly string[];
+  /** True when the scan hit a bound (file/entry/depth cap) before finishing, so the
+   * caller can tell "this is everything" apart from "this is a partial listing". */
+  readonly truncated: boolean;
+}
+
 export interface WorkspaceFilePreview {
   readonly path: string;
   readonly content: string;
@@ -588,7 +595,7 @@ export interface PiDesktopApi {
     targetId: string,
     options?: NavigateSessionTreeOptions,
   ): Promise<{ readonly state: DesktopAppState; readonly result: NavigateSessionTreeResult }>;
-  listWorkspaceFiles(workspaceId: string, options?: { readonly force?: boolean }): Promise<string[]>;
+  listWorkspaceFiles(workspaceId: string, options?: { readonly force?: boolean }): Promise<WorkspaceFileListResult>;
   readWorkspaceFile(workspaceId: string, filePath: string): Promise<WorkspaceFilePreview>;
   getChangedFiles(workspaceId: string): Promise<ChangedFilesResult>;
   getFileDiff(workspaceId: string, filePath: string): Promise<string>;

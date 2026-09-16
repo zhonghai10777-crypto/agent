@@ -176,6 +176,8 @@ const enMessages = {
   "composer.enabling": "Enabling",
   "composer.enableExtension": "Enable {name}",
   "composer.files": "Files",
+  "mention.emptyState": "No matching files or extensions found.",
+  "mention.truncated": "Showing a partial file list — this workspace has more files than could be scanned.",
 
   /* ── Composer context usage ───────────────────────── */
   "contextUsage.used": "{percent}% context",

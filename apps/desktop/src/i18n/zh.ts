@@ -175,6 +175,8 @@ const zhMessages: Record<MessageKey, string> = {
   "composer.enabling": "正在启用",
   "composer.enableExtension": "启用 {name}",
   "composer.files": "文件",
+  "mention.emptyState": "没有匹配的文件或扩展。",
+  "mention.truncated": "文件列表不完整——工作区文件数量超出了扫描范围。",
 
   /* ── Composer context usage ───────────────────────── */
   "contextUsage.used": "上下文 {percent}%",

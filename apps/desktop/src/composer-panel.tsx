@@ -64,6 +64,7 @@ interface ComposerPanelProps {
   readonly onSubmit: () => void;
   readonly showMentionMenu: boolean;
   readonly mentionOptions: readonly MentionOption[];
+  readonly mentionFilesTruncated: boolean;
   readonly selectedMentionIndex: number;
   readonly onSelectMention: (option: MentionOption) => void;
   readonly onEnableMentionExtension: (option: Extract<MentionOption, { kind: "extension" }>) => void;
@@ -118,6 +119,7 @@ export function ComposerPanel({
   onSubmit,
   showMentionMenu,
   mentionOptions,
+  mentionFilesTruncated,
   selectedMentionIndex,
   onSelectMention,
   onEnableMentionExtension,
@@ -178,6 +180,7 @@ export function ComposerPanel({
           onSelectSlashOption={onSelectSlashOption}
           showMentionMenu={showMentionMenu}
           mentionOptions={mentionOptions}
+          mentionFilesTruncated={mentionFilesTruncated}
           selectedMentionIndex={selectedMentionIndex}
           onSelectMention={onSelectMention}
           onEnableMentionExtension={onEnableMentionExtension}

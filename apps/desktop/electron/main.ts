@@ -1959,7 +1959,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.listWorkspaceFiles, async (_event, workspaceId: string, options?: { readonly force?: boolean }) => {
     const workspacePath = store.getWorkspacePath(workspaceId);
     if (!workspacePath) {
-      return [];
+      return { files: [], truncated: false };
     }
     return listWorkspaceFiles(workspacePath, options);
   });

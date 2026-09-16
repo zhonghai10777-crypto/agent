@@ -49,6 +49,7 @@ interface ComposerSurfaceProps {
   readonly onSelectSlashOption: (option: ComposerSlashOption) => void;
   readonly showMentionMenu: boolean;
   readonly mentionOptions: readonly MentionOption[];
+  readonly mentionFilesTruncated: boolean;
   readonly selectedMentionIndex: number;
   readonly onSelectMention: (option: MentionOption) => void;
   readonly onEnableMentionExtension: (option: ExtensionMentionOption) => void;
@@ -94,6 +95,7 @@ export function ComposerSurface({
   onSelectSlashOption,
   showMentionMenu,
   mentionOptions,
+  mentionFilesTruncated,
   selectedMentionIndex,
   onSelectMention,
   onEnableMentionExtension,
@@ -249,6 +251,7 @@ export function ComposerSurface({
             <div className="mention-menu" data-testid="mention-menu" onWheel={(event) => event.stopPropagation()}>
               <MentionMenuSections
                 options={mentionOptions}
+                filesTruncated={mentionFilesTruncated}
                 selectedIndex={selectedMentionIndex}
                 onSelect={onSelectMention}
                 onEnableExtension={onEnableMentionExtension}
@@ -354,11 +357,13 @@ export function ComposerSurface({
 
 function MentionMenuSections({
   options,
+  filesTruncated,
   selectedIndex,
   onSelect,
   onEnableExtension,
 }: {
   readonly options: readonly MentionOption[];
+  readonly filesTruncated: boolean;
   readonly selectedIndex: number;
   readonly onSelect: (option: MentionOption) => void;
   readonly onEnableExtension: (option: ExtensionMentionOption) => void;
@@ -366,6 +371,15 @@ function MentionMenuSections({
   const { t } = useI18n();
   const extensionOptions = options.filter((option): option is ExtensionMentionOption => option.kind === "extension");
   const fileOptions = options.filter((option): option is FileMentionOption => option.kind === "file");
+
+  if (options.length === 0) {
+    return (
+      <div className="mention-menu__empty">
+        <div className="mention-menu__empty-title">{t("mention.emptyState")}</div>
+        {filesTruncated ? <div className="mention-menu__empty-description">{t("mention.truncated")}</div> : null}
+      </div>
+    );
+  }
 
   return (
     <>
@@ -389,6 +403,7 @@ function MentionMenuSections({
           onEnableExtension={onEnableExtension}
         />
       ) : null}
+      {filesTruncated ? <div className="mention-menu__truncated-notice">{t("mention.truncated")}</div> : null}
     </>
   );
 }
