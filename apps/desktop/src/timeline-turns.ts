@@ -60,3 +60,27 @@ export function buildDisplayTimelineItems(transcript: readonly TranscriptMessage
 
   return result;
 }
+
+/**
+ * The text thread search matches against for one timeline item — the single source
+ * of truth for "what does this row's content mean for search", shared by the match
+ * computation and (indirectly, via the same field list) what TimelineItem renders.
+ * This is the item's *source* text, not its rendered form: message text is matched
+ * before markdown is applied, so e.g. `**bold**` markers participate in a match.
+ * Turn markers carry no user/agent content and are never matches.
+ */
+export function searchableTextForTimelineItem(item: DisplayTimelineItem): string {
+  switch (item.kind) {
+    case "message":
+      return item.text;
+    case "tool":
+    case "activity":
+      return [item.label, item.detail, item.metadata].filter(Boolean).join(" ");
+    case "summary":
+      return [item.label, item.metadata].filter(Boolean).join(" ");
+    case "turn-marker":
+      return "";
+    default:
+      return "";
+  }
+}
