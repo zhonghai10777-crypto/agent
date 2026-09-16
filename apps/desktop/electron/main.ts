@@ -82,6 +82,10 @@ import {
   type OfficeFormat,
   type OfficeWriteResult,
 } from "./office-runtime";
+import {
+  createOfficeComposeExtension,
+  createOfficeComposeTools,
+} from "./office-compose";
 import { createPermissionModeExtension } from "./permission-runtime";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
@@ -318,6 +322,20 @@ async function runOfficeToolForTest(sessionRef: SessionRef, toolName: string, pa
     getPermissionMode: permissionModeFor,
   }).find((entry) => entry.name === toolName);
   if (!tool) throw new Error(`Unknown office runtime tool: ${toolName}`);
+  return tool.execute(`test-${toolName}`, params, undefined, undefined, createTestExtensionContext(sessionRef));
+}
+
+async function runOfficeComposeToolForTest(sessionRef: SessionRef, toolName: string, params: unknown): Promise<AgentToolResult<unknown>> {
+  await store.initialize();
+  const tool = createOfficeComposeTools({
+    getScope: officeAccessScopeFor,
+    chooseNewFilePath: async (format) => path.join(configuredUserDataDir, `office-test-${randomUUID()}.${format}`),
+    confirmWrite: async () => true,
+    onWriteComplete: rememberOfficeResult,
+    assertAllowed: () => store.assertCapability("officeMutation"),
+    getPermissionMode: permissionModeFor,
+  }).find((entry) => entry.name === toolName);
+  if (!tool) throw new Error(`Unknown office compose tool: ${toolName}`);
   return tool.execute(`test-${toolName}`, params, undefined, undefined, createTestExtensionContext(sessionRef));
 }
 
@@ -1339,6 +1357,18 @@ app.whenReady().then(async () => {
         assertAllowed: () => store.assertCapability("officeMutation"),
         getPermissionMode: permissionModeFor,
       }),
+      createOfficeComposeExtension({
+        getScope: officeAccessScopeFor,
+        chooseNewFilePath: chooseOfficeOutputPath,
+        confirmWrite: (ctx, summary, outputPath, changedItems) =>
+          ctx.ui.confirm(
+            "确认办公文件写入",
+            `${summary}\n输出：${outputPath}\n变更项：${changedItems}`,
+          ),
+        onWriteComplete: rememberOfficeResult,
+        assertAllowed: () => store.assertCapability("officeMutation"),
+        getPermissionMode: permissionModeFor,
+      }),
       ...(initialRuntimeMode === "agent" ? [createOrchestrationRuntimeExtension(orchestrationRuntimeBridge)] : []),
       // Blocks mutating tools (write/edit/bash/create_child_thread) when the
       // active session is in `plan` mode. Last so it runs after the other tools
@@ -1366,6 +1396,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Office documents",
         description: "Create and edit simple Word and Excel files with confirmation and safe copies",
+      },
+      {
+        displayName: "Word document generation",
+        description: "Generate structured Word documents from an outline/Markdown or fill a user template, with a built-in content check",
       },
       ...(initialRuntimeMode === "agent"
         ? [{ displayName: "Thread orchestration", description: `Start child ${PRODUCT.name} threads from transcript tool calls` }]
@@ -1419,6 +1453,8 @@ app.whenReady().then(async () => {
           runReadDocumentToolForTest(sessionRef, params),
         runOfficeTool: (sessionRef: SessionRef, toolName: string, params: unknown) =>
           runOfficeToolForTest(sessionRef, toolName, params),
+        runOfficeComposeTool: (sessionRef: SessionRef, toolName: string, params: unknown) =>
+          runOfficeComposeToolForTest(sessionRef, toolName, params),
         runLibraryRuntimeTool: (toolName: string, params: unknown) =>
           runLibraryRuntimeToolForTest(toolName, params),
         setDeferredThreadTitleMode: () => {

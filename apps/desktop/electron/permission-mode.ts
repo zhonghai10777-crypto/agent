@@ -20,6 +20,7 @@
 import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES } from "@pi-gui/pi-sdk-driver/windows-shell";
 import { createChildThreadToolName, sendMessageToThreadToolName } from "./orchestration-runtime";
 import { officeToolNames } from "./office-runtime";
+import { composeMutatingToolNames } from "./office-compose";
 import type { PermissionMode, SessionRef } from "@pi-gui/session-driver";
 import type { AppStoreInternals } from "./app-store-internals";
 
@@ -35,6 +36,7 @@ export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
   createChildThreadToolName,
   sendMessageToThreadToolName,
   ...officeToolNames,
+  ...composeMutatingToolNames,
 ]);
 
 export interface ToolBlock {
