@@ -837,15 +837,20 @@
   }
 }
 
-/* Narrow window: the sidebar becomes an overlay drawer over the main surface
-   so content keeps the full width instead of being squeezed or stacked.
-   The always-visible titlebar toggle (z-index 80) stays reachable to dismiss it. */
+/* Narrow window: the sidebar becomes an overlay drawer over the main surface so
+   content keeps the full width instead of being squeezed or stacked. Drawer
+   open/closed is local UI state (App.tsx's narrowDrawerOpen via
+   use-narrow-layout.ts), not the persisted sidebarCollapsed preference — widening
+   the window back out must never leave the sidebar permanently collapsed.
+   The always-visible titlebar toggle (z-index 80) stays reachable to dismiss it.
+   Keep this breakpoint in sync with NARROW_LAYOUT_BREAKPOINT_PX in
+   src/hooks/use-narrow-layout.ts. */
 @media (max-width: 760px) {
-  .shell:not(.shell--sidebar-collapsed) {
+  .shell.shell--narrow-drawer-open {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .shell:not(.shell--sidebar-collapsed) > .sidebar {
+  .shell.shell--narrow-drawer-open > .sidebar {
     position: absolute;
     top: 0;
     bottom: 0;
@@ -854,6 +859,16 @@
     z-index: 40;
     box-shadow: var(--shadow-xl);
   }
+}
+
+/* Dims the main surface behind the narrow-window drawer; clicking it closes the
+ * drawer (App.tsx). Sits below the drawer (z-index 40) and the always-visible
+ * titlebar toggle (z-index 80), above everything else in the shell. */
+.shell__sidebar-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 39;
+  background: color-mix(in srgb, var(--text-strong) 32%, transparent);
 }
 
 /* Transparency mode re-enables the sidebar backdrop blur in dark. */
