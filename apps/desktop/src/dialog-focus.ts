@@ -1,5 +1,10 @@
 import type { KeyboardEvent } from "react";
 
+/** Selects any open modal dialog. Shared so `hasOpenModalDialog` (app-shell-utils.ts)
+ * and `restoreTopmostDialogFocus` below always agree on what counts as "a modal is
+ * open" — the two calls stay in sync by construction, not by convention. */
+export const MODAL_DIALOG_SELECTOR = "[aria-modal='true']";
+
 function getFocusableElements(dialog: HTMLElement): HTMLElement[] {
   return Array.from(
     dialog.querySelectorAll<HTMLElement>(
@@ -35,7 +40,7 @@ export function trapDialogFocus(event: KeyboardEvent<HTMLElement>, dialog: HTMLE
 }
 
 export function restoreTopmostDialogFocus(): boolean {
-  const dialogs = document.querySelectorAll<HTMLElement>("[aria-modal='true']");
+  const dialogs = document.querySelectorAll<HTMLElement>(MODAL_DIALOG_SELECTOR);
   const dialog = dialogs.item(dialogs.length - 1);
   if (!dialog) {
     return false;

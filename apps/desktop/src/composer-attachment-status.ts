@@ -61,6 +61,23 @@ export function attachmentExtractionLabel(
 }
 
 /**
+ * Maps an ImageBudgetError's `code` to its localized-message key. Shared by the
+ * renderer (describeComposerError below, via `t`) and the main process
+ * (electron/app-store.ts's describeStoreError, via `tGlobal`) so the category
+ * mapping exists exactly once — the exact byte/count limits stay in the driver's
+ * own message, this only translates the *category* of failure.
+ */
+export function imageBudgetErrorMessageKey(code: ImageBudgetError["code"]): MessageKey {
+  if (code === "VISION_ANIMATED_IMAGE") {
+    return "composer.error.imageAnimated";
+  }
+  if (code === "VISION_IMAGE_LIMIT") {
+    return "composer.error.imageTooLarge";
+  }
+  return "composer.error.imageInvalid";
+}
+
+/**
  * Turns an attachment-add failure into localized, actionable text for the composer
  * error banner. Known categories (image budget violations, an unreadable local
  * file) get a translated message; anything else falls back to the raw error text
@@ -68,13 +85,7 @@ export function attachmentExtractionLabel(
  */
 export function describeComposerError(error: unknown, t: Translator): string {
   if (error instanceof ImageBudgetError) {
-    if (error.code === "VISION_ANIMATED_IMAGE") {
-      return t("composer.error.imageAnimated");
-    }
-    if (error.code === "VISION_IMAGE_LIMIT") {
-      return t("composer.error.imageTooLarge");
-    }
-    return t("composer.error.imageInvalid");
+    return t(imageBudgetErrorMessageKey(error.code));
   }
   if (error instanceof Error && error.message.startsWith("Could not read image:")) {
     return t("composer.error.imageReadFailed");

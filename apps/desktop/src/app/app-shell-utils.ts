@@ -1,4 +1,5 @@
 import type { AppView } from "../desktop-state";
+import { MODAL_DIALOG_SELECTOR } from "../dialog-focus";
 
 export function isEventInsideTerminal(event: globalThis.KeyboardEvent): boolean {
   const target = event.target;
@@ -18,10 +19,10 @@ export function isEventInsideTextEntry(event: globalThis.KeyboardEvent): boolean
   return target.tagName === "INPUT" || target.isContentEditable;
 }
 
-/** True while a modal dialog is open. Uses the same `[aria-modal='true']` selector as
+/** True while a modal dialog is open. Shares MODAL_DIALOG_SELECTOR with
  * `restoreTopmostDialogFocus` in dialog-focus.ts, so the two stay in sync. */
 export function hasOpenModalDialog(): boolean {
-  return document.querySelector("[aria-modal='true']") !== null;
+  return document.querySelector(MODAL_DIALOG_SELECTOR) !== null;
 }
 
 export function canTogglePrimarySidebar(view: AppView | undefined): boolean {
