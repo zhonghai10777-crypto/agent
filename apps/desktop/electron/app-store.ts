@@ -74,6 +74,7 @@ import {
   isThemePresetId,
 } from "../src/desktop-state";
 import { setGlobalLocale, tGlobal } from "../src/i18n";
+import { imageBudgetErrorMessageKey } from "../src/composer-attachment-status";
 import { PRODUCT } from "../src/product";
 import {
   applyTimelineEvent,
@@ -3649,7 +3650,7 @@ function describeStoreError(error: unknown): string {
     return `This session is currently open in ${where} (pid ${holder.pid} on host ${holder.hostname}). Close it there or wait a few minutes before continuing here.`;
   }
   if (isImageBudgetError(error)) {
-    return describeImageBudgetErrorCode(error.code);
+    return tGlobal(imageBudgetErrorMessageKey(error.code));
   }
   return error instanceof Error ? error.message : String(error);
 }
@@ -3670,20 +3671,6 @@ function isImageBudgetError(error: unknown): error is ImageBudgetError {
       error !== null &&
       (IMAGE_BUDGET_ERROR_CODES as readonly string[]).includes((error as { code?: unknown }).code as string))
   );
-}
-
-/** Localized, actionable text for an image-budget violation. The exact byte/count
- * limits stay in the driver's own message (not reproduced here); this only
- * translates the *category* of failure so the composer error banner isn't stuck
- * in English for Chinese-locale users. */
-function describeImageBudgetErrorCode(code: string): string {
-  if (code === "VISION_ANIMATED_IMAGE") {
-    return tGlobal("composer.error.imageAnimated");
-  }
-  if (code === "VISION_IMAGE_LIMIT") {
-    return tGlobal("composer.error.imageTooLarge");
-  }
-  return tGlobal("composer.error.imageInvalid");
 }
 
 /**

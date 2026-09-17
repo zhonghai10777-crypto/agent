@@ -256,9 +256,24 @@ export function ConversationTimeline({
   // Paints search matches via the CSS Custom Highlight API instead of mutating the
   // DOM (the prior <mark>-insertion approach fought React's own rendering — a
   // streamed delta or a theme-triggered re-render could land mid-mark and corrupt
-  // it). Rebuilds whenever the match set changes or the rendered rows themselves
-  // change (virtualization scroll, streaming text), since only mounted rows have
-  // DOM to build Ranges over.
+  // it). Split into two effects on purpose:
+  //
+  // 1. This one installs a MutationObserver + scroll listener exactly once (kept
+  //    alive for the pane's whole lifetime, not per search-state change) and reads
+  //    current match state from refs rather than closed-over values. A jump to a
+  //    match outside the mounted window (scrollToMessage) sets scrollTop
+  //    synchronously, then relies on the resulting native `scroll` event to update
+  //    the virtualization window and mount the target row a few frames later — an
+  //    observer that got torn down and reinstalled on every match/query change
+  //    could lose that pending mutation record in the gap (MutationObserver.
+  //    disconnect() drops undelivered records), which is exactly the flake this
+  //    persistent-observer design avoids: nothing is ever discarded, so the
+  //    eventual mount is always caught, however long it takes.
+  const searchHighlightStateRef = useRef({
+    matches: threadSearch.matches,
+    matchedQuery: threadSearch.matchedQuery,
+    activeMatch: threadSearch.activeMatch,
+  });
   useLayoutEffect(() => {
     if (!supportsHighlightApi()) {
       return undefined;
@@ -267,54 +282,21 @@ export function ConversationTimeline({
     if (!pane) {
       return undefined;
     }
-    // Skip installing the observer entirely while search is closed/empty — this
-    // effect's own cleanup already clears any stale highlight, and an idle
-    // MutationObserver watching the whole pane subtree would otherwise fire on
-    // every streaming delta for no benefit.
-    if (!threadSearch.matchedQuery.trim() || threadSearch.matches.length === 0) {
-      clearSearchHighlights();
-      return undefined;
-    }
 
     let scheduled = false;
-    const rebuild = (): boolean =>
-      applySearchHighlights(pane, threadSearch.matches, threadSearch.matchedQuery, threadSearch.activeMatch);
+    const rebuild = () => {
+      scheduled = false;
+      const { matches, matchedQuery, activeMatch } = searchHighlightStateRef.current;
+      applySearchHighlights(pane, matches, matchedQuery, activeMatch);
+    };
     const scheduleRebuild = () => {
       if (scheduled) {
         return;
       }
       scheduled = true;
-      requestAnimationFrame(() => {
-        scheduled = false;
-        rebuild();
-      });
+      requestAnimationFrame(rebuild);
     };
 
-    // A jump to a match outside the mounted window (scrollToMessage) sets scrollTop
-    // synchronously, then relies on the resulting native `scroll` event to update the
-    // virtualization window and mount the target row a few frames later. A
-    // MutationObserver alone can race that: if this effect's own deps happen to
-    // change again before the mount's mutation record is delivered, tearing down and
-    // reinstalling the observer silently discards it (a MutationObserver gotcha —
-    // disconnect() drops any pending, undelivered records). Retrying every frame
-    // until the active match is actually found (or a generous frame budget runs
-    // out) closes that race without depending on delivery timing — bounded and
-    // self-terminating, and it stops immediately once the target is found, so the
-    // common (already-mounted) case pays for exactly one frame.
-    let settleAttemptsRemaining = 60;
-    const scheduleSettleRebuild = () => {
-      if (settleAttemptsRemaining <= 0) {
-        return;
-      }
-      settleAttemptsRemaining -= 1;
-      requestAnimationFrame(() => {
-        if (!rebuild()) {
-          scheduleSettleRebuild();
-        }
-      });
-    };
-
-    scheduleSettleRebuild();
     const observer = new MutationObserver(scheduleRebuild);
     observer.observe(pane, { childList: true, subtree: true, characterData: true });
     pane.addEventListener("scroll", scheduleRebuild, { passive: true });
@@ -324,6 +306,26 @@ export function ConversationTimeline({
       pane.removeEventListener("scroll", scheduleRebuild);
       clearSearchHighlights();
     };
+  }, [timelinePaneRef]);
+
+  // 2. This one reacts to match/query/activeMatch changes: updates the ref the
+  //    persistent observer above reads, and rebuilds immediately for the common
+  //    (already-mounted) case — the observer only needs to additionally catch the
+  //    eventual mount when scrollToMessage is still mid-jump.
+  useLayoutEffect(() => {
+    searchHighlightStateRef.current = {
+      matches: threadSearch.matches,
+      matchedQuery: threadSearch.matchedQuery,
+      activeMatch: threadSearch.activeMatch,
+    };
+    if (!supportsHighlightApi()) {
+      return;
+    }
+    const pane = timelinePaneRef.current;
+    if (!pane) {
+      return;
+    }
+    applySearchHighlights(pane, threadSearch.matches, threadSearch.matchedQuery, threadSearch.activeMatch);
   }, [threadSearch.matches, threadSearch.matchedQuery, threadSearch.activeMatch, timelinePaneRef]);
 
   // Register scroll intent for the keys that actually move a focused, scrollable
@@ -779,13 +781,7 @@ function findOccurrenceRangesInRow(root: Node, lowerQuery: string): Range[] {
 }
 
 /**
- * Rebuilds the two search highlights from whatever rows are currently mounted, and
- * reports whether the *active* match specifically was found — the signal the
- * settle-retry loop above uses to know it can stop. (General matches can be
- * non-empty from already-mounted rows while the just-navigated-to active one still
- * isn't — the row scrollToMessage is mid-jump toward — so activeRanges is the
- * meaningful completion signal, not matchRanges.)
- *
+ * Rebuilds the two search highlights from whatever rows are currently mounted.
  * Matches are computed against each item's *source* text (use-thread-search.ts),
  * while this walks *rendered* (post-markdown) DOM text — the two agree on order
  * and count for ordinary text, so `activeMatch.occurrenceIndex` (that match's
@@ -800,11 +796,11 @@ function applySearchHighlights(
   matches: readonly ThreadSearchMatch[],
   lowerQueryRaw: string,
   activeMatch: ThreadSearchMatch | undefined,
-): boolean {
+): void {
   const lowerQuery = lowerQueryRaw.trim().toLowerCase();
   if (!lowerQuery || matches.length === 0) {
     clearSearchHighlights();
-    return true;
+    return;
   }
 
   const matchItemIds = new Set(matches.map((match) => match.itemId));
@@ -827,5 +823,4 @@ function applySearchHighlights(
 
   CSS.highlights.set(SEARCH_HIGHLIGHT_NAME, new Highlight(...matchRanges));
   CSS.highlights.set(SEARCH_ACTIVE_HIGHLIGHT_NAME, new Highlight(...activeRanges));
-  return !activeMatch || activeRanges.length > 0;
 }
