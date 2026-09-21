@@ -56,14 +56,66 @@ export interface WebToolsSettings {
   readonly apiKey: string;
   /** Base URL of the self-hosted instance; only used by searxng. */
   readonly searxngBaseUrl: string;
-  /** Max results asked of the search backend. */
+  /**
+   * Max results asked of the search backend, and — for every provider except
+   * deepseek — the count actually requested from it.
+   *
+   * For deepseek specifically this is a purely LOCAL post-hoc slice, not a
+   * server-side parameter: DeepSeek's server-side search tool has no
+   * "how many results" knob. What it does have is `deepseekMaxUses` below,
+   * which bounds how many *search calls* the model may issue in one turn —
+   * a different axis entirely (calls vs. results-per-call). Conflating the
+   * two would either starve the model of search attempts or truncate
+   * perfectly good sources for no server-side reason, so keep them separate
+   * in code as well as in documentation.
+   */
   readonly maxResults: number;
   /**
    * When non-empty, both tools refuse any host not matching one of these
    * suffixes. Intended for isolated networks that must not reach the internet.
+   *
+   * For deepseek this is also sent to the server as `allowed_domains` (see
+   * `searchDeepSeek`), so a restricted search burns its search budget only on
+   * hosts that would pass the check anyway — filtering post-hoc locally, as
+   * every other provider still does, would waste server-side search calls on
+   * results that get thrown away. The local `isHostAllowed` filter stays in
+   * place regardless, as the actual enforcement boundary: a compromised or
+   * misbehaving server sending `allowed_domains` is not a promise it honors it.
    */
   readonly allowedDomains: readonly string[];
+  /** DeepSeek model id used for the throwaway search request. See `DEEPSEEK_DEFAULT_MODEL`. */
+  readonly deepseekModel: string;
+  /** `max_tokens` for the DeepSeek search request. See `DEEPSEEK_DEFAULT_MAX_TOKENS`. */
+  readonly deepseekMaxTokens: number;
+  /** `max_uses` — the number of search calls DeepSeek may make in one turn. See `DEEPSEEK_DEFAULT_MAX_USES`. */
+  readonly deepseekMaxUses: number;
 }
+
+/**
+ * Current DeepSeek model id for the search tool; the prose it writes is
+ * discarded, so this only needs to be cheap and tool-capable.
+ * `deepseek-v4-flash` was the id before DeepSeek's rename — it is a retired
+ * alias the API still accepts (served by V4.1-Flash under the hood) but new
+ * code should use the current id below.
+ */
+const DEEPSEEK_DEFAULT_MODEL = "deepseek-flash";
+/**
+ * Output budget for the throwaway answer. Generous enough that the model can
+ * think before it searches — running out mid-thought would yield zero results —
+ * and still fractions of a cent.
+ */
+const DEEPSEEK_DEFAULT_MAX_TOKENS = 4096;
+/**
+ * More than one search is allowed because a malformed first call (the model
+ * occasionally emits an empty query) otherwise burns the only attempt and the
+ * whole request comes back as `max_uses_exceeded`.
+ */
+const DEEPSEEK_DEFAULT_MAX_USES = 5;
+
+const DEEPSEEK_MIN_MAX_TOKENS = 256;
+const DEEPSEEK_MAX_MAX_TOKENS = 16_384;
+const DEEPSEEK_MIN_MAX_USES = 1;
+const DEEPSEEK_MAX_MAX_USES = 10;
 
 export const DEFAULT_WEB_TOOLS_SETTINGS: WebToolsSettings = {
   // Off by default: an app that silently starts making outbound requests is not
@@ -77,6 +129,9 @@ export const DEFAULT_WEB_TOOLS_SETTINGS: WebToolsSettings = {
   searxngBaseUrl: "",
   maxResults: 5,
   allowedDomains: [],
+  deepseekModel: DEEPSEEK_DEFAULT_MODEL,
+  deepseekMaxTokens: DEEPSEEK_DEFAULT_MAX_TOKENS,
+  deepseekMaxUses: DEEPSEEK_DEFAULT_MAX_USES,
 };
 
 /** Hard cap on fetched bytes, so one huge page cannot blow up the context. */
@@ -100,6 +155,19 @@ export interface WebSearchResult {
   readonly pageAge?: string;
 }
 
+/**
+ * Truncates to an integer and clamps into `[min, max]`; falls back to
+ * `fallback` for anything that isn't a finite number (NaN, +/-Infinity, or a
+ * non-number) rather than letting it through as an unbounded value — this is
+ * the one path a malformed or hand-edited settings file reaches this code
+ * through, so "reject silently to a safe default" beats "propagate garbage
+ * into a request body".
+ */
+function normalizeIntInRange(raw: unknown, min: number, max: number, fallback: number): number {
+  const truncated = typeof raw === "number" ? Math.trunc(raw) : NaN;
+  return Number.isFinite(truncated) ? Math.min(Math.max(truncated, min), max) : fallback;
+}
+
 export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
   if (typeof input !== "object" || input === null) {
     return DEFAULT_WEB_TOOLS_SETTINGS;
@@ -108,19 +176,37 @@ export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
   const provider: WebSearchProvider = isWebSearchProvider(raw.provider)
     ? raw.provider
     : DEFAULT_WEB_TOOLS_SETTINGS.provider;
-  const maxResultsRaw = typeof raw.maxResults === "number" ? Math.trunc(raw.maxResults) : NaN;
   return {
     enabled: raw.enabled === true,
     provider,
     apiKey: typeof raw.apiKey === "string" ? raw.apiKey.trim() : "",
     searxngBaseUrl: typeof raw.searxngBaseUrl === "string" ? raw.searxngBaseUrl.trim() : "",
-    maxResults: Number.isFinite(maxResultsRaw) ? Math.min(Math.max(maxResultsRaw, 1), 20) : DEFAULT_WEB_TOOLS_SETTINGS.maxResults,
+    maxResults: normalizeIntInRange(raw.maxResults, 1, 20, DEFAULT_WEB_TOOLS_SETTINGS.maxResults),
     allowedDomains: Array.isArray(raw.allowedDomains)
       ? raw.allowedDomains
           .filter((entry): entry is string => typeof entry === "string")
           .map((entry) => entry.trim().toLowerCase().replace(/^\.+/, ""))
           .filter(Boolean)
       : [],
+    // Absent on any settings file saved before these fields existed — falls
+    // back to the current defaults rather than failing to read the file, so
+    // an old web-tools.json keeps working with no migration step.
+    deepseekModel:
+      typeof raw.deepseekModel === "string" && raw.deepseekModel.trim()
+        ? raw.deepseekModel.trim()
+        : DEFAULT_WEB_TOOLS_SETTINGS.deepseekModel,
+    deepseekMaxTokens: normalizeIntInRange(
+      raw.deepseekMaxTokens,
+      DEEPSEEK_MIN_MAX_TOKENS,
+      DEEPSEEK_MAX_MAX_TOKENS,
+      DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxTokens,
+    ),
+    deepseekMaxUses: normalizeIntInRange(
+      raw.deepseekMaxUses,
+      DEEPSEEK_MIN_MAX_USES,
+      DEEPSEEK_MAX_MAX_USES,
+      DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxUses,
+    ),
   };
 }
 
@@ -344,25 +430,6 @@ function searchWith(
  * and a relay that only proxies `/v1` chat completions cannot serve it.
  */
 const DEEPSEEK_SEARCH_ENDPOINT = "https://api.deepseek.com/anthropic/v1/messages";
-/**
- * Cheapest model that supports the search tool; the prose it writes is
- * discarded. `deepseek-v4-flash` was the id before DeepSeek's rename — it is
- * a retired alias that the API still accepts (served by V4.1-Flash under the
- * hood) but new code should use the current id, `deepseek-flash`.
- */
-const DEEPSEEK_SEARCH_MODEL = "deepseek-flash";
-/**
- * Output budget for the throwaway answer. Generous enough that the model can
- * think before it searches — running out mid-thought would yield zero results —
- * and still fractions of a cent.
- */
-const DEEPSEEK_SEARCH_MAX_TOKENS = 512;
-/**
- * More than one search is allowed because a malformed first call (the model
- * occasionally emits an empty query) otherwise burns the only attempt and the
- * whole request comes back as `max_uses_exceeded`.
- */
-const DEEPSEEK_SEARCH_MAX_USES = 3;
 
 /**
  * Runs the search on DeepSeek's servers and harvests the sources out of the
@@ -390,12 +457,23 @@ async function searchDeepSeek(
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: DEEPSEEK_SEARCH_MODEL,
-        max_tokens: DEEPSEEK_SEARCH_MAX_TOKENS,
+        model: settings.deepseekModel,
+        max_tokens: settings.deepseekMaxTokens,
         messages: [{ role: "user", content: `Search the web for: ${query}` }],
         // No tool_choice: forcing the tool makes the model emit a call with an
         // empty input, which the server rejects as `invalid_tool_input`.
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: DEEPSEEK_SEARCH_MAX_USES }],
+        tools: [
+          {
+            type: "web_search_20250305",
+            name: "web_search",
+            max_uses: settings.deepseekMaxUses,
+            // Pushed down to the server so a restricted deployment doesn't
+            // spend a search call on a source it would only throw away
+            // locally afterward — see the `allowedDomains` doc comment on
+            // `WebToolsSettings` for why this is server-side, not local-only.
+            ...(settings.allowedDomains.length > 0 ? { allowed_domains: settings.allowedDomains } : {}),
+          },
+        ],
       }),
     },
     signal,
