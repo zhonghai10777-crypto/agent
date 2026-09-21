@@ -173,38 +173,52 @@ export function isHostAllowed(urlValue: string, allowedDomains: readonly string[
   return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
-async function requestJson(
-  url: string,
-  init: { readonly method: string; readonly headers: Record<string, string>; readonly body?: string },
-  signal: AbortSignal | undefined,
-): Promise<unknown> {
-  const response = await fetchWithTimeout(url, init, signal);
-  if (!response.ok) {
-    throw new Error(`Search request failed with HTTP ${response.status}.`);
-  }
-  return response.json();
+interface FetchInit {
+  readonly method: string;
+  readonly headers: Record<string, string>;
+  readonly body?: string;
+  readonly redirect?: "follow" | "manual";
 }
 
-async function fetchWithTimeout(
+/**
+ * Owns the whole lifecycle of one outbound request: the AbortController that
+ * backs the timeout, AND the timer/listener cleanup, live for as long as
+ * `consume` is running — not just until the response headers arrive.
+ *
+ * This matters because the previous shape cleared the timer in a `finally`
+ * attached to the `fetch()` call itself, so `REQUEST_TIMEOUT_MS` only ever
+ * bounded the time to get a `Response` object; a server that returned headers
+ * immediately and then stalled the body forever was never caught by it. Folding
+ * the body read into `consume` means the same timer — and the same
+ * AbortSignal — governs header AND body, so a stalled body still aborts.
+ */
+async function fetchWithBudget<T>(
   url: string,
-  init: { readonly method: string; readonly headers: Record<string, string>; readonly body?: string },
+  init: FetchInit,
   signal: AbortSignal | undefined,
-): Promise<Response> {
+  timeoutMs: number,
+  consume: (response: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
   const abortForCaller = () => controller.abort();
   signal?.addEventListener("abort", abortForCaller);
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       method: init.method,
       headers: init.headers,
       ...(init.body === undefined ? {} : { body: init.body }),
       signal: controller.signal,
-      redirect: "follow",
+      redirect: init.redirect ?? "follow",
     });
+    return await consume(response);
   } catch (error) {
-    if (controller.signal.aborted && !signal?.aborted) {
-      throw new Error(`The request timed out after ${REQUEST_TIMEOUT_MS / 1000}s.`);
+    if (timedOut) {
+      throw new Error(`The request timed out after ${timeoutMs / 1000}s.`);
     }
     throw error;
   } finally {
@@ -213,17 +227,80 @@ async function fetchWithTimeout(
   }
 }
 
+/**
+ * Streams a response body up to `maxBytes`, cancelling the underlying reader
+ * (and therefore the connection) the instant the cap is crossed instead of
+ * buffering the whole thing first. A chunked, Content-Length-less response
+ * (the common case for a generated or proxied page) previously had no limit
+ * at all until the full body had already been downloaded into memory.
+ */
+async function readCappedBytes(
+  response: Response,
+  maxBytes: number,
+): Promise<{ readonly bytes: Uint8Array; readonly truncated: boolean }> {
+  const body = response.body;
+  if (!body) {
+    return { bytes: new Uint8Array(0), truncated: false };
+  }
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  let truncated = false;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) {
+      break;
+    }
+    if (!value || value.byteLength === 0) {
+      continue;
+    }
+    const remaining = maxBytes - total;
+    const take = Math.min(value.byteLength, remaining);
+    if (take > 0) {
+      chunks.push(take === value.byteLength ? value : value.subarray(0, take));
+      total += take;
+    }
+    if (value.byteLength > remaining) {
+      truncated = true;
+      await reader.cancel("byte cap exceeded");
+      break;
+    }
+  }
+  return { bytes: chunks.length > 0 ? Buffer.concat(chunks, total) : new Uint8Array(0), truncated };
+}
+
+async function requestJson(
+  url: string,
+  init: { readonly method: string; readonly headers: Record<string, string>; readonly body?: string },
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+): Promise<unknown> {
+  return fetchWithBudget(url, init, signal, timeoutMs, async (response) => {
+    if (!response.ok) {
+      throw new Error(`Search request failed with HTTP ${response.status}.`);
+    }
+    // The JSON reply needs the same hard cap as a fetched page: an unbounded or
+    // malfunctioning search backend must not be read forever either.
+    const { bytes, truncated } = await readCappedBytes(response, MAX_FETCH_BYTES);
+    if (truncated) {
+      throw new Error("The search response was larger than the read limit.");
+    }
+    return JSON.parse(decodeBody(bytes, undefined)) as unknown;
+  });
+}
+
 export async function runWebSearch(
   query: string,
   settings: WebToolsSettings,
   signal?: AbortSignal,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<readonly WebSearchResult[]> {
   const misconfiguration = describeWebToolsMisconfiguration(settings);
   if (misconfiguration) {
     throw new Error(misconfiguration);
   }
 
-  const results = await searchWith(settings.provider, query, settings, signal);
+  const results = await searchWith(settings.provider, query, settings, signal, timeoutMs);
 
   // Apply the allowlist to results too: on a locked-down deployment the model
   // must not even see links it is not allowed to open.
@@ -235,16 +312,17 @@ function searchWith(
   query: string,
   settings: WebToolsSettings,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<readonly WebSearchResult[]> {
   switch (provider) {
     case "deepseek":
-      return searchDeepSeek(query, settings, signal);
+      return searchDeepSeek(query, settings, signal, timeoutMs);
     case "tavily":
-      return searchTavily(query, settings, signal);
+      return searchTavily(query, settings, signal, timeoutMs);
     case "searxng":
-      return searchSearxng(query, settings, signal);
+      return searchSearxng(query, settings, signal, timeoutMs);
     case "bocha":
-      return searchBocha(query, settings, signal);
+      return searchBocha(query, settings, signal, timeoutMs);
   }
 }
 
@@ -287,6 +365,7 @@ async function searchDeepSeek(
   query: string,
   settings: WebToolsSettings,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<readonly WebSearchResult[]> {
   const payload = await requestJson(
     DEEPSEEK_SEARCH_ENDPOINT,
@@ -307,6 +386,7 @@ async function searchDeepSeek(
       }),
     },
     signal,
+    timeoutMs,
   );
   return parseDeepSeekSearchResults(payload);
 }
@@ -367,6 +447,7 @@ async function searchBocha(
   query: string,
   settings: WebToolsSettings,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<readonly WebSearchResult[]> {
   const payload = await requestJson(
     "https://api.bochaai.com/v1/web-search",
@@ -379,6 +460,7 @@ async function searchBocha(
       body: JSON.stringify({ query, count: settings.maxResults, summary: true }),
     },
     signal,
+    timeoutMs,
   );
   const pages = pick(pick(pick(payload, "data"), "webPages"), "value");
   if (!Array.isArray(pages)) {
@@ -401,6 +483,7 @@ async function searchTavily(
   query: string,
   settings: WebToolsSettings,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<readonly WebSearchResult[]> {
   const payload = await requestJson(
     "https://api.tavily.com/search",
@@ -413,6 +496,7 @@ async function searchTavily(
       body: JSON.stringify({ query, max_results: settings.maxResults }),
     },
     signal,
+    timeoutMs,
   );
   const results = pick(payload, "results");
   if (!Array.isArray(results)) {
@@ -435,10 +519,11 @@ async function searchSearxng(
   query: string,
   settings: WebToolsSettings,
   signal: AbortSignal | undefined,
+  timeoutMs: number,
 ): Promise<readonly WebSearchResult[]> {
   const base = settings.searxngBaseUrl.replace(/\/+$/, "");
   const url = `${base}/search?q=${encodeURIComponent(query)}&format=json&safesearch=1`;
-  const payload = await requestJson(url, { method: "GET", headers: { Accept: "application/json" } }, signal);
+  const payload = await requestJson(url, { method: "GET", headers: { Accept: "application/json" } }, signal, timeoutMs);
   const results = pick(payload, "results");
   if (!Array.isArray(results)) {
     return [];
@@ -463,10 +548,27 @@ export interface WebFetchResult {
   readonly truncated: boolean;
 }
 
+/** Hard cap on redirect hops `runWebFetch` will follow before giving up. */
+const MAX_REDIRECTS = 5;
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
+type FetchHopOutcome =
+  | { readonly kind: "redirect"; readonly status: number; readonly location: string | null }
+  | {
+      readonly kind: "final";
+      readonly url: string;
+      readonly contentType: string;
+      readonly body: { readonly text: string; readonly truncated: boolean };
+    };
+
 export async function runWebFetch(
   rawUrl: string,
   settings: WebToolsSettings,
   signal?: AbortSignal,
+  timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<WebFetchResult> {
   if (!settings.enabled) {
     throw new Error("Web access is turned off. Enable it under Settings → Web access.");
@@ -478,46 +580,89 @@ export async function runWebFetch(
     throw new Error("That address is outside the allowed domain list configured for this installation.");
   }
 
-  const response = await fetchWithTimeout(
-    rawUrl,
-    { method: "GET", headers: { "User-Agent": USER_AGENT, Accept: "text/html,text/plain,*/*" } },
-    signal,
-  );
-  if (!response.ok) {
-    throw new Error(`The page could not be loaded (HTTP ${response.status}).`);
-  }
-  // Redirects are followed, so re-check the final host: an allowed URL must not
-  // become a bypass by redirecting off the allowlist.
-  if (!isHostAllowed(response.url || rawUrl, settings.allowedDomains)) {
-    throw new Error("The address redirected outside the allowed domain list.");
-  }
+  // Redirects are followed by hand (`redirect: "manual"` below) rather than by
+  // `fetch` itself, so every hop's target can be checked against the allowlist
+  // BEFORE the request goes out — a disallowed host must never be contacted at
+  // all, not merely have its response discarded after the fact.
+  let currentUrl = rawUrl;
 
-  const contentType = response.headers.get("content-type") ?? "";
-  if (/^(image|audio|video|application\/(pdf|zip|octet-stream))/i.test(contentType)) {
-    // Decoding a binary body as text is how you get a confidently wrong answer
-    // over mojibake. Refuse clearly instead.
-    throw new Error(`This address returns ${contentType.split(";")[0] || "binary"} content, which cannot be read as text.`);
+  for (let hop = 0; ; hop += 1) {
+    if (hop > MAX_REDIRECTS) {
+      throw new Error(`The page redirected more than ${MAX_REDIRECTS} times.`);
+    }
+
+    const outcome = await fetchWithBudget<FetchHopOutcome>(
+      currentUrl,
+      {
+        method: "GET",
+        headers: { "User-Agent": USER_AGENT, Accept: "text/html,text/plain,*/*" },
+        redirect: "manual",
+      },
+      signal,
+      timeoutMs,
+      async (response) => {
+        if (isRedirectStatus(response.status)) {
+          // No content to read on a redirect, but release the connection
+          // promptly rather than leaving it dangling until GC.
+          await response.body?.cancel();
+          return { kind: "redirect", status: response.status, location: response.headers.get("location") };
+        }
+        if (!response.ok) {
+          throw new Error(`The page could not be loaded (HTTP ${response.status}).`);
+        }
+
+        const contentType = response.headers.get("content-type") ?? "";
+        if (/^(image|audio|video|application\/(pdf|zip|octet-stream))/i.test(contentType)) {
+          // Decoding a binary body as text is how you get a confidently wrong
+          // answer over mojibake. Refuse clearly instead.
+          await response.body?.cancel();
+          throw new Error(
+            `This address returns ${contentType.split(";")[0] || "binary"} content, which cannot be read as text.`,
+          );
+        }
+
+        const body = await readCappedText(response);
+        return { kind: "final", url: response.url || currentUrl, contentType, body };
+      },
+    );
+
+    if (outcome.kind === "redirect") {
+      if (!outcome.location) {
+        throw new Error(`The page redirected (HTTP ${outcome.status}) without a Location header.`);
+      }
+      let nextUrl: string;
+      try {
+        nextUrl = new URL(outcome.location, currentUrl).toString();
+      } catch {
+        throw new Error("The page redirected to an invalid address.");
+      }
+      if (!isHttpUrl(nextUrl)) {
+        throw new Error("The page redirected to a non-http(s) address.");
+      }
+      if (!isHostAllowed(nextUrl, settings.allowedDomains)) {
+        throw new Error("The address redirected outside the allowed domain list.");
+      }
+      currentUrl = nextUrl;
+      continue;
+    }
+
+    const isHtml = /html/i.test(outcome.contentType) || /^\s*<(!doctype|html)/i.test(outcome.body.text);
+    const extracted = isHtml ? extractReadableText(outcome.body.text) : { title: "", text: outcome.body.text.trim() };
+    const truncated = outcome.body.truncated || extracted.text.length > MAX_EXTRACT_CHARS;
+
+    return {
+      url: outcome.url,
+      title: extracted.title,
+      text: extracted.text.slice(0, MAX_EXTRACT_CHARS),
+      truncated,
+    };
   }
-
-  const body = await readCappedText(response);
-  const isHtml = /html/i.test(contentType) || /^\s*<(!doctype|html)/i.test(body.text);
-  const extracted = isHtml ? extractReadableText(body.text) : { title: "", text: body.text.trim() };
-  const truncated = body.truncated || extracted.text.length > MAX_EXTRACT_CHARS;
-
-  return {
-    url: response.url || rawUrl,
-    title: extracted.title,
-    text: extracted.text.slice(0, MAX_EXTRACT_CHARS),
-    truncated,
-  };
 }
 
 async function readCappedText(response: Response): Promise<{ readonly text: string; readonly truncated: boolean }> {
-  const buffer = await response.arrayBuffer();
-  const truncated = buffer.byteLength > MAX_FETCH_BYTES;
-  const slice = truncated ? buffer.slice(0, MAX_FETCH_BYTES) : buffer;
+  const { bytes, truncated } = await readCappedBytes(response, MAX_FETCH_BYTES);
   const charset = /charset=([\w-]+)/i.exec(response.headers.get("content-type") ?? "")?.[1];
-  return { text: decodeBody(slice, charset), truncated };
+  return { text: decodeBody(bytes, charset), truncated };
 }
 
 /**
@@ -526,7 +671,7 @@ async function readCappedText(response: Response): Promise<{ readonly text: stri
  * 18030/GBK, and decoding it as UTF-8 produces mojibake that reads to the model
  * as plausible-but-wrong text rather than as an obvious failure.
  */
-function decodeBody(buffer: ArrayBuffer, charset: string | undefined): string {
+function decodeBody(buffer: Uint8Array, charset: string | undefined): string {
   const candidates = [charset, "utf-8"].filter((entry): entry is string => Boolean(entry));
   for (const candidate of candidates) {
     try {
