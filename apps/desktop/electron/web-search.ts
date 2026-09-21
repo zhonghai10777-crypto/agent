@@ -931,6 +931,8 @@ export function extractReadableText(html: string, baseUrl?: string): { readonly 
     .replace(/<(script|style|noscript|template|svg|canvas|iframe)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
     .replace(/<(nav|header|footer|aside|form)\b[^>]*>[\s\S]*?<\/\1>/gi, " ");
 
+  working = dropNonContentElements(working);
+
   working = convertLinks(working, baseUrl);
   working = convertTables(working);
   working = convertHeadings(working);
@@ -961,8 +963,14 @@ function convertLinks(html: string, baseUrl: string | undefined): string {
     /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi,
     (_match, _quote: string, href: string, inner: string) => {
       const text = cleanInlineText(inner);
+      // A link whose text is only punctuation or a symbol carries no content of
+      // its own — a footnote caret, a bracketed pilcrow, a bare arrow. Dropping
+      // it removes the marker and its href together.
+      if (!text || /^[\p{P}\p{S}\s]+$/u.test(text)) {
+        return " ";
+      }
       const resolved = resolveLinkUrl(href, baseUrl);
-      if (!resolved) {
+      if (!resolved || isSamePageAnchor(resolved, baseUrl)) {
         return text;
       }
       return text ? `${text} (${resolved})` : resolved;
@@ -973,6 +981,104 @@ function convertLinks(html: string, baseUrl: string | undefined): string {
 /** Resolves against `baseUrl` and rejects anything that is not http(s) —
  * `javascript:`, `data:`, `file:`, and friends are not destinations a model
  * should ever be handed as if they were a citable source. */
+/**
+ * Class and id tokens that mark an element as page furniture rather than
+ * content. These are cross-site conventions, not one site's markup: `noprint`
+ * is the long-standing CSS idiom for "screen affordance, not part of the
+ * document", `sr-only`/`visually-hidden`/`screen-reader` are the standard
+ * accessibility helpers, and `navbox`/`breadcrumb`/`sidebar` name navigation
+ * furniture wherever it appears. The `mw-`/`ambox`/`catlinks` entries are
+ * MediaWiki's, which is an engine behind a great many reference wikis rather
+ * than a single site — its per-section "edit" links and citation backlinks are
+ * pure chrome that costs far more characters than it carries meaning.
+ */
+const NON_CONTENT_TOKEN =
+  /\b(?:noprint|navbox|sidebar|breadcrumbs?|skip-?link|sr-only|visually-hidden|screen-?reader|mw-editsection|mw-cite-backlink|mw-jump-link|catlinks|ambox)\b/i;
+
+/** ARIA landmarks whose content is navigation or site chrome by definition. */
+const NON_CONTENT_ROLE = /\brole\s*=\s*(["'])(?:navigation|banner|contentinfo|complementary|search)\1/i;
+
+function isNonContentElement(attributes: string): boolean {
+  if (NON_CONTENT_ROLE.test(attributes)) {
+    return true;
+  }
+  // Only `class`/`id` values are tested — searching the whole attribute string
+  // would match a token appearing inside an href such as `/wiki/Sidebar`.
+  for (const match of attributes.matchAll(/\b(?:class|id)\s*=\s*(["'])([^"']*)\1/gi)) {
+    if (NON_CONTENT_TOKEN.test(match[2] ?? "")) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Removes furniture elements along with everything nested inside them.
+ *
+ * Depth-counted rather than regex-matched: `<div class="navbox">` on a real
+ * page wraps further `<div>`s, and a non-greedy `[\s\S]*?</div>` would stop at
+ * the first inner close tag, leaving the rest of the block behind as text.
+ */
+function dropNonContentElements(html: string): string {
+  const opener = /<(div|table|section|span|ul|ol|p|dl)\b([^>]*)>/gi;
+  let result = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  opener.lastIndex = 0;
+  while ((match = opener.exec(html))) {
+    const tag = match[1] ?? "";
+    if (!isNonContentElement(match[2] ?? "") || match.index < cursor) {
+      continue;
+    }
+    const end = findMatchingClose(html, tag, opener.lastIndex);
+    if (end < 0) {
+      continue;
+    }
+    result += html.slice(cursor, match.index);
+    cursor = end;
+    opener.lastIndex = end;
+  }
+  return result + html.slice(cursor);
+}
+
+/** Index just past the `</tag>` that closes the element open at `from`. */
+function findMatchingClose(html: string, tag: string, from: number): number {
+  const scan = new RegExp(`<(/?)${tag}\\b[^>]*>`, "gi");
+  scan.lastIndex = from;
+  let depth = 1;
+  let step: RegExpExecArray | null;
+  while ((step = scan.exec(html))) {
+    depth += step[1] ? -1 : 1;
+    if (depth === 0) {
+      return scan.lastIndex;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Whether a link only moves within the page already being read. Its URL is
+ * dead weight — the model cannot follow it, and the target text is in this
+ * same extraction — while the URL itself is often far longer than the link
+ * text it belongs to (a footnote backlink is one caret against 60+ characters
+ * of percent-encoded href).
+ */
+function isSamePageAnchor(resolved: string, baseUrl: string | undefined): boolean {
+  try {
+    const target = new URL(resolved);
+    if (!target.hash) {
+      return false;
+    }
+    if (!baseUrl) {
+      return false;
+    }
+    const base = new URL(baseUrl);
+    return target.origin === base.origin && target.pathname === base.pathname && target.search === base.search;
+  } catch {
+    return false;
+  }
+}
+
 function resolveLinkUrl(href: string, baseUrl: string | undefined): string | undefined {
   const raw = decodeEntities(href).trim();
   if (!raw) {
