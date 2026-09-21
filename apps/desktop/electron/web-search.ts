@@ -90,6 +90,14 @@ export interface WebSearchResult {
   readonly title: string;
   readonly url: string;
   readonly snippet: string;
+  /**
+   * DeepSeek's raw `page_age` string (e.g. "2025-03-11" or "3 days ago"), kept
+   * verbatim. Deliberately not parsed into a normalized date — the field's
+   * format is not documented, so a failed parse would just hide an unknown
+   * age behind a wrong one. Absent for other providers or when DeepSeek omits
+   * it on a given result.
+   */
+  readonly pageAge?: string;
 }
 
 export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
@@ -336,8 +344,13 @@ function searchWith(
  * and a relay that only proxies `/v1` chat completions cannot serve it.
  */
 const DEEPSEEK_SEARCH_ENDPOINT = "https://api.deepseek.com/anthropic/v1/messages";
-/** Cheapest model that supports the search tool; the prose it writes is discarded. */
-const DEEPSEEK_SEARCH_MODEL = "deepseek-v4-flash";
+/**
+ * Cheapest model that supports the search tool; the prose it writes is
+ * discarded. `deepseek-v4-flash` was the id before DeepSeek's rename — it is
+ * a retired alias that the API still accepts (served by V4.1-Flash under the
+ * hood) but new code should use the current id, `deepseek-flash`.
+ */
+const DEEPSEEK_SEARCH_MODEL = "deepseek-flash";
 /**
  * Output budget for the throwaway answer. Generous enough that the model can
  * think before it searches — running out mid-thought would yield zero results —
@@ -388,7 +401,20 @@ async function searchDeepSeek(
     signal,
     timeoutMs,
   );
-  return parseDeepSeekSearchResults(payload);
+  return parseDeepSeekSearchResults(payload).results;
+}
+
+/**
+ * What `parseDeepSeekSearchResults` recovers from one Anthropic-shaped
+ * DeepSeek reply, beyond the flat source list `WebSearchResult[]` already
+ * gives every other backend.
+ */
+export interface DeepSeekSearchOutcome {
+  readonly results: readonly WebSearchResult[];
+  /** Top-level `stop_reason` (`end_turn`, `max_tokens`, `tool_use`, …), when present. */
+  readonly stopReason?: string;
+  /** `usage.server_tool_use.web_search_requests` — actual search calls billed, when present. */
+  readonly webSearchRequests?: number;
 }
 
 /**
@@ -398,49 +424,99 @@ async function searchDeepSeek(
  * response nests results two levels deep and interleaves them with reasoning,
  * text and per-search error entries, which is exactly the shape that quietly
  * regresses when the API adds a block type.
+ *
+ * Three outcomes are kept distinct rather than collapsed into "no results":
+ *  - a real empty result (a `web_search_tool_result` block exists, its
+ *    `content` is a well-formed but empty list) — not an error, just nothing
+ *    found;
+ *  - the model never called the tool at all (no `web_search_tool_result`
+ *    block anywhere in `content`) — the caller should say so, not "no
+ *    results found", since the model didn't even try;
+ *  - a protocol error or a shape this parser does not recognize (a bare
+ *    `web_search_tool_result_error` object — DeepSeek's actual failure shape,
+ *    not an array — or a `content` value that is neither) — surfaced with
+ *    detail instead of silently discarded.
+ *
+ * A response that mixes a successful search with a failed or unrecognized one
+ * still returns the successful sources: a partially failed multi-search turn
+ * is more useful to the model than an error.
  */
-export function parseDeepSeekSearchResults(payload: unknown): readonly WebSearchResult[] {
+export function parseDeepSeekSearchResults(payload: unknown): DeepSeekSearchOutcome {
+  const stopReason = stringField(payload, "stop_reason");
+  const webSearchRequests = numberField(pick(pick(payload, "usage"), "server_tool_use"), "web_search_requests");
+  const meta = {
+    ...(stopReason ? { stopReason } : {}),
+    ...(webSearchRequests !== undefined ? { webSearchRequests } : {}),
+  };
+
   const content = pick(payload, "content");
   if (!Array.isArray(content)) {
-    return [];
+    throw new Error("DeepSeek did not perform a web search for this query.");
+  }
+
+  const searchBlocks = content.filter((block) => stringField(block, "type") === "web_search_tool_result");
+  if (searchBlocks.length === 0) {
+    throw new Error("DeepSeek did not perform a web search for this query.");
   }
 
   const results: WebSearchResult[] = [];
   const seen = new Set<string>();
   const errorCodes: string[] = [];
-  for (const block of content) {
-    if (stringField(block, "type") !== "web_search_tool_result") {
-      continue;
-    }
+  let sawUnrecognizedBlock = false;
+
+  for (const block of searchBlocks) {
     const entries = pick(block, "content");
-    if (!Array.isArray(entries)) {
+
+    if (Array.isArray(entries)) {
+      for (const entry of entries) {
+        const entryType = stringField(entry, "type");
+        if (entryType === "web_search_tool_result_error") {
+          const code = stringField(entry, "error_code");
+          if (code) {
+            errorCodes.push(code);
+          }
+          continue;
+        }
+        const url = stringField(entry, "url");
+        // The model may repeat a source across several searches in one turn.
+        if (entryType !== "web_search_result" || !url || seen.has(url)) {
+          continue;
+        }
+        seen.add(url);
+        const pageAge = stringField(entry, "page_age");
+        results.push({
+          title: stringField(entry, "title") ?? url,
+          url,
+          snippet: "",
+          ...(pageAge ? { pageAge } : {}),
+        });
+      }
       continue;
     }
-    for (const entry of entries) {
-      const entryType = stringField(entry, "type");
-      if (entryType === "web_search_tool_result_error") {
-        const code = stringField(entry, "error_code");
-        if (code) {
-          errorCodes.push(code);
-        }
-        continue;
+
+    // The documented failure shape: `content` is a single error object, not
+    // an array — this used to be silently skipped by an `Array.isArray`
+    // guard, which is exactly how `max_uses_exceeded` and friends ended up
+    // reported to the user as "no results found".
+    if (isPlainObject(entries) && stringField(entries, "type") === "web_search_tool_result_error") {
+      const code = stringField(entries, "error_code");
+      if (code) {
+        errorCodes.push(code);
       }
-      const url = stringField(entry, "url");
-      // The model may repeat a source across several searches in one turn.
-      if (entryType !== "web_search_result" || !url || seen.has(url)) {
-        continue;
-      }
-      seen.add(url);
-      results.push({ title: stringField(entry, "title") ?? url, url, snippet: "" });
+      continue;
     }
+
+    // Neither a results array nor a recognized error object.
+    sawUnrecognizedBlock = true;
   }
 
-  // Only surface an error when nothing at all came back: a partially failed
-  // multi-search turn still gives the model usable sources.
   if (results.length === 0 && errorCodes.length > 0) {
     throw new Error(`DeepSeek search failed (${[...new Set(errorCodes)].join(", ")}).`);
   }
-  return results;
+  if (results.length === 0 && sawUnrecognizedBlock) {
+    throw new Error("DeepSeek returned a web search result in a shape this app does not recognize.");
+  }
+  return { results, ...meta };
 }
 
 async function searchBocha(
@@ -765,4 +841,13 @@ function pick(value: unknown, key: string): unknown {
 function stringField(value: unknown, key: string): string | undefined {
   const field = pick(value, key);
   return typeof field === "string" && field.trim() ? field.trim() : undefined;
+}
+
+function numberField(value: unknown, key: string): number | undefined {
+  const field = pick(value, key);
+  return typeof field === "number" && Number.isFinite(field) ? field : undefined;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
