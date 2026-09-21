@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionFactory, ToolDefinition, AgentToolResult } from "@earendil-works/pi-coding-agent";
 import {
+  describeWebAccessRefusal,
   describeWebToolsMisconfiguration,
-  isHostAllowed,
   runWebFetch,
   runWebSearch,
   type WebSearchResult,
@@ -39,6 +39,9 @@ interface WebPartToolDetails {
   readonly charLimit?: number;
   readonly nextPart?: number;
   readonly error?: string;
+  /** Machine-readable failure reason, mirroring `ReadDocumentToolDetails`'s
+   * `errorCode` so a caller can branch on the cause without matching prose. */
+  readonly errorCode?: string;
 }
 
 export interface WebFetchToolDetails extends WebPartToolDetails {
@@ -142,15 +145,7 @@ function createWebFetchTool(getSettings: WebToolsSettingsProvider): ToolDefiniti
 
       try {
         const page = await runWebFetch(url, getSettings(), signal);
-        // `runWebFetch` always caches its result on success (see
-        // `cacheWebFetch` in web-search.ts), so this lookup is expected to
-        // hit; the fallback below only guards against that invariant ever
-        // breaking, rather than re-deriving a snapshot by hand here.
-        const snapshot = getCachedWebContent(page.url);
-        if (!snapshot) {
-          return errorResult({ action: "web_fetch", url: page.url, error: "Fetched content could not be read back from cache." });
-        }
-        return renderWebPart("web_fetch", page.url, snapshot, undefined);
+        return renderWebPart("web_fetch", page.url, page.snapshot, undefined);
       } catch (error) {
         return errorResult({ action: "web_fetch", url, error: errorMessage(error) });
       }
@@ -200,12 +195,9 @@ function createWebReadTool(getSettings: WebToolsSettingsProvider): ToolDefinitio
       // would refuse. Turning web access off, or narrowing the domain
       // allowlist, must take effect on already-cached content too — the
       // cache is not a side door around either setting.
-      const settings = getSettings();
-      if (!settings.enabled) {
-        return errorResult({ action: "web_read", url, error: "Web access is turned off. Enable it under Settings → Web access." });
-      }
-      if (!isHostAllowed(url, settings.allowedDomains)) {
-        return errorResult({ action: "web_read", url, error: "That address is outside the allowed domain list configured for this installation." });
+      const refusal = describeWebAccessRefusal(url, getSettings());
+      if (refusal) {
+        return errorResult({ action: "web_read", url, error: refusal.message, errorCode: refusal.code });
       }
 
       const snapshot = getCachedWebContent(url);
@@ -214,6 +206,7 @@ function createWebReadTool(getSettings: WebToolsSettingsProvider): ToolDefinitio
           action: "web_read",
           url,
           error: "This page has not been fetched in this session yet. Call web_fetch on this URL first, then use web_read to keep reading it.",
+          errorCode: "WEB_NOT_FETCHED",
         });
       }
 
@@ -224,6 +217,7 @@ function createWebReadTool(getSettings: WebToolsSettingsProvider): ToolDefinitio
           url,
           sourceVersion: snapshot.sourceVersion,
           error: "This page's content has changed since that section reference was created. Call web_fetch again to get the current version before continuing.",
+          errorCode: "WEB_CONTENT_CHANGED",
         });
       }
 
@@ -250,7 +244,7 @@ function renderWebPart(
   const totalParts = snapshot.parts.length;
   const unit = "section" as const;
   if (totalParts === 0) {
-    return errorResult({ action, url, title: snapshot.title || undefined, error: "This page has no extractable text." });
+    return errorResult({ action, url, title: snapshot.title || undefined, error: "This page has no extractable text.", errorCode: "WEB_NO_CONTENT" });
   }
   if (requested !== undefined && (!Number.isInteger(requested) || requested < 1 || requested > totalParts)) {
     return errorResult({
@@ -261,16 +255,20 @@ function renderWebPart(
       unit,
       sourceVersion: snapshot.sourceVersion,
       error: `This page has ${totalParts} ${unit}(s); ${requested} is out of range.`,
+      errorCode: "WEB_PART_OUT_OF_RANGE",
     });
   }
 
   const part = requested ?? 1;
-  const body = snapshot.parts[part - 1] ?? "";
   const name = snapshot.title || url;
   const header = totalParts > 1 ? `# ${name} — section ${part} of ${totalParts}\n${url}\n\n` : `# ${name}\n${url}\n\n`;
+  // An empty section must say so rather than render as blank: `read_document`
+  // spells its empty pages out for the same reason — silence reads to the
+  // model as "the content is not here", which is a different claim entirely.
+  const body = snapshot.parts[part - 1] || `(${unit} ${part} contains no extractable text.)`;
   const footer =
     (snapshot.complete === false
-      ? `\n\n[Partial page: extraction reached the ${snapshot.charLimit} character limit. Unread content may still follow. Do not claim the page does not contain something beyond this point.]`
+      ? `\n\n[Partial page: extraction reached the ${snapshot.charLimit} character limit. Unread content may still follow. Do not claim a whole-page absence.]`
       : "") + (totalParts > part ? `\n\n[More follows — call web_read with part=${part + 1} to continue.]` : "");
 
   return {

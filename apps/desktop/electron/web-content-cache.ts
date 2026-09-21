@@ -137,24 +137,40 @@ function segmentWebText(text: string): readonly string[] {
   if (text.length <= PART_CHAR_BUDGET) {
     return [text];
   }
-  const blocks = splitIntoHeadingBlocks(text);
+  return packGreedy(splitIntoHeadingBlocks(text), splitOversizedBlock);
+}
+
+/**
+ * Packs `items` into parts up to `PART_CHAR_BUDGET`, joining with newlines and
+ * starting a new part rather than splitting an item across two. An item too
+ * big to ever fit is handed to `onOversized`, which decides how to break it
+ * down — that delegation is the only thing that differs between packing
+ * heading blocks and packing the lines inside one oversized block, so the
+ * greedy loop itself lives here once.
+ */
+function packGreedy(
+  items: readonly string[],
+  onOversized: (item: string) => readonly string[],
+): readonly string[] {
   const parts: string[] = [];
   let current = "";
-  for (const block of blocks) {
-    if (block.length > PART_CHAR_BUDGET) {
+  for (const item of items) {
+    if (item.length > PART_CHAR_BUDGET) {
       if (current) {
         parts.push(current);
         current = "";
       }
-      parts.push(...splitOversizedBlock(block));
+      parts.push(...onOversized(item));
       continue;
     }
-    const candidate = current ? `${current}\n${block}` : block;
+    const candidate = current ? `${current}\n${item}` : item;
     if (candidate.length <= PART_CHAR_BUDGET) {
       current = candidate;
     } else {
-      parts.push(current);
-      current = block;
+      if (current) {
+        parts.push(current);
+      }
+      current = item;
     }
   }
   if (current) {
@@ -191,32 +207,7 @@ function splitIntoHeadingBlocks(text: string): readonly string[] {
  * `extractReadableText`'s output shape — falling back to a sentence- or
  * word-boundary cut only for a single line that alone exceeds the budget. */
 function splitOversizedBlock(block: string): readonly string[] {
-  const lines = block.split("\n");
-  const parts: string[] = [];
-  let current = "";
-  for (const line of lines) {
-    if (line.length > PART_CHAR_BUDGET) {
-      if (current) {
-        parts.push(current);
-        current = "";
-      }
-      parts.push(...splitLongLine(line));
-      continue;
-    }
-    const candidate = current ? `${current}\n${line}` : line;
-    if (candidate.length <= PART_CHAR_BUDGET) {
-      current = candidate;
-    } else {
-      if (current) {
-        parts.push(current);
-      }
-      current = line;
-    }
-  }
-  if (current) {
-    parts.push(current);
-  }
-  return parts;
+  return packGreedy(block.split("\n"), splitLongLine);
 }
 
 const SENTENCE_END = /[.!?。!?]\s/g;

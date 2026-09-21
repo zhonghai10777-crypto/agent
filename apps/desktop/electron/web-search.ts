@@ -4,7 +4,7 @@ import {
   isWebSearchProvider,
   type WebSearchProvider,
 } from "../src/web-search-providers";
-import { cacheWebFetch } from "./web-content-cache";
+import { cacheWebFetch, type WebContentSnapshot } from "./web-content-cache";
 
 /**
  * Search backends. The four shapes cover the realistic deployments:
@@ -721,16 +721,13 @@ export interface WebFetchResult {
   /** True when extraction hit `MAX_EXTRACT_CHARS`, or the fetch itself was
    * byte-capped — i.e. content beyond `text` may still exist. */
   readonly truncated: boolean;
-  /** Content-hash version of `text`, for `web_read`'s `source_version` check. */
-  readonly sourceVersion: string;
-  /** Number of ~12,000-char sections `text` was segmented into for paged
-   * reading via `web_read`. */
-  readonly totalParts: number;
-  /** Same as `!truncated` — kept alongside it for parity with `truncated`
-   * during the transition and because callers building a `web_read`-style
-   * response want the positive form. */
-  readonly complete: boolean;
-  readonly charLimit: number;
+  /**
+   * The cache entry this fetch just wrote, handed over directly rather than
+   * re-derived: it already carries the version, section count and
+   * completeness a paginated response needs, so the caller does not have to
+   * look up by URL what this call just produced.
+   */
+  readonly snapshot: WebContentSnapshot;
 }
 
 /** Hard cap on redirect hops `runWebFetch` will follow before giving up. */
@@ -749,20 +746,49 @@ type FetchHopOutcome =
       readonly body: { readonly text: string; readonly truncated: boolean };
     };
 
+/** Why a URL may not be reached right now, or undefined when it may. */
+export type WebAccessErrorCode = "WEB_DISABLED" | "WEB_INVALID_URL" | "WEB_ACCESS_RESTRICTED";
+
+export interface WebAccessRefusal {
+  readonly message: string;
+  readonly code: WebAccessErrorCode;
+}
+
+/**
+ * The one place that decides whether a URL may be reached under the current
+ * settings, and says so in the words the user sees.
+ *
+ * Both entry points ask this: `runWebFetch` before going to the network, and
+ * `web_read` before serving a cache hit — a cached page must not stay readable
+ * after web access is switched off or the allowlist is narrowed. Keeping the
+ * pair of checks (and their wording) in one function is what stops those two
+ * paths from drifting into different answers for the same URL.
+ */
+export function describeWebAccessRefusal(url: string, settings: WebToolsSettings): WebAccessRefusal | undefined {
+  if (!settings.enabled) {
+    return { message: "Web access is turned off. Enable it under Settings → Web access.", code: "WEB_DISABLED" };
+  }
+  if (!isHttpUrl(url)) {
+    return { message: "Only http:// and https:// addresses can be fetched.", code: "WEB_INVALID_URL" };
+  }
+  if (!isHostAllowed(url, settings.allowedDomains)) {
+    return {
+      message: "That address is outside the allowed domain list configured for this installation.",
+      code: "WEB_ACCESS_RESTRICTED",
+    };
+  }
+  return undefined;
+}
+
 export async function runWebFetch(
   rawUrl: string,
   settings: WebToolsSettings,
   signal?: AbortSignal,
   timeoutMs: number = REQUEST_TIMEOUT_MS,
 ): Promise<WebFetchResult> {
-  if (!settings.enabled) {
-    throw new Error("Web access is turned off. Enable it under Settings → Web access.");
-  }
-  if (!isHttpUrl(rawUrl)) {
-    throw new Error("Only http:// and https:// addresses can be fetched.");
-  }
-  if (!isHostAllowed(rawUrl, settings.allowedDomains)) {
-    throw new Error("That address is outside the allowed domain list configured for this installation.");
+  const refusal = describeWebAccessRefusal(rawUrl, settings);
+  if (refusal) {
+    throw new Error(refusal.message);
   }
 
   // Redirects are followed by hand (`redirect: "manual"` below) rather than by
@@ -848,16 +874,7 @@ export async function runWebFetch(
       charLimit: MAX_EXTRACT_CHARS,
     });
 
-    return {
-      url: outcome.url,
-      title: extracted.title,
-      text: cappedText,
-      truncated,
-      sourceVersion: snapshot.sourceVersion,
-      totalParts: snapshot.parts.length,
-      complete: snapshot.complete,
-      charLimit: snapshot.charLimit,
-    };
+    return { url: outcome.url, title: extracted.title, text: cappedText, truncated, snapshot };
   }
 }
 
@@ -943,7 +960,7 @@ function convertLinks(html: string, baseUrl: string | undefined): string {
   return html.replace(
     /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi,
     (_match, _quote: string, href: string, inner: string) => {
-      const text = stripTags(inner).replace(/\s+/g, " ").trim();
+      const text = cleanInlineText(inner);
       const resolved = resolveLinkUrl(href, baseUrl);
       if (!resolved) {
         return text;
@@ -1000,7 +1017,7 @@ function extractRowCells(rowHtml: string): TableCell[] {
   while ((match = cellPattern.exec(rowHtml))) {
     cells.push({
       isHeader: (match[1] ?? "").toLowerCase() === "th",
-      text: stripTags(match[2] ?? "").replace(/\s+/g, " ").trim(),
+      text: cleanInlineText(match[2] ?? ""),
     });
   }
   return cells;
@@ -1080,13 +1097,22 @@ function convertTables(html: string): string {
  * page at a heading boundary rather than mid-section. */
 function convertHeadings(html: string): string {
   return html.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_match, level: string, inner: string) => {
-    const text = stripTags(inner).replace(/\s+/g, " ").trim();
+    const text = cleanInlineText(inner);
     return text ? `\n${"#".repeat(Number.parseInt(level, 10))} ${text}\n` : "\n";
   });
 }
 
 function stripTags(value: string): string {
   return value.replace(/<[^>]*>/g, " ");
+}
+
+/**
+ * Inline HTML to a single clean line: drop tags, collapse the whitespace that
+ * markup indentation leaves behind, trim. Used wherever a fragment has to end
+ * up on one line — link text, table cells, headings.
+ */
+function cleanInlineText(html: string): string {
+  return stripTags(html).replace(/\s+/g, " ").trim();
 }
 
 const NAMED_ENTITIES: Readonly<Record<string, string>> = {
