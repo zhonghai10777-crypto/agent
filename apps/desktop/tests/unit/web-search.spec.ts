@@ -150,9 +150,15 @@ test("describeWebToolsMisconfiguration points deepseek users at a field that exi
  * Mirrors a real `api.deepseek.com/anthropic/v1/messages` reply: reasoning and
  * commentary blocks interleaved with the search results, a repeated source, and
  * a second search that failed.
+ *
+ * The failed sub-search's `content` is a BARE error object, not an array —
+ * that is DeepSeek's documented failure shape for `web_search_tool_result`,
+ * matching the Anthropic protocol it mirrors.
  */
 const DEEPSEEK_RESPONSE = {
   type: "message",
+  stop_reason: "max_tokens",
+  usage: { server_tool_use: { web_search_requests: 2 } },
   content: [
     { type: "thinking", thinking: "The user wants a standard. Let me search." },
     { type: "server_tool_use", id: "call_00", name: "web_search", input: { query: "锅炉效率 标准" } },
@@ -183,47 +189,86 @@ const DEEPSEEK_RESPONSE = {
     {
       type: "web_search_tool_result",
       tool_use_id: "call_01",
-      content: [{ type: "web_search_tool_result_error", error_code: "max_uses_exceeded" }],
+      content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" },
     },
   ],
-  stop_reason: "max_tokens",
 };
 
-test("parseDeepSeekSearchResults harvests sources and ignores the surrounding blocks", () => {
-  const results = parseDeepSeekSearchResults(DEEPSEEK_RESPONSE);
+test("parseDeepSeekSearchResults harvests sources, ignores surrounding blocks, and keeps page_age/stop_reason/usage", () => {
+  const outcome = parseDeepSeekSearchResults(DEEPSEEK_RESPONSE);
 
-  expect(results.map((result) => result.url)).toEqual([
+  expect(outcome.results.map((result) => result.url)).toEqual([
     "https://std.samr.gov.cn/hb/search/stdHBDetailed?id=2FA2",
     "https://hbba.sacinfo.org.cn/stdDetail/ae96",
   ]);
-  expect(results[0]?.title).toBe("GB/T 10184-2025：电站锅炉性能试验规程");
+  expect(outcome.results[0]?.title).toBe("GB/T 10184-2025：电站锅炉性能试验规程");
   // DeepSeek keeps the page text in an opaque field, so there is no snippet —
   // and the encrypted blob must never be passed off as one.
-  expect(results[0]?.snippet).toBe("");
-  expect(results[1]?.snippet).toBe("");
-  expect(JSON.stringify(results)).not.toContain("EqGZ");
+  expect(outcome.results[0]?.snippet).toBe("");
+  expect(outcome.results[1]?.snippet).toBe("");
+  expect(JSON.stringify(outcome.results)).not.toContain("EqGZ");
+  // page_age is kept verbatim, not parsed — and absent when DeepSeek omits it.
+  expect(outcome.results[0]?.pageAge).toBe("2025-03-11");
+  expect(outcome.results[1]?.pageAge).toBeUndefined();
+  // stop_reason and the server-side search count are propagated, not dropped.
+  expect(outcome.stopReason).toBe("max_tokens");
+  expect(outcome.webSearchRequests).toBe(2);
 });
 
-test("parseDeepSeekSearchResults reports a wholly failed search but tolerates a partial one", () => {
+test("parseDeepSeekSearchResults keeps sources from a partially failed multi-search turn", () => {
+  // One bad search among several must not discard the sources the others found.
+  expect(parseDeepSeekSearchResults(DEEPSEEK_RESPONSE).results).toHaveLength(2);
+});
+
+test("parseDeepSeekSearchResults surfaces the error code when every search failed, instead of returning empty", () => {
   const allFailed = {
     content: [
       {
         type: "web_search_tool_result",
-        content: [{ type: "web_search_tool_result_error", error_code: "invalid_tool_input" }],
+        // Bare error object — the real DeepSeek/Anthropic failure shape. The
+        // old parser's `Array.isArray` guard silently swallowed exactly this,
+        // so the user only ever saw "No results found".
+        content: { type: "web_search_tool_result_error", error_code: "invalid_tool_input" },
       },
     ],
   };
   expect(() => parseDeepSeekSearchResults(allFailed)).toThrow(/invalid_tool_input/);
-
-  // One bad search among several must not discard the sources the others found.
-  expect(parseDeepSeekSearchResults(DEEPSEEK_RESPONSE)).toHaveLength(2);
 });
 
-test("parseDeepSeekSearchResults survives a response shape it does not recognize", () => {
-  expect(parseDeepSeekSearchResults({})).toEqual([]);
-  expect(parseDeepSeekSearchResults({ content: "not an array" })).toEqual([]);
-  expect(parseDeepSeekSearchResults(undefined)).toEqual([]);
-  // A future block type must be skipped, not crash the search.
-  expect(parseDeepSeekSearchResults({ content: [{ type: "some_new_block" }] })).toEqual([]);
-  expect(parseDeepSeekSearchResults({ content: [{ type: "web_search_tool_result", content: null }] })).toEqual([]);
+test("parseDeepSeekSearchResults reports that no search ran, distinctly from an empty result", () => {
+  // No `content` array at all, or an array with no web_search_tool_result
+  // block in it — the model never called the tool. This must not read to the
+  // caller the same as "searched and found nothing".
+  const noSearchMessage = /did not perform a web search/;
+  expect(() => parseDeepSeekSearchResults({})).toThrow(noSearchMessage);
+  expect(() => parseDeepSeekSearchResults(undefined)).toThrow(noSearchMessage);
+  expect(() => parseDeepSeekSearchResults({ content: "not an array" })).toThrow(noSearchMessage);
+  expect(() => parseDeepSeekSearchResults({ content: [{ type: "text", text: "no search needed" }] })).toThrow(
+    noSearchMessage,
+  );
+});
+
+test("parseDeepSeekSearchResults treats a legitimate empty result list as success, not an error", () => {
+  const outcome = parseDeepSeekSearchResults({
+    content: [{ type: "web_search_tool_result", content: [] }],
+  });
+  expect(outcome.results).toEqual([]);
+});
+
+test("parseDeepSeekSearchResults reports an unrecognized result shape instead of silently returning nothing", () => {
+  const unrecognizedMessage = /does not recognize/;
+  expect(() =>
+    parseDeepSeekSearchResults({ content: [{ type: "web_search_tool_result", content: null }] }),
+  ).toThrow(unrecognizedMessage);
+  expect(() =>
+    parseDeepSeekSearchResults({ content: [{ type: "web_search_tool_result", content: "oops" }] }),
+  ).toThrow(unrecognizedMessage);
+});
+
+test("parseDeepSeekSearchResults leaves stop_reason/webSearchRequests undefined rather than defaulting usage to 0", () => {
+  const outcome = parseDeepSeekSearchResults({
+    content: [{ type: "web_search_tool_result", content: [] }],
+  });
+  expect(outcome.stopReason).toBeUndefined();
+  expect(outcome.webSearchRequests).toBeUndefined();
 });
