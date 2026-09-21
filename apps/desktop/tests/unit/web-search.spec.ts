@@ -37,6 +37,61 @@ test("extractReadableText drops scripts, styles and chrome, keeping body prose",
   expect(text).not.toMatch(/\n{3,}/);
 });
 
+test("extractReadableText drops page furniture along with everything nested inside it", () => {
+  // A navbox on a real page wraps further <div>s. A non-greedy regex would stop
+  // at the first inner </div> and leave the rest of the block behind as text,
+  // so the removal has to count nesting depth.
+  const html = `<body>
+    <p>额定蒸发量为 35 t/h。</p>
+    <div class="navbox authority-control"><div class="navbox-inner"><table><tr><td>国际</td><td>FAST</td></tr></table><div>其他 | NARA</div></div></div>
+    <table class="metadata ambox"><tr><td>此條目需要补充更多来源。</td></tr></table>
+    <div role="navigation"><a href="/a">上一页</a></div>
+    <span class="mw-editsection">[ 编辑 ]</span>
+    <p>出口压力 3.82 MPa。</p>
+  </body>`;
+
+  const { text } = extractReadableText(html, "https://x.test/doc");
+
+  expect(text).toContain("额定蒸发量为 35 t/h。");
+  expect(text).toContain("出口压力 3.82 MPa。");
+  // The nested tail of the navbox must go with it, not survive as a stray line.
+  expect(text).not.toContain("NARA");
+  expect(text).not.toContain("FAST");
+  expect(text).not.toContain("国际");
+  expect(text).not.toContain("此條目需要补充更多来源");
+  expect(text).not.toContain("上一页");
+  expect(text).not.toContain("编辑");
+});
+
+test("extractReadableText keeps same-page anchor link text but drops the dead URL", () => {
+  const html = `<body>
+    <p>见 <a href="#section-3">第 3 节</a> 与 <a href="https://other.test/spec">外部规范</a>。</p>
+    <p><a href="https://x.test/doc?v=1#notes">本页注释</a></p>
+  </body>`;
+
+  const { text } = extractReadableText(html, "https://x.test/doc?v=1");
+
+  // Same page: the model cannot follow it and the target is in this very
+  // extraction, so the href is pure weight.
+  expect(text).toContain("第 3 节");
+  expect(text).not.toContain("#section-3");
+  expect(text).toContain("本页注释");
+  expect(text).not.toContain("#notes");
+  // A genuinely external link keeps its URL.
+  expect(text).toContain("外部规范 (https://other.test/spec)");
+});
+
+test("extractReadableText drops links whose text is only a symbol", () => {
+  const html = `<body><p>依据<a href="https://x.test/doc#cite_ref-1">^</a> 见附录<a href="https://ref.test/a">附录 A</a>。</p></body>`;
+
+  const { text } = extractReadableText(html, "https://x.test/doc");
+
+  // A footnote caret is one character against a 40-character href.
+  expect(text).not.toContain("^");
+  expect(text).not.toContain("cite_ref");
+  expect(text).toContain("附录 A (https://ref.test/a)");
+});
+
 test("extractReadableText keeps block boundaries as line breaks", () => {
   const { text } = extractReadableText("<body><p>第一段</p><p>第二段</p><li>要点</li></body>");
   expect(text.split("\n")).toEqual(["第一段", "第二段", "要点"]);
