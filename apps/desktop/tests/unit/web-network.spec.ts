@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { runWebFetch, runWebSearch, normalizeWebToolsSettings } from "../../electron/web-search";
+import { runWebFetch, runWebSearch, normalizeWebToolsSettings, type WebToolsSettings } from "../../electron/web-search";
+import { createWebRuntimeTools, webFetchToolName, webReadToolName } from "../../electron/web-runtime";
+import { resetWebContentCacheForTests } from "../../electron/web-content-cache";
 
 /**
  * Exercises the real network path (search request → parse → allowlist filter,
@@ -229,4 +231,183 @@ test("web tools refuse to run while web access is disabled", async () => {
   const settings = normalizeWebToolsSettings({ provider: "searxng", searxngBaseUrl: "http://x.test" });
   await expect(runWebSearch("anything", settings)).rejects.toThrow(/turned off/);
   await expect(runWebFetch("http://x.test/page", settings)).rejects.toThrow(/turned off/);
+});
+
+/**
+ * The web_fetch/web_read pagination and cache-authorization behavior added
+ * alongside the structural HTML extraction rewrite: a long page can be read
+ * section by section without re-fetching it, but every web_read call is
+ * re-checked against the LIVE settings — a cache hit must never bypass
+ * "web access is off" or a narrowed domain allowlist.
+ */
+function webTools(getSettings: () => WebToolsSettings) {
+  const tools = createWebRuntimeTools(getSettings);
+  const webFetch = tools.find((tool) => tool.name === webFetchToolName);
+  const webRead = tools.find((tool) => tool.name === webReadToolName);
+  if (!webFetch || !webRead) {
+    throw new Error("web_fetch/web_read were not registered");
+  }
+  return { webFetch, webRead };
+}
+
+/** A page long enough to need several ~12,000-char sections, with a unique
+ * marker as the very last paragraph so a test can prove it actually reached
+ * the end rather than just re-reading the first section. */
+function longPageHtml(): string {
+  const paragraphs = Array.from({ length: 400 }, (_, i) => `<p>Paragraph ${i}: ${"x".repeat(80)}</p>`).join("");
+  return `<html><head><title>Long Page</title></head><body>${paragraphs}<p>MARKER_END_OF_PAGE</p></body></html>`;
+}
+
+test("web_read reads the final section of a long page, with the correct part/totalParts", async () => {
+  resetWebContentCacheForTests();
+  const server = await startServer((_url, respond) => {
+    respond(200, { "Content-Type": "text/html" }, longPageHtml());
+  });
+
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webFetch, webRead } = webTools(() => settings);
+
+    const fetched = await webFetch.execute("call-fetch", { url: `${server.baseUrl}/big` }, undefined);
+    const fetchedDetails = fetched.details as { url: string; part?: number; totalParts?: number };
+    expect(fetchedDetails.part).toBe(1);
+    expect(fetchedDetails.totalParts ?? 0).toBeGreaterThan(1);
+    // The first section alone must not already contain the marker planted at
+    // the very end of the page — otherwise this test would not actually be
+    // proving pagination works.
+    expect(fetched.content[0]?.text).not.toContain("MARKER_END_OF_PAGE");
+
+    const lastPart = fetchedDetails.totalParts as number;
+    const read = await webRead.execute("call-read", { url: fetchedDetails.url, part: lastPart }, undefined);
+    expect(read.details).toMatchObject({ action: "web_read", part: lastPart, totalParts: lastPart });
+    expect(read.content[0]?.text).toContain("MARKER_END_OF_PAGE");
+    expect(read.content[0]?.text).toContain(`section ${lastPart} of ${lastPart}`);
+    expect(read.content[0]?.text).not.toContain("More follows");
+  } finally {
+    await server.close();
+  }
+});
+
+test("web_read rejects a stale source_version instead of serving new content under an old locator", async () => {
+  resetWebContentCacheForTests();
+  const server = await startServer((_url, respond) => {
+    respond(200, { "Content-Type": "text/html" }, "<html><body><p>hello</p></body></html>");
+  });
+
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webFetch, webRead } = webTools(() => settings);
+
+    const fetched = await webFetch.execute("call-fetch", { url: `${server.baseUrl}/doc` }, undefined);
+    const url = (fetched.details as { url: string }).url;
+
+    const stale = await webRead.execute("call-read", { url, source_version: "0000000000000000" }, undefined);
+    expect(stale.content[0]?.text).toMatch(/changed/);
+    expect((stale.details as { error?: string }).error).toMatch(/changed/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("web_read is rejected once web access is turned off, without making any new network request", async () => {
+  resetWebContentCacheForTests();
+  let hits = 0;
+  const server = await startServer((_url, respond) => {
+    hits += 1;
+    respond(200, { "Content-Type": "text/html" }, "<html><body><p>hello</p></body></html>");
+  });
+
+  try {
+    let settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webFetch, webRead } = webTools(() => settings);
+
+    const fetched = await webFetch.execute("call-fetch", { url: `${server.baseUrl}/doc` }, undefined);
+    const url = (fetched.details as { url: string }).url;
+    expect(hits).toBe(1);
+
+    // Same session, same cached URL — only the live setting changes.
+    settings = normalizeWebToolsSettings({ enabled: false, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const blocked = await webRead.execute("call-read", { url }, undefined);
+
+    expect(blocked.content[0]?.text).toMatch(/turned off/);
+    // The cache hit must not have been used as a way around the setting: no
+    // new request was made to serve this "read".
+    expect(hits).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("web_read is rejected once a tightened domain allowlist no longer covers a cached URL", async () => {
+  resetWebContentCacheForTests();
+  let hits = 0;
+  const server = await startServer((_url, respond) => {
+    hits += 1;
+    respond(200, { "Content-Type": "text/html" }, "<html><body><p>hello</p></body></html>");
+  });
+
+  try {
+    let settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webFetch, webRead } = webTools(() => settings);
+
+    const fetched = await webFetch.execute("call-fetch", { url: `${server.baseUrl}/doc` }, undefined);
+    const url = (fetched.details as { url: string }).url;
+    expect(hits).toBe(1);
+
+    // Tighten the allowlist to a domain that does not cover the local server.
+    settings = normalizeWebToolsSettings({
+      enabled: true,
+      provider: "searxng",
+      searxngBaseUrl: server.baseUrl,
+      allowedDomains: ["example.com"],
+    });
+    const blocked = await webRead.execute("call-read", { url }, undefined);
+
+    expect(blocked.content[0]?.text).toMatch(/allowed domain/);
+    expect(hits).toBe(1);
+  } finally {
+    await server.close();
+  }
+});
+
+test("web_read on a URL never fetched tells the model to use web_fetch first, and makes no network request", async () => {
+  resetWebContentCacheForTests();
+  let hits = 0;
+  const server = await startServer((_url, respond) => {
+    hits += 1;
+    respond(200, { "Content-Type": "text/html" }, "<html><body><p>hello</p></body></html>");
+  });
+
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webRead } = webTools(() => settings);
+
+    const result = await webRead.execute("call-read", { url: `${server.baseUrl}/never-fetched` }, undefined);
+
+    expect(result.content[0]?.text).toMatch(/web_fetch/);
+    expect(hits).toBe(0);
+  } finally {
+    await server.close();
+  }
+});
+
+test("web_fetch's old single-argument {url} call still works and returns section 1", async () => {
+  resetWebContentCacheForTests();
+  const server = await startServer((_url, respond) => {
+    respond(200, { "Content-Type": "text/html" }, "<html><head><title>Hi</title></head><body><p>hello world</p></body></html>");
+  });
+
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: server.baseUrl });
+    const { webFetch } = webTools(() => settings);
+
+    const result = await webFetch.execute("call-fetch", { url: `${server.baseUrl}/doc` }, undefined);
+
+    expect(result.details).toMatchObject({ action: "web_fetch", part: 1, totalParts: 1 });
+    expect(result.content[0]?.text).toContain("# Hi");
+    expect(result.content[0]?.text).toContain("hello world");
+    expect(result.content[0]?.text).toMatch(/Source version: [0-9a-f]{16}/);
+  } finally {
+    await server.close();
+  }
 });

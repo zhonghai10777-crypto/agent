@@ -42,6 +42,74 @@ test("extractReadableText keeps block boundaries as line breaks", () => {
   expect(text.split("\n")).toEqual(["第一段", "第二段", "要点"]);
 });
 
+test("extractReadableText keeps table values bound to their column header and row", () => {
+  const html = `<table>
+    <tr><th>工况</th><th>转速(rpm)</th><th>功率(kW)</th></tr>
+    <tr><td>A</td><td>1500</td><td>100</td></tr>
+    <tr><td>B</td><td>3000</td><td>200</td></tr>
+  </table>`;
+
+  const { text } = extractReadableText(html);
+
+  // The value must appear bound to BOTH its column header and its row
+  // identity in the same line — two unrelated strings of numbers would not
+  // let a model reading only this line recover which reading belongs to
+  // which condition.
+  const rowA = text.split("\n").find((line) => line.includes("工况=A"));
+  expect(rowA).toBeDefined();
+  expect(rowA).toContain("转速(rpm)=1500");
+  expect(rowA).toContain("功率(kW)=100");
+
+  const rowB = text.split("\n").find((line) => line.includes("工况=B"));
+  expect(rowB).toBeDefined();
+  expect(rowB).toContain("转速(rpm)=3000");
+  expect(rowB).toContain("功率(kW)=200");
+});
+
+test("extractReadableText marks a merged-cell table as structurally uncertain instead of guessing", () => {
+  const html = `<table>
+    <tr><th colspan="2">合并表头</th></tr>
+    <tr><td>1500</td><td>3000</td></tr>
+  </table>`;
+
+  const { text } = extractReadableText(html);
+
+  expect(text).toContain("uncertain");
+  // The raw values are still present — dropped structure, not dropped data.
+  expect(text).toContain("1500");
+  expect(text).toContain("3000");
+  // Must NOT have been flattened into a false header=value binding.
+  expect(text).not.toMatch(/=\s*1500/);
+});
+
+test("extractReadableText resolves a relative link against the page's final URL", () => {
+  const html = `<body><p><a href="../spec.pdf">规范文档</a></p></body>`;
+
+  const { text } = extractReadableText(html, "https://x.test/docs/a.html");
+
+  expect(text).toContain("https://x.test/spec.pdf");
+  expect(text).toContain("规范文档");
+});
+
+test("extractReadableText drops javascript: links but keeps their visible text", () => {
+  const html = `<body><p><a href="javascript:alert(1)">点击此处</a></p></body>`;
+
+  const { text } = extractReadableText(html, "https://x.test/a.html");
+
+  expect(text).not.toContain("javascript:");
+  expect(text).toContain("点击此处");
+});
+
+test("extractReadableText keeps heading levels as # prefixes", () => {
+  const html = `<body><h1>一级标题</h1><h2>二级标题</h2><p>正文</p></body>`;
+
+  const { text } = extractReadableText(html);
+
+  expect(text).toContain("# 一级标题");
+  expect(text).toContain("## 二级标题");
+  expect(text).toContain("正文");
+});
+
 test("isHostAllowed matches host and subdomains but never bare substrings", () => {
   const allow = ["example.com", "intranet.local"];
 
@@ -317,6 +385,18 @@ test("normalizeWebToolsSettings migrates an old settings file that predates the 
   expect(normalized.deepseekMaxUses).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxUses);
   // The migration must not clobber a value the user already had saved.
   expect(normalized.maxResults).toBe(8);
+});
+
+test("DEFAULT_WEB_TOOLS_SETTINGS.maxResults defaults to 10 but never overrides a value the user already saved", () => {
+  // Measured against a real DeepSeek key: one search call returns 10 sources
+  // and is billed per call, not per result, so the old default of 5 silently
+  // discarded half of what had already been paid for.
+  expect(DEFAULT_WEB_TOOLS_SETTINGS.maxResults).toBe(10);
+  expect(normalizeWebToolsSettings({}).maxResults).toBe(10);
+
+  // A user who already had 5 saved (the old default, written to disk before
+  // this change) must keep exactly that value, not get silently bumped to 10.
+  expect(normalizeWebToolsSettings({ maxResults: 5 }).maxResults).toBe(5);
 });
 
 /**

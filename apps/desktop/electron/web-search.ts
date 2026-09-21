@@ -4,6 +4,7 @@ import {
   isWebSearchProvider,
   type WebSearchProvider,
 } from "../src/web-search-providers";
+import { cacheWebFetch } from "./web-content-cache";
 
 /**
  * Search backends. The four shapes cover the realistic deployments:
@@ -127,7 +128,12 @@ export const DEFAULT_WEB_TOOLS_SETTINGS: WebToolsSettings = {
   provider: "deepseek",
   apiKey: "",
   searxngBaseUrl: "",
-  maxResults: 5,
+  // Measured against a real DeepSeek key: one search call returns 10 sources,
+  // and DeepSeek bills by search CALL, not by result count — so slicing to 5
+  // locally was throwing away half of what had already been paid for. Every
+  // other provider is asked for `maxResults` server-side (see `searchWith`),
+  // so raising this does not cost them anything extra either.
+  maxResults: 10,
   allowedDomains: [],
   deepseekModel: DEEPSEEK_DEFAULT_MODEL,
   deepseekMaxTokens: DEEPSEEK_DEFAULT_MAX_TOKENS,
@@ -136,8 +142,17 @@ export const DEFAULT_WEB_TOOLS_SETTINGS: WebToolsSettings = {
 
 /** Hard cap on fetched bytes, so one huge page cannot blow up the context. */
 const MAX_FETCH_BYTES = 5 * 1024 * 1024;
-/** Hard cap on extracted characters handed back to the model. */
-const MAX_EXTRACT_CHARS = 40_000;
+/**
+ * Hard cap on extracted characters kept in the content cache for one page
+ * (see `web-content-cache.ts`). Raised from the old 40,000 hard read limit —
+ * which had no continuation mechanism at all — because technical
+ * specifications, standards text and parameter manuals routinely run past
+ * that, often with the limiting clause past the halfway point. What is
+ * handed to the model in any ONE `web_fetch`/`web_read` call is still only
+ * about 12,000 chars (`PART_CHAR_BUDGET` in web-content-cache.ts); this is
+ * the ceiling on how much of a page can be paged through at all.
+ */
+const MAX_EXTRACT_CHARS = 400_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const USER_AGENT = `${PRODUCT.name}/1.0 (+desktop assistant)`;
 
@@ -698,8 +713,24 @@ async function searchSearxng(
 export interface WebFetchResult {
   readonly url: string;
   readonly title: string;
+  /** Full extracted text, up to `MAX_EXTRACT_CHARS` — NOT the ~12,000-char
+   * slice handed to the model per call; that pagination happens in
+   * `web-runtime.ts` off the cache entry this call also writes (see
+   * `sourceVersion`/`totalParts` below and `web-content-cache.ts`). */
   readonly text: string;
+  /** True when extraction hit `MAX_EXTRACT_CHARS`, or the fetch itself was
+   * byte-capped — i.e. content beyond `text` may still exist. */
   readonly truncated: boolean;
+  /** Content-hash version of `text`, for `web_read`'s `source_version` check. */
+  readonly sourceVersion: string;
+  /** Number of ~12,000-char sections `text` was segmented into for paged
+   * reading via `web_read`. */
+  readonly totalParts: number;
+  /** Same as `!truncated` — kept alongside it for parity with `truncated`
+   * during the transition and because callers building a `web_read`-style
+   * response want the positive form. */
+  readonly complete: boolean;
+  readonly charLimit: number;
 }
 
 /** Hard cap on redirect hops `runWebFetch` will follow before giving up. */
@@ -801,14 +832,31 @@ export async function runWebFetch(
     }
 
     const isHtml = /html/i.test(outcome.contentType) || /^\s*<(!doctype|html)/i.test(outcome.body.text);
-    const extracted = isHtml ? extractReadableText(outcome.body.text) : { title: "", text: outcome.body.text.trim() };
+    const extracted = isHtml
+      ? extractReadableText(outcome.body.text, outcome.url)
+      : { title: "", text: outcome.body.text.trim() };
     const truncated = outcome.body.truncated || extracted.text.length > MAX_EXTRACT_CHARS;
+    const cappedText = extracted.text.slice(0, MAX_EXTRACT_CHARS);
+
+    // Cached under the FINAL url (post-redirect), so `web_read` — which never
+    // fetches — can serve later sections of exactly what this call retrieved.
+    const snapshot = cacheWebFetch({
+      url: outcome.url,
+      title: extracted.title,
+      text: cappedText,
+      complete: !truncated,
+      charLimit: MAX_EXTRACT_CHARS,
+    });
 
     return {
       url: outcome.url,
       title: extracted.title,
-      text: extracted.text.slice(0, MAX_EXTRACT_CHARS),
+      text: cappedText,
       truncated,
+      sourceVersion: snapshot.sourceVersion,
+      totalParts: snapshot.parts.length,
+      complete: snapshot.complete,
+      charLimit: snapshot.charLimit,
     };
   }
 }
@@ -842,11 +890,22 @@ const BLOCK_LEVEL_TAGS =
 
 /**
  * Minimal readability pass: drop the non-content elements, keep block structure
- * as line breaks, unescape entities, and collapse the whitespace storm that
+ * as line breaks, keep table row/column relationships and link hrefs, keep
+ * heading levels, unescape entities, and collapse the whitespace storm that
  * results. Deliberately dependency-free — an intranet deployment should not
  * grow a parser dependency (and its update cadence) just to read a page.
+ *
+ * `baseUrl`, when given, is the page's own final URL (post-redirect) and is
+ * used to resolve relative `<a href>` targets the way a browser would.
+ *
+ * Tables and links are converted to plain text BEFORE the generic tag strip
+ * below runs, because that strip discards attributes (hrefs) and loses the
+ * distinction between a header cell and a data cell. Doing it in this order
+ * also means a link inside a table cell keeps its URL: the link pass runs
+ * first and leaves plain "text (url)" text sitting inside the still-tagged
+ * table, which the table pass then treats as ordinary cell content.
  */
-export function extractReadableText(html: string): { readonly title: string; readonly text: string } {
+export function extractReadableText(html: string, baseUrl?: string): { readonly title: string; readonly text: string } {
   const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   const title = titleMatch ? decodeEntities(stripTags(titleMatch[1] ?? "")).trim() : "";
 
@@ -854,6 +913,10 @@ export function extractReadableText(html: string): { readonly title: string; rea
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(script|style|noscript|template|svg|canvas|iframe)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
     .replace(/<(nav|header|footer|aside|form)\b[^>]*>[\s\S]*?<\/\1>/gi, " ");
+
+  working = convertLinks(working, baseUrl);
+  working = convertTables(working);
+  working = convertHeadings(working);
 
   working = working.replace(new RegExp(`</?(?:${BLOCK_LEVEL_TAGS})\\b[^>]*>`, "gi"), "\n");
   working = stripTags(working);
@@ -868,6 +931,158 @@ export function extractReadableText(html: string): { readonly title: string; rea
     .replace(/\n{3,}/g, "\n\n");
 
   return { title, text };
+}
+
+/**
+ * Replaces `<a href>` with plain "text (absolute-url)", so the link survives
+ * the generic tag strip below instead of disappearing along with its href.
+ * A link with no usable destination — unparseable, or a dangerous scheme —
+ * keeps its visible text (still real page content) but drops the URL.
+ */
+function convertLinks(html: string, baseUrl: string | undefined): string {
+  return html.replace(
+    /<a\b[^>]*\bhref\s*=\s*(["'])(.*?)\1[^>]*>([\s\S]*?)<\/a>/gi,
+    (_match, _quote: string, href: string, inner: string) => {
+      const text = stripTags(inner).replace(/\s+/g, " ").trim();
+      const resolved = resolveLinkUrl(href, baseUrl);
+      if (!resolved) {
+        return text;
+      }
+      return text ? `${text} (${resolved})` : resolved;
+    },
+  );
+}
+
+/** Resolves against `baseUrl` and rejects anything that is not http(s) —
+ * `javascript:`, `data:`, `file:`, and friends are not destinations a model
+ * should ever be handed as if they were a citable source. */
+function resolveLinkUrl(href: string, baseUrl: string | undefined): string | undefined {
+  const raw = decodeEntities(href).trim();
+  if (!raw) {
+    return undefined;
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(raw, baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (resolved.protocol !== "http:" && resolved.protocol !== "https:") {
+    return undefined;
+  }
+  return resolved.toString();
+}
+
+/** Matches an attribute value of 2 or more — i.e. an actual merge, not the
+ * default `colspan="1"` some generators emit unnecessarily. */
+const MEANINGFUL_SPAN = /\b(?:colspan|rowspan)\s*=\s*["']?\s*(\d+)/gi;
+
+function hasMergedCells(tableInnerHtml: string): boolean {
+  MEANINGFUL_SPAN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = MEANINGFUL_SPAN.exec(tableInnerHtml))) {
+    if (Number.parseInt(match[1] ?? "1", 10) > 1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+interface TableCell {
+  readonly text: string;
+  readonly isHeader: boolean;
+}
+
+function extractRowCells(rowHtml: string): TableCell[] {
+  const cells: TableCell[] = [];
+  const cellPattern = /<(th|td)\b[^>]*>([\s\S]*?)<\/\1>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = cellPattern.exec(rowHtml))) {
+    cells.push({
+      isHeader: (match[1] ?? "").toLowerCase() === "th",
+      text: stripTags(match[2] ?? "").replace(/\s+/g, " ").trim(),
+    });
+  }
+  return cells;
+}
+
+/**
+ * Renders one `<table>`'s inner HTML as text that keeps each value bound to
+ * both its column header and its row, so a model reading only a later part
+ * of a truncated table still knows what each number refers to — unlike a
+ * flattened wall of numbers, which reads as plausible even once row/column
+ * correspondence has been lost. Chosen over a Markdown grid for the same
+ * reason: a Markdown table's header only appears once, at the top, so a row
+ * that lands in a later part (after truncation or pagination) is silently
+ * unlabeled; repeating the header inline on every row survives that.
+ *
+ * `colspan`/`rowspan` break the simple "row N, column N" mapping this relies
+ * on — a spanned cell does not belong to one column/row index. Rather than
+ * guess (and risk pairing a value with the wrong header), such a table is
+ * rendered as raw per-row cell text with an explicit warning instead.
+ */
+function renderTable(tableInnerHtml: string): string {
+  const rows: TableCell[][] = [];
+  const rowPattern = /<tr\b[^>]*>([\s\S]*?)<\/tr>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = rowPattern.exec(tableInnerHtml))) {
+    const cells = extractRowCells(match[1] ?? "");
+    if (cells.length > 0) {
+      rows.push(cells);
+    }
+  }
+  if (rows.length === 0) {
+    return "";
+  }
+
+  if (hasMergedCells(tableInnerHtml)) {
+    const lines = rows.map((row) => row.map((cell) => cell.text).filter(Boolean).join(" | "));
+    return [
+      "[Table structure uncertain — merged cells (colspan/rowspan) present; " +
+        "values below are listed in source order and are NOT reliably aligned to column/row headers.]",
+      ...lines,
+    ].join("\n");
+  }
+
+  const firstRowIsHeader = rows[0]!.every((cell) => cell.isHeader);
+  const headerCells = firstRowIsHeader ? rows[0] : undefined;
+  const dataRows = firstRowIsHeader ? rows.slice(1) : rows;
+
+  const lines: string[] = [];
+  dataRows.forEach((row, index) => {
+    let rowLabel: string | undefined;
+    let startIndex = 0;
+    // A row whose own first cell is a <th> is row-labeled (e.g. a stub
+    // column), not just another data column.
+    if (row[0]?.isHeader) {
+      rowLabel = row[0].text;
+      startIndex = 1;
+    }
+    const fields: string[] = [];
+    for (let i = startIndex; i < row.length; i += 1) {
+      const headerName = headerCells?.[i]?.text || `col ${i + 1}`;
+      fields.push(`${headerName}=${row[i]!.text}`);
+    }
+    if (fields.length > 0) {
+      lines.push(`${rowLabel ?? `Row ${index + 1}`}: ${fields.join("; ")}`);
+    }
+  });
+  return lines.join("\n");
+}
+
+function convertTables(html: string): string {
+  return html.replace(/<table\b[^>]*>([\s\S]*?)<\/table>/gi, (_match, inner: string) => renderTable(inner));
+}
+
+/** Keeps heading levels as Markdown-style `#` prefixes (1-6 of them) instead
+ * of collapsing every `<h1>`-`<h6>` to an indistinguishable line break, so
+ * downstream pagination (see `web-content-cache.ts`) can prefer to cut a long
+ * page at a heading boundary rather than mid-section. */
+function convertHeadings(html: string): string {
+  return html.replace(/<h([1-6])\b[^>]*>([\s\S]*?)<\/h\1>/gi, (_match, level: string, inner: string) => {
+    const text = stripTags(inner).replace(/\s+/g, " ").trim();
+    return text ? `\n${"#".repeat(Number.parseInt(level, 10))} ${text}\n` : "\n";
+  });
 }
 
 function stripTags(value: string): string {
