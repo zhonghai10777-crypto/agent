@@ -8,6 +8,7 @@ import {
   isHttpUrl,
   normalizeWebToolsSettings,
   parseDeepSeekSearchResults,
+  runWebSearch,
 } from "../../electron/web-search";
 import { canBorrowModelProviderKey } from "../../src/web-search-providers";
 
@@ -271,4 +272,103 @@ test("parseDeepSeekSearchResults leaves stop_reason/webSearchRequests undefined 
   });
   expect(outcome.stopReason).toBeUndefined();
   expect(outcome.webSearchRequests).toBeUndefined();
+});
+
+test("normalizeWebToolsSettings validates the DeepSeek request-shaping fields instead of letting them through unbounded", () => {
+  const illegal = normalizeWebToolsSettings({
+    deepseekMaxTokens: NaN,
+    deepseekMaxUses: Infinity,
+    deepseekModel: "   ",
+  });
+  expect(illegal.deepseekMaxTokens).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxTokens);
+  expect(illegal.deepseekMaxUses).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxUses);
+  expect(illegal.deepseekModel).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekModel);
+
+  // Out-of-range values are clamped to the boundary, the same policy
+  // `maxResults` already uses — not silently accepted as "no limit".
+  const outOfRange = normalizeWebToolsSettings({ deepseekMaxTokens: 999_999, deepseekMaxUses: -5 });
+  expect(outOfRange.deepseekMaxTokens).toBe(16_384);
+  expect(outOfRange.deepseekMaxUses).toBe(1);
+
+  // A float is truncated to an integer, not rejected outright.
+  const float = normalizeWebToolsSettings({ deepseekMaxTokens: 1000.9 });
+  expect(float.deepseekMaxTokens).toBe(1000);
+
+  const custom = normalizeWebToolsSettings({ deepseekModel: "deepseek-v4-pro" });
+  expect(custom.deepseekModel).toBe("deepseek-v4-pro");
+
+  // No non-finite or negative input may escape as an unbounded/invalid value.
+  for (const bad of [NaN, Infinity, -Infinity, -1, 0]) {
+    const normalized = normalizeWebToolsSettings({ deepseekMaxUses: bad });
+    expect(Number.isFinite(normalized.deepseekMaxUses)).toBe(true);
+    expect(normalized.deepseekMaxUses).toBeGreaterThanOrEqual(1);
+    expect(normalized.deepseekMaxUses).toBeLessThanOrEqual(10);
+  }
+});
+
+test("normalizeWebToolsSettings migrates an old settings file that predates the DeepSeek fields", () => {
+  // Shape of a web-tools.json written before deepseekModel/MaxTokens/MaxUses
+  // existed. Reading it back must not throw and must not lose maxResults.
+  const legacyFile = { enabled: true, provider: "deepseek", apiKey: "sk-x", maxResults: 8, allowedDomains: [] };
+  const normalized = normalizeWebToolsSettings(legacyFile);
+
+  expect(normalized.deepseekModel).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekModel);
+  expect(normalized.deepseekMaxTokens).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxTokens);
+  expect(normalized.deepseekMaxUses).toBe(DEFAULT_WEB_TOOLS_SETTINGS.deepseekMaxUses);
+  // The migration must not clobber a value the user already had saved.
+  expect(normalized.maxResults).toBe(8);
+});
+
+/**
+ * Runs `run` with `globalThis.fetch` replaced by a stub that records the
+ * request init and answers with an empty-but-well-formed DeepSeek search
+ * result (so `parseDeepSeekSearchResults` doesn't itself throw), restoring
+ * the real `fetch` afterward regardless of outcome. Used by the request-body
+ * wiring tests below, which care about what DeepSeek was ASKED, not what it
+ * answered.
+ */
+async function withMockedFetch(run: () => Promise<void>): Promise<{ readonly body?: string }> {
+  const originalFetch = globalThis.fetch;
+  let capturedInit: { readonly body?: string } = {};
+  globalThis.fetch = (async (_url: string, init: { readonly body?: string }) => {
+    capturedInit = init;
+    return new Response(JSON.stringify({ content: [{ type: "web_search_tool_result", content: [] }] }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }) as typeof fetch;
+
+  try {
+    await run();
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  return capturedInit;
+}
+
+test("deepseek search sends the configured model/maxTokens/maxUses and pushes allowedDomains to the server", async () => {
+  const settings = normalizeWebToolsSettings({
+    enabled: true,
+    provider: "deepseek",
+    apiKey: "sk-test",
+    deepseekModel: "deepseek-v4-pro",
+    deepseekMaxTokens: 2048,
+    deepseekMaxUses: 7,
+    allowedDomains: ["example.com", "intranet.local"],
+  });
+  const capturedInit = await withMockedFetch(() => runWebSearch("锅炉效率", settings).then(() => undefined));
+
+  const body = JSON.parse(capturedInit.body ?? "{}");
+  expect(body.model).toBe("deepseek-v4-pro");
+  expect(body.max_tokens).toBe(2048);
+  expect(body.tools[0].max_uses).toBe(7);
+  expect(body.tools[0].allowed_domains).toEqual(["example.com", "intranet.local"]);
+});
+
+test("deepseek search omits allowed_domains from the request when no allowlist is configured", async () => {
+  const settings = normalizeWebToolsSettings({ enabled: true, provider: "deepseek", apiKey: "sk-test" });
+  const capturedInit = await withMockedFetch(() => runWebSearch("锅炉效率", settings).then(() => undefined));
+
+  const body = JSON.parse(capturedInit.body ?? "{}");
+  expect(body.tools[0]).not.toHaveProperty("allowed_domains");
 });
