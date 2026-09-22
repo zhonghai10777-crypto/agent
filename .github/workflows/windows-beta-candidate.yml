@@ -72,15 +72,18 @@ jobs:
         run: pnpm typecheck
 
       # pi resolves PowerShell with spawnSync("where", ...) under a hard-coded 5s
-      # timeout. On a hosted Windows runner the first spawn of where.exe pays for
-      # loading it and for Defender scanning it, which overruns that budget and
-      # fails the test as "No PowerShell executable found" — while later tests in
-      # the same run, now served from cache, pass in well under a second. Pay
-      # that cost here, with a timeout that can absorb it, so the tests measure
-      # the lookup rather than the runner's cold start.
+      # timeout. On a hosted runner the first spawn of where.exe pays for loading
+      # it and for Defender scanning it, which overruns that budget and fails the
+      # test as "No PowerShell executable found" — while later lookups, served
+      # from cache, return in milliseconds. Pay that cost here instead.
+      #
+      # Invoked as plain PowerShell rather than through `node -e`: this step runs
+      # under pwsh, where a backtick is the escape character, so a JS template
+      # literal in an inline script gets mangled before node ever sees it.
       - name: Warm up Windows executable lookup
         run: |
-          node -e "const{spawnSync}=require('node:child_process');for(const exe of ['pwsh.exe','powershell.exe']){const r=spawnSync('where',[exe],{encoding:'utf-8',timeout:60000,windowsHide:true});console.log(exe, '->', r.status===0 ? r.stdout.trim().split(/\r?\n/)[0] : `not found (status ${r.status})`);}"
+          where.exe pwsh.exe
+          where.exe powershell.exe
 
       - name: Driver tests on Windows
         run: pnpm --filter @pi-gui/pi-sdk-driver test
@@ -94,6 +97,7 @@ jobs:
       # Full UI tests and clean-account install/upgrade/uninstall acceptance
       # must be completed separately before approving a public beta.
       - name: Build NSIS installer and portable executable
+        id: build_installer
         run: pnpm package:win
 
       - name: Verify permissions, Windows junctions and credential recovery
@@ -179,7 +183,7 @@ jobs:
       # verification log ships next to it — but it is still the artifact you
       # need in order to reproduce the failure locally.
       - name: Upload candidate files (not a GitHub Release)
-        if: always()
+        if: always() && steps.build_installer.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: windows-beta-candidate-${{ github.sha }}
