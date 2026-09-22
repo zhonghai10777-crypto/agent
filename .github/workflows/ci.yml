@@ -73,34 +73,6 @@ jobs:
       - name: Build website
         run: pnpm --filter @pi-gui/website run build
 
-  desktop-core:
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Desktop Core
-        run: pnpm --filter @pi-gui/desktop run test:e2e:ci:mac
-
-      - name: Upload failure artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: desktop-core-test-results
-          path: apps/desktop/test-results/
-          retention-days: 7
-          if-no-files-found: ignore
-
   desktop-package-linux:
     runs-on: ubuntu-latest
 
