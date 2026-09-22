@@ -444,7 +444,57 @@ export async function resolvePackagedAppBundle(releaseDir = packagedReleaseDir):
 }
 
 export async function resolvePackagedAppExecutable(releaseDir = packagedReleaseDir): Promise<string> {
-  return resolveAppBundleExecutable(await resolvePackagedAppBundle(releaseDir));
+  // Only macOS ships the app as a bundle. electron-builder gives Windows and
+  // Linux a `<platform>-unpacked` directory with a bare executable, so looking
+  // for a `.app` there fails on a correctly built release — which is exactly
+  // what these packaged tests did the first time they ran anywhere but macOS.
+  if (process.platform === "darwin") {
+    return resolveAppBundleExecutable(await resolvePackagedAppBundle(releaseDir));
+  }
+  return resolveUnpackedExecutable(releaseDir);
+}
+
+/**
+ * Finds the executable inside electron-builder's unpacked output.
+ *
+ * The directory name carries an architecture suffix for anything but the
+ * default arch (`win-unpacked`, `win-arm64-unpacked`), and the executable is
+ * named by `electron-builder.yml`'s per-platform `executableName`. Both
+ * conventions are the ones `scripts/assert-packaged-runtime-deps.mjs` already
+ * relies on; they are repeated rather than shared because that script runs as
+ * plain Node outside the test build.
+ */
+async function resolveUnpackedExecutable(releaseDir: string): Promise<string> {
+  const windows = process.platform === "win32";
+  const directoryPattern = windows ? /^win(?:-[\w]+)?-unpacked$/ : /^linux(?:-[\w]+)?-unpacked$/;
+  const executableName = windows ? "agent.exe" : "pi-gui";
+
+  let entries: Awaited<ReturnType<typeof readdir>>;
+  try {
+    entries = await readdir(releaseDir, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      throw new Error(
+        `Packaged release directory not found: ${releaseDir}. Run pnpm --filter @pi-gui/desktop run package:win:dir first.`,
+      );
+    }
+    throw error;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !directoryPattern.test(entry.name)) {
+      continue;
+    }
+    const unpackedDir = join(releaseDir, entry.name);
+    const files = await readdir(unpackedDir, { withFileTypes: true });
+    if (files.some((file) => file.isFile() && file.name === executableName)) {
+      return join(unpackedDir, executableName);
+    }
+  }
+
+  throw new Error(
+    `No ${executableName} found in a ${windows ? "win" : "linux"}-unpacked directory under ${releaseDir}.`,
+  );
 }
 
 export async function resolveAppBundleExecutable(appBundle: string): Promise<string> {

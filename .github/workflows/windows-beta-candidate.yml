@@ -171,7 +171,15 @@ jobs:
           } | ConvertTo-Json -Depth 5 |
             Set-Content (Join-Path $releaseDir 'build-info.json') -Encoding utf8
 
+      # Uploaded even when a verification step failed. The installer is produced
+      # early, by "Build NSIS installer and portable executable"; gating its
+      # upload on the checks that follow meant a failure in a packaged UI test
+      # threw away a build that already exists on disk, and cost a full rerun to
+      # get back. A candidate that failed verification is not fit to ship — the
+      # verification log ships next to it — but it is still the artifact you
+      # need in order to reproduce the failure locally.
       - name: Upload candidate files (not a GitHub Release)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: windows-beta-candidate-${{ github.sha }}
