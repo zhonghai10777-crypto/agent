@@ -26,7 +26,14 @@ terminal.onExit(({ exitCode }) => {
   clearTimeout(timeout);
   assert.equal(exitCode, 0);
   assert.match(output, /PI_PACKAGE_PTY_OK/);
-  console.log(JSON.stringify({ electronVersion: process.versions.electron, modulesAbi: process.versions.modules,
+  const payload = JSON.stringify({ electronVersion: process.versions.electron, modulesAbi: process.versions.modules,
     platform: process.platform, architecture: process.arch, photonImage: { width: 8, height: 8 }, terminalExitCode: exitCode,
-    scope: "Packaged runtime in Node mode; actual asar native/WASM dependencies; desktop UI not exercised." }));
+    scope: "Packaged runtime in Node mode; actual asar native/WASM dependencies; desktop UI not exercised." });
+  // Exit deliberately instead of waiting to fall off the end of the event loop.
+  // On Windows node-pty's ConPTY handles outlive `onExit`, so the loop never
+  // drains and the caller's timeout kills the probe with SIGTERM — after it has
+  // already printed a perfectly good result. Exiting from the write callback
+  // keeps that output intact: stdout is an async pipe here, and a bare
+  // `process.exit()` can truncate a write that has not flushed yet.
+  process.stdout.write(`${payload}\n`, () => process.exit(0));
 });
