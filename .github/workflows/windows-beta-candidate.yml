@@ -71,6 +71,17 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # pi resolves PowerShell with spawnSync("where", ...) under a hard-coded 5s
+      # timeout. On a hosted Windows runner the first spawn of where.exe pays for
+      # loading it and for Defender scanning it, which overruns that budget and
+      # fails the test as "No PowerShell executable found" — while later tests in
+      # the same run, now served from cache, pass in well under a second. Pay
+      # that cost here, with a timeout that can absorb it, so the tests measure
+      # the lookup rather than the runner's cold start.
+      - name: Warm up Windows executable lookup
+        run: |
+          node -e "const{spawnSync}=require('node:child_process');for(const exe of ['pwsh.exe','powershell.exe']){const r=spawnSync('where',[exe],{encoding:'utf-8',timeout:60000,windowsHide:true});console.log(exe, '->', r.status===0 ? r.stdout.trim().split(/\r?\n/)[0] : `not found (status ${r.status})`);}"
+
       - name: Driver tests on Windows
         run: pnpm --filter @pi-gui/pi-sdk-driver test
 
