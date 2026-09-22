@@ -45,6 +45,15 @@ export function useTimelineScroll({
   const lastTimelineOffBottomStateBySessionRef = useRef(new Map<string, TimelineOffBottomState>());
   const preserveBottomOnNextPaneResizeRef = useRef(false);
   const exactBottomRestoreSessionKeyRef = useRef<string | null>(null);
+  // An exact bottom restore unmounts the virtualized window and mounts the whole
+  // transcript so every row gets measured. That is only worth its cost when the
+  // measured-height cache can't be trusted for the rows that are *not* mounted:
+  // opening/remounting a thread, or a pane width change that invalidates every
+  // recorded height. Streaming deltas, composer growth and content-height
+  // notifications all land on rows that are already mounted and measured, so they
+  // must stay on the cheap path — otherwise a long transcript flips between
+  // "virtualized" and "fully mounted" on every delta and visibly flickers.
+  const exactBottomRestoreArmedRef = useRef(false);
   const deferredPinnedBottomAlignmentRef = useRef(false);
   const pendingPinnedBottomBehaviorRef = useRef<ScrollBehavior>("auto");
   const bottomAlignmentGenerationRef = useRef(0);
@@ -59,8 +68,12 @@ export function useTimelineScroll({
 
   const resetExactBottomRestoreState = (nextSessionKey: string | null = null) => {
     exactBottomRestoreSessionKeyRef.current = nextSessionKey;
+    exactBottomRestoreArmedRef.current = false;
     deferredPinnedBottomAlignmentRef.current = false;
     pendingPinnedBottomBehaviorRef.current = "auto";
+  };
+  const armExactBottomRestore = () => {
+    exactBottomRestoreArmedRef.current = true;
   };
   const clearTimelineOffBottomState = (sessionKey: string) => {
     lastTimelineOffBottomStateBySessionRef.current.delete(sessionKey);
@@ -87,6 +100,7 @@ export function useTimelineScroll({
     pinnedToBottomRef.current = false;
     preserveBottomOnNextPaneResizeRef.current = false;
     exactBottomRestoreSessionKeyRef.current = null;
+    exactBottomRestoreArmedRef.current = false;
     deferredPinnedBottomAlignmentRef.current = false;
     pendingPinnedBottomBehaviorRef.current = "auto";
     lastTimelineScrollTopBySessionRef.current.set(sessionKey, pane.scrollTop);
@@ -213,8 +227,14 @@ export function useTimelineScroll({
       return;
     }
 
-    if (options?.preferExactRestore && selectedSessionKey && activeTranscript.length > VIRTUALIZATION_THRESHOLD) {
+    if (
+      options?.preferExactRestore &&
+      exactBottomRestoreArmedRef.current &&
+      selectedSessionKey &&
+      activeTranscript.length > VIRTUALIZATION_THRESHOLD
+    ) {
       exactBottomRestoreSessionKeyRef.current = selectedSessionKey;
+      exactBottomRestoreArmedRef.current = false;
       pendingPinnedBottomBehaviorRef.current = behavior;
       preserveBottomOnNextPaneResizeRef.current = true;
       setDisableTimelineVirtualization(true);
@@ -314,6 +334,9 @@ export function useTimelineScroll({
     if (shouldRestoreBottom) {
       preserveBottomOnNextPaneResizeRef.current = true;
       node.scrollTop = node.scrollHeight;
+      // A remounted pane starts with an empty height cache, so the bottom can
+      // only be found exactly once every row has been measured.
+      armExactBottomRestore();
       window.requestAnimationFrame(() => {
         if (timelinePaneRef.current !== node) {
           return;
@@ -358,6 +381,10 @@ export function useTimelineScroll({
   }, [applyTimelineOffBottomRestore, isTranscriptLoading, requestPinnedBottomAlignment, selectedSessionKey, activeView]);
 
   const schedulePinnedBottomRealignment = useCallback((delayFrames = 0) => {
+    // Callers are layout changes that reflow the pane (returning to the thread
+    // surface, toggling a side panel), so measured row heights can no longer be
+    // trusted for rows outside the virtualized window.
+    armExactBottomRestore();
     const waitForFrames = (remainingFrames: number) => {
       window.requestAnimationFrame(() => {
         if (remainingFrames > 0) {
@@ -393,6 +420,10 @@ export function useTimelineScroll({
     preserveBottomOnNextPaneResizeRef.current = false;
     pendingTimelineOffBottomRestoreSessionKeyRef.current = savedOffBottomState ? selectedSessionKey : null;
     resetExactBottomRestoreState(shouldRestorePinned ? selectedSessionKey || null : null);
+    if (shouldRestorePinned) {
+      // Opening a thread: nothing in this transcript has been measured yet.
+      armExactBottomRestore();
+    }
     setDisableTimelineVirtualization(Boolean(selectedSessionKey && shouldRestorePinned));
 
     return () => {
@@ -517,9 +548,14 @@ export function useTimelineScroll({
       return undefined;
     }
 
-    const stickToBottomAfterLayoutChange = () => {
+    const stickToBottomAfterLayoutChange = (widthChanged: boolean) => {
       preserveBottomOnNextPaneResizeRef.current = false;
       pinnedToBottomRef.current = true;
+      if (widthChanged) {
+        // Rows rewrap at a new width, so every measured height is stale.
+        // A height-only change (the composer growing) leaves them valid.
+        armExactBottomRestore();
+      }
       window.requestAnimationFrame(() => {
         requestPinnedBottomAlignment("auto", { preferExactRestore: true });
         window.requestAnimationFrame(() => {
@@ -540,7 +576,7 @@ export function useTimelineScroll({
         return;
       }
 
-      stickToBottomAfterLayoutChange();
+      stickToBottomAfterLayoutChange(widthChanged);
     };
 
     const paneRect = pane.getBoundingClientRect();
@@ -685,6 +721,9 @@ export function useTimelineScroll({
       clearTimelineOffBottomState(selectedSessionKey);
     }
     pinnedToBottomRef.current = true;
+    // Jumping in from far above crosses rows that were never mounted, so their
+    // estimated heights have to be replaced with real ones to land on the bottom.
+    armExactBottomRestore();
     requestPinnedBottomAlignment("smooth", { preferExactRestore: true });
   };
 

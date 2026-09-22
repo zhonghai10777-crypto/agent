@@ -850,3 +850,98 @@ test("lands an opened thread at the bottom without a smooth scroll from the top"
     await harness.close();
   }
 });
+
+test("keeps a long transcript virtualized while assistant deltas stream in", async () => {
+  test.setTimeout(240_000);
+  const userDataDir = await makeUserDataDir();
+  const workspacePath = await makeWorkspace("timeline-pinning-long-stream");
+  const harness = await launchDesktop(userDataDir, {
+    initialWorkspaces: [workspacePath],
+    testMode: "background",
+  });
+
+  try {
+    const window = await harness.firstWindow();
+    await createTimelineSession(window, "Long streaming session");
+
+    // Past VIRTUALIZATION_THRESHOLD (80), so the pane renders a virtualized window.
+    const seedCount = 100;
+    const finalSeedMarker = `Long stream seed row ${seedCount - 1}`;
+    await seedTranscriptMessages(harness, window, {
+      count: seedCount,
+      textFactory: (index) => `Long stream seed row ${index} `.repeat(8),
+    });
+
+    // A virtualized pane only mounts its window, so the last seeded row is
+    // reachable by scrolling to the bottom rather than by rendering everything.
+    await jumpTimelineToBottom(window);
+    await expect
+      .poll(async () => (await getTimelineScrollMetrics(window)).remainingFromBottom, { timeout: 20_000 })
+      .toBeLessThanOrEqual(16);
+    await expect(window.getByTestId("transcript")).toContainText(finalSeedMarker);
+    await expect.poll(async () =>
+      window.evaluate(() => Boolean(document.querySelector(".timeline--virtualized"))),
+    ).toBe(true);
+
+    await window.evaluate(() => {
+      const samples: Array<{ virtualized: boolean; itemCount: number }> = [];
+      const globalScope = window as unknown as {
+        __timelineVirtualizationSamples?: typeof samples;
+        __stopTimelineVirtualizationSampling?: () => void;
+      };
+      globalScope.__timelineVirtualizationSamples = samples;
+      let stopped = false;
+      globalScope.__stopTimelineVirtualizationSampling = () => {
+        stopped = true;
+      };
+      const captureFrame = () => {
+        if (stopped) {
+          return;
+        }
+        samples.push({
+          virtualized: Boolean(document.querySelector(".timeline--virtualized")),
+          itemCount: document.querySelectorAll(".timeline-item").length,
+        });
+        window.requestAnimationFrame(captureFrame);
+      };
+      window.requestAnimationFrame(captureFrame);
+    });
+
+    const stream = await streamAssistantDeltas(harness, window, [
+      "LONG_STREAM_CHUNK_A ",
+      "LONG_STREAM_CHUNK_B ",
+      "LONG_STREAM_CHUNK_C ",
+      "LONG_STREAM_CHUNK_D ",
+      "LONG_STREAM_CHUNK_E",
+    ]);
+    await expect(window.getByTestId("transcript")).toContainText(stream.fullText);
+    await window.waitForTimeout(500);
+
+    const samples = await window.evaluate(() => {
+      const globalScope = window as unknown as {
+        __timelineVirtualizationSamples?: Array<{ virtualized: boolean; itemCount: number }>;
+        __stopTimelineVirtualizationSampling?: () => void;
+      };
+      globalScope.__stopTimelineVirtualizationSampling?.();
+      return globalScope.__timelineVirtualizationSamples ?? [];
+    });
+
+    expect(samples.length).toBeGreaterThan(10);
+    const unvirtualizedFrames = samples.filter((sample) => !sample.virtualized).length;
+    const fullyMountedFrames = samples.filter((sample) => sample.itemCount >= seedCount).length;
+    expect(
+      unvirtualizedFrames,
+      `frames that dropped out of virtualization during streaming: ${unvirtualizedFrames}/${samples.length}`,
+    ).toBe(0);
+    expect(
+      fullyMountedFrames,
+      `frames that mounted the whole transcript during streaming: ${fullyMountedFrames}/${samples.length}`,
+    ).toBe(0);
+
+    await expect
+      .poll(async () => (await getTimelineScrollMetrics(window)).remainingFromBottom)
+      .toBeLessThanOrEqual(16);
+  } finally {
+    await harness.close();
+  }
+});

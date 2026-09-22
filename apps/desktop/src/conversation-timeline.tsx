@@ -158,10 +158,23 @@ export function ConversationTimeline({
     setMeasurementVersion((current) => current + 1);
   }, []);
 
+  // The pane element doubles as the scroll container for virtualization, so the
+  // virtualized list has to react to it appearing rather than reading the ref at
+  // its own mount time — a child's layout effect runs before the parent attaches
+  // this ref, so the ref is still null there on the commit that mounts both.
+  const [timelinePaneElement, setTimelinePaneElement] = useState<HTMLDivElement | null>(null);
+  // `timelinePaneElementRef` changes identity whenever the transcript grows (it
+  // closes over the transcript length). Reading it through a ref keeps the DOM ref
+  // callback stable, so React stops detaching/reattaching the pane — a detach sets
+  // `timelinePaneRef.current` to null mid-commit, which is exactly what children
+  // used to observe.
+  const latestPaneRefCallback = useRef(timelinePaneElementRef);
+  latestPaneRefCallback.current = timelinePaneElementRef;
   const assignTimelinePaneRef = useCallback((node: HTMLDivElement | null) => {
     timelinePaneRef.current = node;
-    timelinePaneElementRef?.(node);
-  }, [timelinePaneElementRef, timelinePaneRef]);
+    setTimelinePaneElement(node);
+    latestPaneRefCallback.current?.(node);
+  }, [timelinePaneRef]);
 
   const userPrompts = useMemo<readonly UserPromptEntry[]>(() => {
     const prompts: UserPromptEntry[] = [];
@@ -373,7 +386,7 @@ export function ConversationTimeline({
       ) : shouldVirtualize ? (
         <VirtualizedTranscriptList
           displayItems={displayItems}
-          timelinePaneRef={timelinePaneRef}
+          paneElement={timelinePaneElement}
           onContentHeightChange={onContentHeightChange}
           measuredHeightsRef={measuredHeightsRef}
           measurementVersion={measurementVersion}
@@ -501,7 +514,7 @@ function TranscriptEmptyState() {
 
 function VirtualizedTranscriptList({
   displayItems,
-  timelinePaneRef,
+  paneElement,
   onContentHeightChange,
   measuredHeightsRef,
   measurementVersion,
@@ -513,7 +526,7 @@ function VirtualizedTranscriptList({
   onForkFromMessage,
 }: {
   readonly displayItems: readonly DisplayTimelineItem[];
-  readonly timelinePaneRef: MutableRefObject<HTMLDivElement | null>;
+  readonly paneElement: HTMLDivElement | null;
   readonly onContentHeightChange: (state?: { readonly wasAtBottom: boolean }) => void;
   readonly measuredHeightsRef: MutableRefObject<Map<string, number>>;
   readonly measurementVersion: number;
@@ -529,10 +542,10 @@ function VirtualizedTranscriptList({
   void measurementVersion;
 
   useLayoutEffect(() => {
-    const pane = timelinePaneRef.current;
-    if (!pane) {
+    if (!paneElement) {
       return undefined;
     }
+    const pane = paneElement;
 
     const syncViewport = () => {
       const nextScrollTop = pane.scrollTop;
@@ -555,7 +568,7 @@ function VirtualizedTranscriptList({
       pane.removeEventListener("scroll", syncViewport);
       resizeObserver.disconnect();
     };
-  }, [timelinePaneRef]);
+  }, [paneElement]);
 
   const rowHeights = displayItems.map((item) => measuredHeightsRef.current.get(item.id) ?? estimateTimelineItemHeight(item));
   const rowOffsets: number[] = [];
@@ -574,12 +587,11 @@ function VirtualizedTranscriptList({
       return;
     }
     previousTotalHeightRef.current = totalHeight;
-    const pane = timelinePaneRef.current;
-    const wasAtBottom = previousTotalHeight > 0 && pane
-      ? previousTotalHeight - pane.scrollTop - pane.clientHeight < 32
+    const wasAtBottom = previousTotalHeight > 0 && paneElement
+      ? previousTotalHeight - paneElement.scrollTop - paneElement.clientHeight < 32
       : false;
     onContentHeightChange({ wasAtBottom });
-  }, [onContentHeightChange, totalHeight]);
+  }, [onContentHeightChange, paneElement, totalHeight]);
 
   const startOffset = Math.max(0, viewport.scrollTop - OVERSCAN_PX);
   const endOffset = viewport.scrollTop + viewport.height + OVERSCAN_PX;
