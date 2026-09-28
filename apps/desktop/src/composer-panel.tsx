@@ -132,7 +132,15 @@ export function ComposerPanel({
   const hasComposerInput = composerDraft.trim().length > 0 || attachments.length > 0;
   const primaryActionIsStop = selectedSession.status === "running" && !hasComposerInput;
   const contextUsage = selectedSession.contextUsage;
-  const contextPercent = contextUsage?.percent;
+  // Once auto-compaction has an effective threshold below the raw context
+  // window (see compaction-budget.ts), show usage relative to that
+  // threshold rather than the window itself — that is the number that
+  // predicts when compaction actually fires.
+  const contextPercent = contextUsage == null
+    ? undefined
+    : contextUsage.tokens == null
+      ? null
+      : (contextUsage.tokens / (contextUsage.compactAt ?? contextUsage.contextWindow)) * 100;
   const contextUsageSeverity = contextPercent == null ? "none" : contextPercent >= 75 ? "critical" : contextPercent >= 55 ? "warn" : "ok";
 
   return (

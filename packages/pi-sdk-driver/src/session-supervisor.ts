@@ -107,6 +107,7 @@ import {
   type CompatAgentSessionOptions,
 } from "./pi-compat/index.js";
 import { windowsPowerShellEncodingExtensionFactory } from "./windows-powershell-encoding.js";
+import { installCompactionBudget } from "./compaction-budget.js";
 import { LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "./windows-shell.js";
 import type { InspectImagesInput, StoredVisionEvidence, VisionProgress, VisionSessionView, VisionSubmission, VisionUsage } from "@pi-gui/session-driver/vision-types";
 import { addVisionUsage, shouldRouteVision, VisionRouter, type VisionServices, type VisionSessionBinding } from "./vision-router.js";
@@ -314,6 +315,10 @@ export class SessionSupervisor {
   }
 
   private installVision(record: ManagedSessionRecord): void {
+    // Every path that (re)binds record.session to an AgentSession runs through
+    // here, so this is also the one place to apply the auto-compaction budget
+    // (new/open/reload/replaced runtime all covered).
+    if (record.session) installCompactionBudget(record.session);
     record.disposeVision?.();
     record.disposeVision = undefined;
     if (this.visionRouter && record.session) record.disposeVision = installVisionStreamAdapter(record.session, this.visionRouter, this.visionBinding(record));
@@ -3070,10 +3075,28 @@ function refreshSessionContextUsage(record: ManagedSessionRecord): void {
   try {
     const usage = session.getContextUsage();
     if (usage) {
-      record.contextUsage = usage;
+      record.contextUsage = withCompactAt(usage, session);
     }
   } catch {
     // Keep the previous estimate; usage is best-effort.
+  }
+}
+
+/**
+ * Attach `compactAt` (the token count at which auto-compaction fires) to a
+ * freshly read context usage snapshot, using the session's current -
+ * possibly budget-adjusted, see compaction-budget.ts - reserveTokens. Best
+ * effort: a settings read failure just leaves `compactAt` off, same as usage
+ * being momentarily unavailable elsewhere in this file.
+ */
+function withCompactAt(usage: SessionContextUsage, session: AgentSession): SessionContextUsage {
+  try {
+    const settings = session.settingsManager.getCompactionSettings();
+    if (!settings.enabled) return usage;
+    const compactAt = usage.contextWindow - settings.reserveTokens;
+    return compactAt > 0 ? { ...usage, compactAt } : usage;
+  } catch {
+    return usage;
   }
 }
 

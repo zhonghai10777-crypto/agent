@@ -43,6 +43,8 @@ declare module "@pi-gui/session-driver" {
     readonly tokens: number | null;
     readonly contextWindow: number;
     readonly percent: number | null;
+    /** Token count at which auto-compaction fires (contextWindow minus the effective reserve), when known. */
+    readonly compactAt?: number;
   }
 
   export interface SessionSnapshot {
