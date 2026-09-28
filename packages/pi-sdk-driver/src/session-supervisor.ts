@@ -201,6 +201,8 @@ interface ManagedSessionRecord {
    */
   pendingCancel: Promise<void> | undefined;
   cancelGeneration: number;
+  /** Epoch ms of the last sessionUpdated published for a message_update (see STREAMING_SNAPSHOT_INTERVAL_MS). */
+  lastStreamingSnapshotAt: number;
   eventNormalizer: AgentEventNormalizer;
   vision: VisionProgress | undefined;
   disposeVision: (() => void) | undefined;
@@ -233,6 +235,24 @@ const NEW_THREAD_PLACEHOLDER_TITLE = "New thread";
  * enough that a tool ignoring its abort signal never leaves the Stop button dead.
  */
 const ABORT_SETTLE_TIMEOUT_MS = 2000;
+
+/**
+ * Minimum gap between sessionUpdated snapshots published for message_update.
+ * pi emits one message_update per streamed token, and a snapshot per token made
+ * every host rebuild and republish its whole state per token. Only the preview
+ * changes mid-message, and message_end publishes the final one.
+ */
+const STREAMING_SNAPSHOT_INTERVAL_MS = 1000;
+
+/**
+ * Agent events that fire per token / per tool output chunk. They change nothing
+ * the catalog stores except the preview, which the message's own message_end
+ * persists, so they never trigger a catalogs.json rewrite.
+ */
+const STREAMING_AGENT_EVENT_TYPES: ReadonlySet<AgentSessionEvent["type"]> = new Set([
+  "message_update",
+  "tool_execution_update",
+]);
 
 interface SkillAdapter {
   readonly name: string;
@@ -1498,6 +1518,7 @@ export class SessionSupervisor {
       compactionReopenedRunning: false,
       pendingCancel: undefined,
       cancelGeneration: 0,
+      lastStreamingSnapshotAt: 0,
       eventNormalizer: createAgentEventNormalizer(),
       vision: undefined,
       disposeVision: undefined,
@@ -2192,7 +2213,7 @@ export class SessionSupervisor {
       return;
     }
 
-    this.queueDriverEvents(record, mapped);
+    this.queueDriverEvents(record, mapped, { persistSnapshot: !STREAMING_AGENT_EVENT_TYPES.has(event.type) });
   }
 
   private mapAgentEvent(record: ManagedSessionRecord, event: AgentSessionEvent): SessionDriverEvent[] {
@@ -2229,18 +2250,27 @@ export class SessionSupervisor {
           refreshSessionContextUsage(record);
         }
         return [sessionUpdatedEvent(record)];
-      case "message_update":
-        this.updatePreviewFromMessage(record, event.message);
+      case "message_update": {
         const normalizedMessage = record.eventNormalizer.normalize(event, { timestamp });
-        if (normalizedMessage?.type === "assistant-delta") {
-          return toDriverEvents({
-            type: "assistantDelta" as const,
-            sessionRef: record.ref,
-            timestamp,
-            text: normalizedMessage.text,
-          }, record);
+        const events: SessionDriverEvent[] =
+          normalizedMessage?.type === "assistant-delta"
+            ? [withRunId({
+                type: "assistantDelta" as const,
+                sessionRef: record.ref,
+                timestamp,
+                text: normalizedMessage.text,
+              }, record)]
+            : [];
+        const now = Date.now();
+        if (now - record.lastStreamingSnapshotAt >= STREAMING_SNAPSHOT_INTERVAL_MS) {
+          record.lastStreamingSnapshotAt = now;
+          // The preview re-reads the whole message, so it is only rebuilt for
+          // a snapshot that publishes it.
+          this.updatePreviewFromMessage(record, event.message);
+          events.push(sessionUpdatedEvent(record));
         }
-        return [sessionUpdatedEvent(record)];
+        return events;
+      }
       case "tool_execution_start":
         const normalizedToolStart = record.eventNormalizer.normalize(event, { timestamp });
         if (normalizedToolStart?.type !== "tool-started") return [];
@@ -2256,14 +2286,16 @@ export class SessionSupervisor {
       case "tool_execution_update":
         const normalizedToolUpdate = record.eventNormalizer.normalize(event, { timestamp });
         if (normalizedToolUpdate?.type !== "tool-updated") return [];
-        return toDriverEvents({
+        // Tool output chunks leave the session snapshot untouched, so no
+        // sessionUpdated rides along with them.
+        return [withRunId({
           type: "toolUpdated" as const,
           sessionRef: record.ref,
           timestamp,
           callId: normalizedToolUpdate.callId,
           ...(normalizedToolUpdate.detail !== undefined ? { text: normalizedToolUpdate.detail } : {}),
           ...(normalizedToolUpdate.progress !== undefined ? { progress: normalizedToolUpdate.progress } : {}),
-        }, record);
+        }, record)];
       case "tool_execution_end":
         const normalizedToolEnd = record.eventNormalizer.normalize(event, { timestamp });
         if (normalizedToolEnd?.type !== "tool-finished") return [];
@@ -3213,12 +3245,19 @@ function withCompactAt(usage: SessionContextUsage, session: AgentSession): Sessi
   }
 }
 
+function withRunId(
+  base: SessionDriverEvent,
+  record: ManagedSessionRecord,
+  runId?: string,
+): SessionDriverEvent {
+  const id = runId ?? record.runningRunId;
+  return id ? { ...base, runId: id } : base;
+}
+
 function toDriverEvents(
   base: SessionDriverEvent,
   record: ManagedSessionRecord,
   runId?: string,
 ): SessionDriverEvent[] {
-  const id = runId ?? record.runningRunId;
-  const event = id ? { ...base, runId: id } : base;
-  return [event, sessionUpdatedEvent(record)];
+  return [withRunId(base, record, runId), sessionUpdatedEvent(record)];
 }

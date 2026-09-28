@@ -8,6 +8,7 @@ import {
   launchDesktop,
   makeUserDataDir,
   makeWorkspace,
+  setDeferredThreadTitleMode,
   startThreadViaIpc,
   type PiAppWindow,
 } from "../helpers/electron-app";
@@ -107,6 +108,10 @@ test("stop interrupts a genuinely running turn backed by a hanging model server"
 
   try {
     const window = await harness.firstWindow();
+    // The hanging server holds its FIRST request, which must be the prompt.
+    // A new thread fires its auto-title request concurrently with the prompt,
+    // so without deferral whichever lands first is a race.
+    await setDeferredThreadTitleMode(harness);
 
     // Send a real prompt via IPC (fire-and-forget: the hanging server keeps the
     // turn running forever, and we must not block on the send completing).
@@ -116,7 +121,8 @@ test("stop interrupts a genuinely running turn backed by a hanging model server"
 
     // The turn is genuinely running now (the model request is in flight).
     await expect(window.getByRole("button", { name: "Stop run" })).toBeVisible({ timeout: 20_000 });
-    expect(server.requestCount()).toBeGreaterThan(0);
+    // "running" is published just before pi sends the model request.
+    await expect.poll(() => server.requestCount()).toBeGreaterThan(0);
 
     // Drive Stop through the IPC interface (the same handler the button calls).
     const stateAfterStop = await window.evaluate(async () => {
@@ -199,8 +205,16 @@ test("a new message sent right after Stop is not flipped to idle by the stopped 
 
   try {
     const window = await harness.firstWindow();
+    // The hanging server holds its FIRST request, which must be the prompt.
+    // A new thread fires its auto-title request concurrently with the prompt,
+    // so without deferral whichever lands first is a race.
+    await setDeferredThreadTitleMode(harness);
     await startThreadViaIpc(window, { prompt: "Hang forever, never finish." });
     await expect(window.getByRole("button", { name: "Stop run" })).toBeVisible({ timeout: 20_000 });
+    // Stop only once the hanging request is really in flight: stopped any
+    // earlier, it never reaches the server, and the next prompt becomes the
+    // request the server holds forever.
+    await expect.poll(() => server.requestCount()).toBeGreaterThan(0);
 
     // Stop and send back-to-back, with no wait in between — the tight window
     // that used to let the stopped run's late agent_end land on the new run.

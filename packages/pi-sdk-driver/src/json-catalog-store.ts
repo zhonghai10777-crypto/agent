@@ -170,6 +170,11 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
         const index = state.sessions.findIndex((session) => sessionKey(session.sessionRef) === sessionKey(entry.sessionRef));
         const next = cloneSessionEntry(entry);
         if (index >= 0) {
+          // Run-boundary events republish unchanged snapshots; skip the
+          // backup copy + fsync + rename when nothing would change on disk.
+          if (areSessionEntriesEqual(state.sessions[index]!, next)) {
+            return false;
+          }
           state.sessions[index] = next;
         } else {
           state.sessions.push(next);
@@ -192,7 +197,11 @@ export class JsonCatalogStore implements SessionFileCatalogStorage {
 
   async setSessionFile(sessionRef: SessionRef, sessionFile: string): Promise<void> {
     await this.mutateState((state) => {
-      state.sessionFiles[sessionKey(sessionRef)] = sessionFile;
+      const key = sessionKey(sessionRef);
+      if (state.sessionFiles[key] === sessionFile) {
+        return false;
+      }
+      state.sessionFiles[key] = sessionFile;
     });
   }
 
@@ -464,6 +473,19 @@ function rankSessionArchiveState(session: SessionCatalogEntry): number {
 
 function cloneWorkspaceEntry(entry: WorkspaceCatalogEntry): WorkspaceCatalogEntry {
   return { ...entry };
+}
+
+function areSessionEntriesEqual(left: SessionCatalogEntry, right: SessionCatalogEntry): boolean {
+  // Callers match entries by sessionRef first, so the ref itself is not compared.
+  return (
+    left.workspaceId === right.workspaceId &&
+    left.title === right.title &&
+    left.updatedAt === right.updatedAt &&
+    left.archivedAt === right.archivedAt &&
+    left.previewSnippet === right.previewSnippet &&
+    left.sessionFilePath === right.sessionFilePath &&
+    left.status === right.status
+  );
 }
 
 function cloneSessionEntry(entry: SessionCatalogEntry): SessionCatalogEntry {
