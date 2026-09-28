@@ -53,9 +53,11 @@ import {
   currentLeaseIdentity,
   defaultIsPidAlive,
   DEFAULT_LEASE_TTL_MS,
+  LEASE_REFRESH_INTERVAL_MS,
   type LeaseIdentity,
   leaseBlocksBinding,
   readLeaseSnapshot,
+  refreshLeaseFile,
   removeLeaseFile,
   sessionLeasePath,
   SessionLeasedError,
@@ -169,6 +171,8 @@ interface ManagedSessionRecord {
   sessionCommands: RuntimeCommandRecord[];
   /** Path of the advisory lease file this record currently holds, if any. */
   leasePath: string | undefined;
+  /** Keeps the held lease's mtime inside its TTL while the runtime stays bound. */
+  leaseRefreshTimer: ReturnType<typeof setInterval> | undefined;
   /** mtime (epoch ms) of the JSONL last reconciled into the served transcript. */
   transcriptDiskMtimeMs: number | undefined;
   /** Last known context-window usage, refreshed on coarse-grained agent events. */
@@ -1545,6 +1549,7 @@ export class SessionSupervisor {
       bindingExtensions: false,
       sessionCommands: [],
       leasePath: undefined,
+      leaseRefreshTimer: undefined,
       transcriptDiskMtimeMs: undefined,
       contextUsage: undefined,
       cancelRequested: false,
@@ -1657,14 +1662,26 @@ export class SessionSupervisor {
       await this.releaseSessionLease(record);
     }
     try {
-      await writeLeaseFile(nextLeasePath, buildOwnLease(this.leaseIdentity, Date.now()));
+      const lease = buildOwnLease(this.leaseIdentity, Date.now());
+      await writeLeaseFile(nextLeasePath, lease);
       record.leasePath = nextLeasePath;
+      // Other hosts treat a lease as dead once its mtime is older than the
+      // TTL, so a runtime bound for longer has to keep refreshing it.
+      clearInterval(record.leaseRefreshTimer);
+      record.leaseRefreshTimer = setInterval(() => {
+        refreshLeaseFile(nextLeasePath, lease).catch((error) => {
+          console.warn(`[pi-sdk-driver] failed to refresh session lease for ${sessionKey(record.ref)}:`, error);
+        });
+      }, LEASE_REFRESH_INTERVAL_MS);
+      record.leaseRefreshTimer.unref?.();
     } catch (error) {
       console.warn(`[pi-sdk-driver] failed to write session lease for ${sessionKey(record.ref)}:`, error);
     }
   }
 
   private async releaseSessionLease(record: ManagedSessionRecord): Promise<void> {
+    clearInterval(record.leaseRefreshTimer);
+    record.leaseRefreshTimer = undefined;
     const leasePath = record.leasePath;
     if (!leasePath) {
       return;

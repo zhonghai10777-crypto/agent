@@ -1,4 +1,4 @@
-import { rm, stat } from "node:fs/promises";
+import { rm, stat, utimes } from "node:fs/promises";
 import { readFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { writeJsonFileAtomic } from "./atomic-write.js";
@@ -30,6 +30,9 @@ export const LEASE_SUFFIX = ".lease";
 
 /** A lease is stale after this long without its holder refreshing the mtime. */
 export const DEFAULT_LEASE_TTL_MS = 5 * 60_000;
+
+/** How often a live holder refreshes its lease's mtime: well inside the TTL. */
+export const LEASE_REFRESH_INTERVAL_MS = DEFAULT_LEASE_TTL_MS / 5;
 
 /** Surface tag written into leases held by this app. */
 export const PI_GUI_LEASE_SURFACE = "pi-gui";
@@ -166,6 +169,22 @@ export async function readLeaseSnapshot(leasePath: string): Promise<LeaseSnapsho
 
 export async function writeLeaseFile(leasePath: string, info: LeaseInfo): Promise<void> {
   await writeJsonFileAtomic(leasePath, info);
+}
+
+/**
+ * Keep a held lease alive: only its mtime matters for staleness. Rewrites the
+ * lease if something removed it meanwhile.
+ */
+export async function refreshLeaseFile(leasePath: string, info: LeaseInfo): Promise<void> {
+  const now = new Date();
+  try {
+    await utimes(leasePath, now, now);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+    await writeLeaseFile(leasePath, info);
+  }
 }
 
 export async function removeLeaseFile(leasePath: string): Promise<void> {
