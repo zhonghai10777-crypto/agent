@@ -1000,16 +1000,9 @@ export class SessionSupervisor {
     const session = this.requireSession(record);
     if (record.pendingVisionRetry && !session.isStreaming) throw new Error("The image retry is starting. Wait for it to start before sending another message.");
     const isExtensionCommand = this.isExtensionCommand(session, input.text);
-    if (!isExtensionCommand && record.cancelRequested && !session.isIdle) {
-      // A Stop whose abort outlived ABORT_SETTLE_TIMEOUT_MS reported idle while
-      // the stopped run is still unwinding (a tool ignoring its abort signal).
-      // A new prompt now would be refused as "already streaming", and a queued
-      // one would ride a run that is about to end, so give it a bounded wait.
-      if (!(await waitForIdleWithin(session, STOPPED_RUN_WAIT_MS))) {
-        throw new Error("The stopped run is still shutting down because a tool is not responding to Stop. Try again in a moment.");
-      }
-      // The stopped run is over; its cancel flag must not classify this one.
-      record.cancelRequested = false;
+    if (!isExtensionCommand) {
+      // A queued message must not ride a stopped run that is about to end either.
+      await this.awaitStoppedRun(record, session);
     }
     if (session.isStreaming && !isExtensionCommand && !input.deliverAs) {
       throw new Error("Session is already streaming. Specify deliverAs ('steer' or 'followUp') to queue the message.");
@@ -1189,17 +1182,7 @@ export class SessionSupervisor {
         // the unwind never complete. Cap the wait so the Stop button always
         // responds and the UI is never stuck on "running".
         session.abortBash();
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const timeout = new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, ABORT_SETTLE_TIMEOUT_MS);
-        });
-        try {
-          await Promise.race([session.abort(), timeout]);
-        } finally {
-          if (timer) {
-            clearTimeout(timer);
-          }
-        }
+        await settleWithin(session.abort(), ABORT_SETTLE_TIMEOUT_MS);
       } catch (error) {
         // Abort is best-effort. Even if the runtime reports a failure we still
         // reset local run state below so the UI does not stay stuck on "running".
@@ -1221,9 +1204,8 @@ export class SessionSupervisor {
       record.cancelRequested = false;
     } else {
       // The abort timed out: the run is still live and will emit its agent_end
-      // eventually, so the flag stays set for that event to consume. Because the
-      // session still reports streaming, sendUserMessage will reject a new
-      // prompt with an honest "already streaming" error rather than racing it.
+      // eventually, so the flag stays set for that event to consume. Anything
+      // that needs an idle session first waits for it (awaitStoppedRun).
       console.warn(
         `[pi-sdk-driver] abort did not settle within ${ABORT_SETTLE_TIMEOUT_MS}ms for ${sessionKey(record.ref)}; forcing idle`,
       );
@@ -1257,6 +1239,7 @@ export class SessionSupervisor {
     if (!session) {
       throw new Error(`Session ${sessionKey(record.ref)} is not active.`);
     }
+    await this.awaitStoppedRun(record, session);
     this.assertModelCanChange(record);
 
     const model = await this.resolveModel(selection.provider, selection.modelId);
@@ -1283,8 +1266,9 @@ export class SessionSupervisor {
 
   async setSessionThinkingLevel(sessionRef: SessionRef, thinkingLevel: string): Promise<void> {
     const record = await this.ensureRecord(sessionRef);
-    this.assertModelCanChange(record);
     const session = this.requireSession(record);
+    await this.awaitStoppedRun(record, session);
+    this.assertModelCanChange(record);
     this.applySessionThinkingLevel(session, thinkingLevel);
     forcePersistSession(session.sessionManager);
     record.config = deriveSessionConfig(session.sessionManager);
@@ -1349,6 +1333,7 @@ export class SessionSupervisor {
   ): Promise<NavigateSessionTreeResult> {
     const record = await this.ensureRecord(sessionRef);
     const session = this.requireSession(record);
+    await this.awaitStoppedRun(record, session);
     this.visionRouter?.cancel(record.ref);
     const result = await session.navigateTree(targetId, options);
     if (result.cancelled || result.aborted) {
@@ -1444,6 +1429,24 @@ export class SessionSupervisor {
       void session.abort().catch(() => {});
     }
     await Promise.all(live.map((record) => this.disposeRecordRuntimeSafely(record)));
+  }
+
+  /**
+   * A Stop whose abort outlived ABORT_SETTLE_TIMEOUT_MS reports idle while the
+   * stopped run is still unwinding (a tool ignoring its abort signal), so
+   * anything that needs an idle session - a new prompt, a model change, tree
+   * navigation - would fail against it. Gives that run a bounded wait instead.
+   */
+  private async awaitStoppedRun(record: ManagedSessionRecord, session: AgentSession): Promise<void> {
+    if (!record.cancelRequested || session.isIdle) {
+      return;
+    }
+    await settleWithin(session.waitForIdle(), STOPPED_RUN_WAIT_MS);
+    if (!session.isIdle) {
+      throw new Error("The stopped run is still shutting down because a tool is not responding to Stop. Try again in a moment.");
+    }
+    // The stopped run is over; its cancel flag must not classify the next one.
+    record.cancelRequested = false;
   }
 
   private async ensureRecord(sessionRef: SessionRef): Promise<ManagedSessionRecord> {
@@ -3294,18 +3297,17 @@ function withCompactAt(usage: SessionContextUsage, session: AgentSession): Sessi
   }
 }
 
-/** Waits up to `ms` for the session's agent run to end; reports whether it did. */
-async function waitForIdleWithin(session: AgentSession, ms: number): Promise<boolean> {
+/** Waits up to `ms` for `work`; rejects only if `work` rejects first. */
+async function settleWithin(work: Promise<unknown>, ms: number): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<void>((resolve) => {
     timer = setTimeout(resolve, ms);
   });
   try {
-    await Promise.race([session.waitForIdle(), timeout]);
+    await Promise.race([work, timeout]);
   } finally {
     clearTimeout(timer);
   }
-  return session.isIdle;
 }
 
 function withRunId(

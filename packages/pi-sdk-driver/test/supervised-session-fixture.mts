@@ -40,7 +40,7 @@ export type Turn =
 export async function makeSupervisedSession(
   label: string,
   turns: Turn[],
-  options: { readonly customTools?: readonly { readonly name: string }[] } = {},
+  { customTools = [] }: { readonly customTools?: readonly { readonly name: string }[] } = {},
 ) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), `supervised-session-${label}-`)));
   const agentDir = join(dir, "agent");
@@ -86,8 +86,8 @@ export async function makeSupervisedSession(
   const { session } = await createAgentSession({
     cwd: dir, agentDir, modelRuntime: runtime, model: selectedModel, thinkingLevel: "off", settingsManager,
     sessionManager: SessionManager.create(dir, join(dir, "sessions")), resourceLoader: loader,
-    tools: ["bash", ...(options.customTools ?? []).map((tool) => tool.name)],
-    ...(options.customTools ? { customTools: [...options.customTools] as never } : {}),
+    tools: ["bash", ...customTools.map((tool) => tool.name)],
+    customTools: [...customTools] as never,
   });
   await session.bindExtensions({});
 

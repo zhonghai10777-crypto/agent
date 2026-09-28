@@ -40,3 +40,22 @@ test("a message sent after a Stop that outlived its settle window waits for the 
     await fixture.cleanup();
   }
 });
+
+test("a thinking-level change after a Stop that outlived its settle window waits instead of failing mid-run", async () => {
+  const fixture = await makeSupervisedSession(
+    "stop-unsettled-thinking",
+    [{ kind: "tool", name: stubbornTool.name, arguments: {} }],
+    { customTools: [stubbornTool] },
+  );
+  try {
+    const run = fixture.supervisor.sendUserMessage(fixture.ref, { text: "start the slow tool" }).catch(() => {});
+    await waitUntil(() => fixture.events.some((event) => event.type === "toolStarted"));
+    await fixture.supervisor.cancelCurrentRun(fixture.ref);
+
+    // Before: "The model and thinking level cannot change during a run."
+    await fixture.supervisor.setSessionThinkingLevel(fixture.ref, "off");
+    await run;
+  } finally {
+    await fixture.cleanup();
+  }
+});
