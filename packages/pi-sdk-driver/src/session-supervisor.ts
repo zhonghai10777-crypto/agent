@@ -2264,6 +2264,39 @@ export class SessionSupervisor {
       case "turn_end":
         refreshSessionContextUsage(record);
         return [sessionUpdatedEvent(record)];
+      case "compaction_start":
+        // Tagged with the active run (if any) so a threshold/overflow
+        // compaction mid-run shows up alongside that run in the timeline. A
+        // manual /compact has no active run at this point (compact() aborts
+        // it first), so record.runningRunId is already undefined there.
+        return toDriverEvents(
+          {
+            type: "compactionStarted" as const,
+            sessionRef: record.ref,
+            timestamp,
+            reason: event.reason,
+          },
+          record,
+          record.runningRunId,
+        );
+      case "compaction_end":
+        // Manual /compact (compactSession) also refreshes usage itself after
+        // awaiting compact(); this additionally covers automatic compaction,
+        // which never leaves that method.
+        refreshSessionContextUsage(record);
+        return toDriverEvents(
+          {
+            type: "compactionFinished" as const,
+            sessionRef: record.ref,
+            timestamp,
+            reason: event.reason,
+            aborted: event.aborted,
+            willRetry: event.willRetry,
+            ...(event.errorMessage !== undefined ? { errorMessage: event.errorMessage } : {}),
+          },
+          record,
+          record.runningRunId,
+        );
       case "agent_end": {
         // pi fires agent_end before an automatic retry as well, so a
         // will-retry agent_end is not run-terminal. Reporting it as a failure

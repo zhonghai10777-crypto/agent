@@ -307,6 +307,23 @@ declare module "@pi-gui/session-driver" {
     readonly reason: "manual" | "ended" | "failed";
   }
 
+  export type CompactionReason = "manual" | "threshold" | "overflow";
+
+  /** A compaction (manual or automatic) has begun. Mirrors pi's `compaction_start`. */
+  export interface CompactionStartedEvent extends SessionEventBase {
+    readonly type: "compactionStarted";
+    readonly reason: CompactionReason;
+  }
+
+  /** A compaction (manual or automatic) has finished, successfully or not. Mirrors pi's `compaction_end`. */
+  export interface CompactionFinishedEvent extends SessionEventBase {
+    readonly type: "compactionFinished";
+    readonly reason: CompactionReason;
+    readonly aborted: boolean;
+    readonly willRetry: boolean;
+    readonly errorMessage?: string;
+  }
+
   export type SessionDriverEvent =
     | SessionOpenedEvent
     | SessionUpdatedEvent
@@ -320,7 +337,9 @@ declare module "@pi-gui/session-driver" {
     | RunRetryingEvent
     | HostUiRequestEvent
     | ExtensionCompatibilityIssueEvent
-    | SessionClosedEvent;
+    | SessionClosedEvent
+    | CompactionStartedEvent
+    | CompactionFinishedEvent;
 
   export type SessionEventListener = (event: SessionDriverEvent) => void | Promise<void>;
   export type Unsubscribe = () => void;

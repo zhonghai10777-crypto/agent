@@ -30,6 +30,7 @@ interface TimelineRuntimeState {
   readonly runningSinceBySession: Map<string, string>;
   readonly activeAssistantMessageBySession: Map<string, string>;
   readonly activeWorkingActivityBySession: Map<string, string>;
+  readonly activeCompactionActivityBySession: Map<string, string>;
 }
 
 export function timelineFromDriverTranscript(items: readonly SessionTranscriptItem[]): TranscriptMessage[] {
@@ -223,6 +224,37 @@ export function applyTimelineEvent(
       }
       break;
     }
+    case "compactionStarted": {
+      // Manual /compact already reports through the composer command
+      // ("contextUsage.tooShort" / "composer.compacted"); a timeline row here
+      // would just repeat that. Only automatic (threshold/overflow)
+      // compaction is otherwise invisible, so only it gets one.
+      if (event.reason === "manual") {
+        break;
+      }
+      const activity = makeActivityItem(tGlobal("timeline.autoCompactionStarted"));
+      state.activeCompactionActivityBySession.set(key, activity.id);
+      transcript.push(activity);
+      break;
+    }
+    case "compactionFinished": {
+      if (event.reason === "manual") {
+        break;
+      }
+      const activityId = state.activeCompactionActivityBySession.get(key);
+      state.activeCompactionActivityBySession.delete(key);
+      const failed = event.aborted || event.errorMessage !== undefined;
+      upsertActivityRow(
+        transcript,
+        activityId,
+        failed ? tGlobal("timeline.autoCompactionFailed") : tGlobal("timeline.autoCompactionFinished"),
+        {
+          tone: failed ? "error" : "success",
+          ...(failed && event.errorMessage ? { detail: event.errorMessage } : {}),
+        },
+      );
+      break;
+    }
     case "runRetrying": {
       // The run is still going, so no clearRunState and no error tone. Without
       // some marker a retry is indistinguishable from a hang, which on a flaky
@@ -301,6 +333,27 @@ function upsertToolRow(
   }
 
   transcript.push(next);
+}
+
+/**
+ * Replace an existing activity item in place (so the "in progress" row
+ * becomes the "finished" row at the same position instead of leaving a
+ * stale in-progress line above a separate result line), or push a new one
+ * if the tracked id is missing or already gone from the transcript.
+ */
+function upsertActivityRow(
+  transcript: TranscriptMessage[],
+  activityId: string | undefined,
+  label: string,
+  options: Pick<Extract<TranscriptMessage, { kind: "activity" }>, "detail" | "metadata" | "tone"> = {},
+): void {
+  const index = activityId ? transcript.findIndex((item) => item.kind === "activity" && item.id === activityId) : -1;
+  if (index < 0) {
+    transcript.push(makeActivityItem(label, options));
+    return;
+  }
+  const existing = transcript[index];
+  transcript[index] = { ...makeActivityItem(label, options), id: activityId as string, createdAt: existing?.createdAt ?? new Date().toISOString() };
 }
 
 function removeWorkingActivity(transcript: TranscriptMessage[], activityId: string | undefined): void {

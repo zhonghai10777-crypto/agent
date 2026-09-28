@@ -2558,6 +2558,7 @@ export class DesktopAppStore implements AppStoreInternals {
         runningSinceBySession: this.sessionState.runningSinceBySession,
         activeAssistantMessageBySession: this.sessionState.activeAssistantMessageBySession,
         activeWorkingActivityBySession: this.sessionState.activeWorkingActivityBySession,
+        activeCompactionActivityBySession: this.sessionState.activeCompactionActivityBySession,
       });
       this.state = applySessionEventState(
         this.state,
