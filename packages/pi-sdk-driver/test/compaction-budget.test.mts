@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { shouldCompact, DEFAULT_COMPACTION_SETTINGS, type CompactionSettings } from "@earendil-works/pi-coding-agent";
 import { AUTO_COMPACT_TOKEN_BUDGET, effectiveReserveTokens, installCompactionBudget } from "../dist/compaction-budget.js";
 
+// Calibration (estimateCalibrationFactor / createCalibratedFactorCache) unit
+// and integration tests live in compaction-calibration.test.mts, alongside
+// its own fixtures. This file stays focused on the reserveTokens/budget
+// behavior installCompactionBudget also owns.
+
 const DEEPSEEK_V4_CONTEXT_WINDOW = 1_000_000;
 /** Smallest window where `contextWindow - AUTO_COMPACT_TOKEN_BUDGET` no longer exceeds the default reserve. */
 const SMALL_WINDOW_BOUNDARY = AUTO_COMPACT_TOKEN_BUDGET + DEFAULT_COMPACTION_SETTINGS.reserveTokens;
@@ -21,8 +26,12 @@ function fakeSession(configuredReserve: number, contextWindow: number | undefine
       return { enabled: true, reserveTokens: reserve, keepRecentTokens: 20000 };
     },
   };
+  // Empty branch: estimateCalibrationFactor always returns 1 (no samples),
+  // so these reserveTokens-focused tests are unaffected by calibration.
+  const sessionManager = { getBranch: () => [], getLeafId: () => null };
   return {
     settingsManager,
+    sessionManager,
     get model() { return model; },
     setContextWindow: (w: number) => { model = { contextWindow: w }; },
     setConfiguredReserve: (r: number) => { reserve = r; },
