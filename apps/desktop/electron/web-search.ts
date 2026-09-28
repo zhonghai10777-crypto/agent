@@ -1,3 +1,5 @@
+import { lookup } from "node:dns/promises";
+import { BlockList, isIP } from "node:net";
 import { PRODUCT } from "../src/product";
 import {
   canBorrowModelProviderKey,
@@ -780,6 +782,61 @@ export function describeWebAccessRefusal(url: string, settings: WebToolsSettings
   return undefined;
 }
 
+/**
+ * Addresses web_fetch never reaches on the model's behalf: this machine
+ * (loopback and the unspecified address) and link-local networks, which is
+ * where cloud metadata endpoints live. A fetched page can carry instructions
+ * that steer the model into reading a local service and leaking its response
+ * through a later request. Private LAN ranges stay reachable, because reading
+ * intranet pages is a supported use.
+ */
+const LOCAL_FETCH_TARGETS = (() => {
+  const list = new BlockList();
+  list.addSubnet("0.0.0.0", 8, "ipv4");
+  list.addSubnet("127.0.0.0", 8, "ipv4");
+  list.addSubnet("169.254.0.0", 16, "ipv4");
+  list.addAddress("100.100.100.200", "ipv4"); // Alibaba Cloud metadata, outside link-local
+  list.addAddress("::", "ipv6");
+  list.addAddress("::1", "ipv6");
+  list.addSubnet("fe80::", 10, "ipv6");
+  list.addAddress("fd00:ec2::254", "ipv6"); // AWS metadata over IPv6, outside link-local
+  return list;
+})();
+
+let localFetchTargetsAllowed = false;
+
+/** Test-only: the network tests serve their pages from 127.0.0.1. */
+export function allowLocalWebFetchTargetsForTests(allowed: boolean): void {
+  localFetchTargetsAllowed = allowed;
+}
+
+/**
+ * Refuses a URL whose host is, or resolves to, a local address. Checked per
+ * hop, before the request goes out. The later connect resolves the name
+ * again, so a rebinding DNS server could still slip past; the request itself
+ * cannot be pinned to the checked address because it has to keep going
+ * through pi's global proxy-aware dispatcher.
+ */
+async function assertNotLocalFetchTarget(url: string): Promise<void> {
+  if (localFetchTargetsAllowed) {
+    return;
+  }
+  const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
+  let addresses: readonly { readonly address: string; readonly family: number }[];
+  if (isIP(host)) {
+    addresses = [{ address: host, family: isIP(host) }];
+  } else {
+    try {
+      addresses = await lookup(host, { all: true, verbatim: true });
+    } catch {
+      return; // The fetch reports the DNS failure itself.
+    }
+  }
+  if (addresses.some(({ address, family }) => LOCAL_FETCH_TARGETS.check(address, family === 6 ? "ipv6" : "ipv4"))) {
+    throw new Error("That address points at this computer or a link-local network, which web_fetch does not access.");
+  }
+}
+
 export async function runWebFetch(
   rawUrl: string,
   settings: WebToolsSettings,
@@ -802,6 +859,7 @@ export async function runWebFetch(
       throw new Error(`The page redirected more than ${MAX_REDIRECTS} times.`);
     }
 
+    await assertNotLocalFetchTarget(currentUrl);
     const outcome = await fetchWithBudget<FetchHopOutcome>(
       currentUrl,
       {

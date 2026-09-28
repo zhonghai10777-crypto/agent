@@ -1,7 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { runWebFetch, runWebSearch, normalizeWebToolsSettings, type WebToolsSettings } from "../../electron/web-search";
+import {
+  allowLocalWebFetchTargetsForTests,
+  normalizeWebToolsSettings,
+  runWebFetch,
+  runWebSearch,
+  type WebToolsSettings,
+} from "../../electron/web-search";
 import { createWebRuntimeTools, webFetchToolName, webReadToolName } from "../../electron/web-runtime";
 import { resetWebContentCacheForTests } from "../../electron/web-content-cache";
 
@@ -45,6 +51,11 @@ async function startRawServer(
       }),
   };
 }
+
+// These tests serve their pages from 127.0.0.1, which web_fetch otherwise
+// refuses (see the local-target test at the end of this file).
+test.beforeAll(() => allowLocalWebFetchTargetsForTests(true));
+test.afterAll(() => allowLocalWebFetchTargetsForTests(false));
 
 test("web_search reaches a SearXNG-shaped endpoint and maps its results", async () => {
   let receivedQuery = "";
@@ -408,6 +419,32 @@ test("web_fetch's old single-argument {url} call still works and returns section
     expect(result.content[0]?.text).toContain("hello world");
     expect(result.content[0]?.text).toMatch(/Source version: [0-9a-f]{16}/);
   } finally {
+    await server.close();
+  }
+});
+
+test("web_fetch refuses this machine and link-local targets before contacting them", async () => {
+  let hits = 0;
+  const server = await startServer((_url, respond) => {
+    hits += 1;
+    respond(200, { "Content-Type": "text/plain" }, "local secret");
+  });
+  allowLocalWebFetchTargetsForTests(false);
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: "http://search.test" });
+    const port = new URL(server.baseUrl).port;
+    for (const url of [
+      `http://127.0.0.1:${port}/`,
+      `http://localhost:${port}/`,
+      `http://[::1]:${port}/`,
+      "http://169.254.169.254/latest/meta-data/",
+      "http://0.0.0.0/",
+    ]) {
+      await expect(runWebFetch(url, settings), url).rejects.toThrow(/this computer or a link-local network/);
+    }
+    expect(hits).toBe(0);
+  } finally {
+    allowLocalWebFetchTargetsForTests(true);
     await server.close();
   }
 });
