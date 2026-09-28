@@ -183,6 +183,17 @@ interface ManagedSessionRecord {
    */
   cancelRequested: boolean;
   /**
+   * Set when compaction_start reopened "running" for an automatic compaction
+   * that began with no run already active (see mapAgentEvent's compaction_start
+   * / compaction_end cases). Compaction that starts *inside* an active run
+   * (mid-run pre-turn compaction, or overflow recovery with willRetry) must
+   * never have its status closed out here — the run owns "running" for that
+   * whole window, compaction_end has nothing to give back — so this flag is
+   * the record of "did compaction_start itself open this window" that
+   * compaction_end checks before touching status at all.
+   */
+  compactionReopenedRunning: boolean;
+  /**
    * In-flight cancellation, if any. New runs wait on this before starting so an
    * aborted run's asynchronous agent_end can never be attributed to the run
    * that follows it. pi's agent events carry no run identifier, so sequencing —
@@ -1351,6 +1362,7 @@ export class SessionSupervisor {
     // failure of the next session as a user cancel and silently swallow it.
     record.cancelRequested = false;
     record.pendingCancel = undefined;
+    record.compactionReopenedRunning = false;
     record.contextUsage = undefined;
     this.clearExtensionUiState(record);
     this.cancelPendingHostUiRequests(record);
@@ -1443,6 +1455,7 @@ export class SessionSupervisor {
     // crash mid-run, so anything keyed off it must start clean.
     record.cancelRequested = false;
     record.pendingCancel = undefined;
+    record.compactionReopenedRunning = false;
 
     this.records.set(key, record);
     await this.bindSessionRuntime(record);
@@ -1482,6 +1495,7 @@ export class SessionSupervisor {
       transcriptDiskMtimeMs: undefined,
       contextUsage: undefined,
       cancelRequested: false,
+      compactionReopenedRunning: false,
       pendingCancel: undefined,
       cancelGeneration: 0,
       eventNormalizer: createAgentEventNormalizer(),
@@ -2265,27 +2279,39 @@ export class SessionSupervisor {
         refreshSessionContextUsage(record);
         return [sessionUpdatedEvent(record)];
       case "compaction_start":
-        // Automatic (threshold/overflow) compaction runs from inside pi's
-        // post-run loop, which fires *after* agent_end already marked this
-        // record idle and cleared runningRunId. Left alone, the desktop
-        // would believe the session is free to accept a new prompt while pi
-        // is still busy compacting, and a message sent in that window is
-        // rejected outright ("already streaming") and lost instead of being
-        // queued like any other in-flight run. Reopening "running" here
-        // makes the composer queue it the same way it would for a real run.
+        // Automatic (threshold/overflow) compaction starts in two shapes:
+        // - Post-run, with no run active (runningRunId already cleared):
+        //   pi's post-run loop runs this *after* agent_end already marked
+        //   the record idle. Left alone, the desktop would believe the
+        //   session is free to accept a new prompt while pi is still
+        //   compacting, and a message sent in that window is rejected
+        //   outright ("already streaming") and lost instead of queued like
+        //   any other in-flight run. Reopening "running" here fixes that -
+        //   compactionReopenedRunning records that *this* case did it, so
+        //   compaction_end (below) knows to give it back.
+        // - Mid-run, with a run already active (runningRunId set): pi's
+        //   prepareNextTurnWithContext compacts *between* a tool result and
+        //   the next LLM call, inside the same run — the common path for a
+        //   long tool loop that crosses the compaction budget mid-run — or
+        //   overflow recovery about to retry. record.status is already
+        //   "running" and must stay exactly that: toggling it off and back
+        //   on would flicker Stop -> Send -> Stop mid-run and reopen the
+        //   same rejection window this fix exists to close, just narrower.
+        //   compactionReopenedRunning stays false here, so compaction_end
+        //   below never touches status for this shape.
         // Manual /compact has no active run at this point (compact() aborts
-        // it first) and manages its own status directly, so it is excluded.
+        // it first) and manages its own status directly, so it is excluded
+        // from both shapes.
         //
-        // Deliberately not `record.session.isStreaming`/`isCompacting`
-        // (pi's own "is work in flight" getters, and the idiom this file
-        // otherwise uses for record.status elsewhere): both stay true from
-        // this point all the way through compaction_end and past it - they
-        // reflect the whole run+continuation lifecycle, not this specific
-        // transition - so they cannot tell "running" and "idle" apart at
-        // either end of this window. See compaction_end below for the same
-        // reasoning on the way back down.
-        if (event.reason !== "manual") {
+        // Deliberately not `record.session.isStreaming`/`isCompacting` (pi's
+        // own "is work in flight" getters, and the idiom this file
+        // otherwise uses for record.status elsewhere): both stay true
+        // across the whole run+continuation lifecycle and do not
+        // distinguish "no run was active" from "a run is still active"
+        // either.
+        if (event.reason !== "manual" && !record.runningRunId) {
           record.status = "running";
+          record.compactionReopenedRunning = true;
         }
         return toDriverEvents(
           {
@@ -2302,18 +2328,30 @@ export class SessionSupervisor {
         // awaiting compact(); this additionally covers automatic compaction,
         // which never leaves that method.
         refreshSessionContextUsage(record);
-        // Close the "running" window compaction_start opened. Done directly
-        // here rather than left to the agent_settled backstop below: pi's
-        // event normalizer latches "terminal" on the original agent_end (the
-        // one that preceded this compaction) and only resets on a queued
-        // message's own message_start, so for the common "compaction with no
-        // queued follow-up" case, agent_settled is normalized away entirely
-        // (verified empirically - see compaction-events.test.mts) and never
-        // reaches the code below. No queued continuation can have started
-        // yet at this point either way: the agent loop only checks for one
-        // after compact() returns, so this can't race a genuine new run.
-        if (event.reason !== "manual") {
-          record.status = "idle";
+        // Only close the "running" window compaction_start opened for
+        // itself (compactionReopenedRunning) - never touch status for
+        // compaction that started inside an already-active run (see
+        // compaction_start above). Done directly here rather than left to
+        // the agent_settled backstop below: pi's event normalizer latches
+        // "terminal" on the original agent_end and only resets on a queued
+        // message's own message_start, so for the common "compaction with
+        // no queued follow-up" case, agent_settled is normalized away
+        // entirely (verified empirically - see compaction-events.test.mts)
+        // and never reaches the code below.
+        if (record.compactionReopenedRunning) {
+          record.compactionReopenedRunning = false;
+          // willRetry means overflow recovery is about to continue the
+          // interrupted turn via agent.continue() - leave "running" for
+          // that continuation instead of flashing idle in between. (In
+          // practice this compaction_end always has willRetry: false
+          // whenever compactionReopenedRunning is true - the willRetry:
+          // true overflow path never clears runningRunId in the first
+          // place, so compaction_start never sets this flag for it - but
+          // this stays a direct, defensive check rather than relying on
+          // that invariant holding across pi versions.)
+          if (!event.willRetry) {
+            record.status = "idle";
+          }
         }
         return toDriverEvents(
           {

@@ -49,9 +49,19 @@ function thresholdTriggerUsage(turn: number): Usage | undefined {
  * `this.agent.streamFunction`, and the summarization request is
  * distinguishable by its system prompt (see pi's SUMMARIZATION_SYSTEM_PROMPT).
  */
+const noopTool = {
+  name: "noop_tool",
+  label: "No-op tool",
+  description: "Test-only tool that does nothing, so a turn can include a real tool call.",
+  parameters: { type: "object" as const, properties: {} },
+  async execute() {
+    return { content: [{ type: "text" as const, text: "ok" }], details: {} };
+  },
+};
+
 async function makeRealSession(
   label: string,
-  options: { failSummarization?: boolean; turnUsage?: (turn: number) => Usage | undefined } = {},
+  options: { failSummarization?: boolean; turnUsage?: (turn: number) => Usage | undefined; toolCallAtTurn?: number } = {},
 ) {
   // Resolved to match createCanonicalWorkspaceRef's realpath'd cwd (macOS
   // tmpdir() lives under the /var -> /private/var symlink).
@@ -79,12 +89,28 @@ async function makeRealSession(
           return;
         }
         turn += 1;
-        const text = isSummarization ? "Summary text." : `Reply ${turn}`;
         const usage = !isSummarization ? options.turnUsage?.(turn) : undefined;
+        const defaultUsage = { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 70, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+        if (!isSummarization && options.toolCallAtTurn === turn) {
+          // A real tool call (not a plain text reply): the agent loop must
+          // execute it and call the model again before this turn's final
+          // reply, so a high usage here is read by pi's *mid-run* pre-turn
+          // compaction check (prepareNextTurnWithContext), not the post-run
+          // one - the run is still active when this fires.
+          const message = {
+            role: "assistant", api: requestModel.api, provider: requestModel.provider, model: requestModel.id,
+            content: [{ type: "toolCall", id: `tool-call-${turn}`, name: noopTool.name, arguments: {} }],
+            usage: usage ?? defaultUsage, stopReason: "toolUse", timestamp: Date.now(),
+          };
+          stream.push({ type: "start", partial: message });
+          stream.push({ type: "done", reason: "toolUse", message });
+          return;
+        }
+        const text = isSummarization ? "Summary text." : `Reply ${turn}`;
         const message = {
           role: "assistant", api: requestModel.api, provider: requestModel.provider, model: requestModel.id,
           content: [{ type: "text", text }],
-          usage: usage ?? { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 70, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          usage: usage ?? defaultUsage,
           stopReason: "stop", timestamp: Date.now(),
         };
         stream.push({ type: "start", partial: message });
@@ -107,7 +133,8 @@ async function makeRealSession(
   await loader.reload();
   const { session } = await createAgentSession({
     cwd: dir, agentDir, modelRuntime: runtime, model: selectedModel, thinkingLevel: "off", settingsManager,
-    sessionManager: SessionManager.create(dir, join(dir, "sessions")), resourceLoader: loader, tools: [],
+    sessionManager: SessionManager.create(dir, join(dir, "sessions")), resourceLoader: loader,
+    tools: [noopTool.name], customTools: [noopTool],
   });
   await session.bindExtensions({});
   await session.prompt("First exchange");
@@ -297,6 +324,64 @@ test("a failed automatic compaction also settles back to idle without a duplicat
 
     const finishedAt = events.indexOf(compactionEvents[1]);
     await waitForStatus(events as { type: string; snapshot?: { status: string } }[], finishedAt, "idle");
+  } finally {
+    await a.close();
+  }
+});
+
+test("mid-run threshold compaction (pi's prepareNextTurn pre-turn check) never idle-flashes the still-active run", async () => {
+  // Turn 3 (the triggering prompt's first model response) is a real tool
+  // call, not a plain reply: the agent loop must execute noopTool and call
+  // the model again (turn 4) before this turn's final reply lands. High
+  // usage on that tool-call message is read by pi's *mid-run* pre-turn
+  // compaction check (agent-session.js's _compactBeforeNextAssistantResponse,
+  // called from prepareNextTurnWithContext between the tool result and the
+  // next LLM call) rather than the post-run check the other two automatic
+  // tests exercise - runningRunId is still set and record.status is already
+  // "running" the whole time this fires.
+  const a = await makeRealSession("midrun", { toolCallAtTurn: 3, turnUsage: thresholdTriggerUsage });
+  try {
+    const { supervisor, refs } = await makeSupervised([{ label: "a", dir: a.dir, session: a.session }]);
+    const events = collectEvents(supervisor, refs.a) as { type: string; snapshot?: { status: string } }[];
+
+    // Routed through the supervisor's real message-submission path (not
+    // session.prompt() directly): only sendUserMessageOnce assigns
+    // record.runningRunId for a genuine new (non-queued) message, which is
+    // exactly the state this test needs to be in before compaction_start
+    // fires, to faithfully exercise the "a run is already active" branch.
+    const { completion } = await supervisor.startUserMessage(refs.a, { text: "Trigger mid-run threshold compaction" });
+    await completion;
+    await waitUntil(() => compactionTypes(events).length >= 2, 5000);
+
+    const compactionEvents = events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished");
+    assert.equal((compactionEvents[0] as { reason: string }).reason, "threshold");
+    assert.equal((compactionEvents[1] as { reason: string }).reason, "threshold");
+
+    // The run continues past compaction (turn 4's real final reply), so wait
+    // for its own delivery - separate from the compaction pair above - before
+    // asserting on it.
+    await waitUntil(() => events.some((e) => e.type === "runCompleted"), 5000);
+
+    // Exactly one runCompleted for the whole run (tool call, mid-run
+    // compaction, then the final reply) - not two, and not the
+    // "compactionReopenedRunning" quiet-idle path from the post-run tests,
+    // since a run was already active when compaction_start fired here.
+    const runCompletedEvents = events.filter((e) => e.type === "runCompleted");
+    assert.equal(runCompletedEvents.length, 1);
+    const runCompletedAt = events.indexOf(runCompletedEvents[0]);
+
+    // From the moment the run visibly starts (status "running") through its
+    // single runCompleted, status must never read "idle" in between -
+    // including across the nested compactionStarted/compactionFinished
+    // window - or the composer would flicker Stop -> Send -> Stop and
+    // briefly reopen the "already streaming" rejection this fix closes.
+    const firstRunningAt = events.findIndex((e) => e.type === "sessionUpdated" && e.snapshot?.status === "running");
+    assert.ok(firstRunningAt >= 0, "the run must have shown as running at some point");
+    const duringRun = events.slice(firstRunningAt + 1, runCompletedAt);
+    assert.ok(
+      !duringRun.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "idle"),
+      "status must stay 'running' throughout a run that compacts mid-run, never idle until the run truly ends",
+    );
   } finally {
     await a.close();
   }
