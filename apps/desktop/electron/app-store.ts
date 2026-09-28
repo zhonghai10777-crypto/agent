@@ -125,7 +125,8 @@ import * as orchestration from "./app-store-orchestration";
 import { isSessionActivelyViewed, isSessionVisibleInWindow } from "./session-visibility";
 
 type StateListener = (state: DesktopAppState) => void;
-type SelectedTranscriptListener = (payload: SelectedTranscriptRecord | null) => void;
+/** Notified when the selected transcript may have changed; subscribers build it for their own view. */
+type SelectedTranscriptListener = () => void;
 type AssistantDeltaListener = (event: AssistantDeltaEvent) => void;
 type SessionEventListener = (event: SessionDriverEvent, state: DesktopAppState) => void | Promise<void>;
 type ExtensionUiDialogRequest = Extract<SessionDriverEvent, { type: "hostUiRequest" }>["request"] & {
@@ -289,24 +290,41 @@ export class DesktopAppStore implements AppStoreInternals {
     return this.projectStateForView(view);
   }
 
-  async getSelectedTranscript(): Promise<SelectedTranscriptRecord | null> {
-    await this.initialize();
-    const sessionRef = this.selectedSessionRef();
-    if (!sessionRef) {
-      return null;
-    }
-    await this.ensureTranscriptLoaded(sessionRef);
-    return this.buildSelectedTranscriptRecord(sessionRef);
+  async getSelectedTranscriptForView(view: DesktopAppViewState): Promise<SelectedTranscriptRecord | null> {
+    return this.selectedTranscriptRecord(await this.prepareSelectedTranscriptForView(view));
   }
 
-  async getSelectedTranscriptForView(view: DesktopAppViewState): Promise<SelectedTranscriptRecord | null> {
+  /** Loads the transcript `view` selects and returns that session, so the build itself can stay synchronous. */
+  async prepareSelectedTranscriptForView(view: DesktopAppViewState): Promise<SessionRef | undefined> {
     await this.initialize();
     const sessionRef = this.selectedSessionRefForView(view);
+    if (sessionRef) {
+      await this.ensureTranscriptLoaded(sessionRef);
+    }
+    return sessionRef;
+  }
+
+  /**
+   * The cached transcript already holds the text of assistant deltas still
+   * buffered for their 50ms batch, so they are flushed first: a delta that
+   * reaches the renderer after a snapshot already containing its text is
+   * appended twice. For the same reason callers must send the result before
+   * yielding to any other event.
+   */
+  selectedTranscriptRecord(sessionRef: SessionRef | undefined): SelectedTranscriptRecord | null {
     if (!sessionRef) {
       return null;
     }
-    await this.ensureTranscriptLoaded(sessionRef);
-    return this.buildSelectedTranscriptRecord(sessionRef);
+    const key = sessionKey(sessionRef);
+    this.flushAssistantDelta(key);
+    this.ensureSessionSchemaInfo(sessionRef);
+    const schemaInfo = this.sessionSchemaInfoCache.get(key);
+    return {
+      workspaceId: sessionRef.workspaceId,
+      sessionId: sessionRef.sessionId,
+      transcript: (this.sessionState.transcriptCache.get(key) ?? []).map(cloneTranscriptMessage),
+      ...(schemaInfo ? { schemaInfo } : {}),
+    };
   }
 
   projectStateForView(
@@ -421,7 +439,6 @@ export class DesktopAppStore implements AppStoreInternals {
 
   subscribeToSelectedTranscript(listener: SelectedTranscriptListener): () => void {
     this.selectedTranscriptListeners.add(listener);
-    void this.getSelectedTranscript().then(listener).catch(() => undefined);
     return () => {
       this.selectedTranscriptListeners.delete(listener);
     };
@@ -2830,7 +2847,7 @@ export class DesktopAppStore implements AppStoreInternals {
     });
   }
 
-  private selectedSessionRefForView(view: DesktopAppViewState): SessionRef | undefined {
+  selectedSessionRefForView(view: DesktopAppViewState): SessionRef | undefined {
     const selectedWorkspaceId = this.resolveViewWorkspaceId(view.selectedWorkspaceId, this.state);
     const selectedSessionId = this.resolveViewSessionId(selectedWorkspaceId, view.selectedSessionId, this.state);
     if (!selectedWorkspaceId || !selectedSessionId) {
@@ -3018,17 +3035,6 @@ export class DesktopAppStore implements AppStoreInternals {
     );
   }
 
-  private buildSelectedTranscriptRecord(sessionRef: SessionRef): SelectedTranscriptRecord {
-    this.ensureSessionSchemaInfo(sessionRef);
-    const schemaInfo = this.sessionSchemaInfoCache.get(sessionKey(sessionRef));
-    return {
-      workspaceId: sessionRef.workspaceId,
-      sessionId: sessionRef.sessionId,
-      transcript: (this.sessionState.transcriptCache.get(sessionKey(sessionRef)) ?? []).map(cloneTranscriptMessage),
-      ...(schemaInfo ? { schemaInfo } : {}),
-    };
-  }
-
   /**
    * Lazily read a session's schema info (the "written by a newer pi" version-skew
    * flag) and cache it so it is not an extra header read on every transcript
@@ -3077,10 +3083,8 @@ export class DesktopAppStore implements AppStoreInternals {
   }
 
   publishSelectedTranscript(): void {
-    const sessionRef = this.selectedSessionRef();
-    const payload = sessionRef ? this.buildSelectedTranscriptRecord(sessionRef) : null;
     for (const listener of this.selectedTranscriptListeners) {
-      listener(payload);
+      listener();
     }
   }
 

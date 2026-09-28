@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DesktopHarness } from "./electron-app";
+import { launchDesktop, makeUserDataDir, makeWorkspace, setDeferredThreadTitleMode, type DesktopHarness } from "./electron-app";
 
 export const COMPACTION_TEST_KEY = "pi-app-compaction-fixture-key";
 export const COMPACTION_TEST_PROVIDER = "compaction-fixture";
@@ -144,7 +144,8 @@ export async function startCompactionHttpFixture() {
   const requests: CompactionHttpRequest[] = [];
   const held: Array<() => void> = [];
   let primaryCallCount = 0;
-  const toolCallQueue: string[] = [];
+  const toolCallQueue: Array<{ readonly name: string; readonly arguments: Record<string, unknown> }> = [];
+  let nextReplyStream: { readonly chunks: readonly string[]; readonly pause: SsePause | undefined } | undefined;
   let nextUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } = {
     prompt_tokens: 300_000,
     completion_tokens: 40,
@@ -180,7 +181,7 @@ export async function startCompactionHttpFixture() {
           res.end(JSON.stringify({ error: { message: "Synthetic summarization failure" } }));
           return;
         }
-        writeSseCompletion(res, body.model, { content: summaryText }, { prompt_tokens: 500, completion_tokens: 30, total_tokens: 530 });
+        void writeSseCompletion(res, body.model, { content: summaryText }, { prompt_tokens: 500, completion_tokens: 30, total_tokens: 530 });
       };
       if (summarizationMode === "hold") held.push(respond);
       else respond();
@@ -189,20 +190,26 @@ export async function startCompactionHttpFixture() {
 
     primaryCallCount += 1;
     if (toolCallQueue.length > 0) {
-      const path = toolCallQueue.shift() as string;
-      writeSseCompletion(res, body.model, {
+      const call = toolCallQueue.shift()!;
+      void writeSseCompletion(res, body.model, {
         tool_calls: [
-          { index: 0, id: `read-document-call-${primaryCallCount}`, type: "function", function: { name: "read_document", arguments: JSON.stringify({ path }) } },
+          { index: 0, id: `${call.name}-call-${primaryCallCount}`, type: "function", function: { name: call.name, arguments: JSON.stringify(call.arguments) } },
         ],
       });
       return;
     }
-    if (realTokenizerOverhead !== undefined) {
-      const input = Math.round(realTokensForRequestMessages(body.messages ?? [])) + realTokenizerOverhead;
-      writeSseCompletion(res, body.model, { content: nextReplyText }, { prompt_tokens: input, completion_tokens: 30, total_tokens: input + 30 });
+    if (nextReplyStream) {
+      const plan = nextReplyStream;
+      nextReplyStream = undefined;
+      await writeSseCompletion(res, body.model, { content: plan.chunks }, nextUsage, plan.pause);
       return;
     }
-    writeSseCompletion(res, body.model, { content: nextReplyText }, nextUsage);
+    if (realTokenizerOverhead !== undefined) {
+      const input = Math.round(realTokensForRequestMessages(body.messages ?? [])) + realTokenizerOverhead;
+      void writeSseCompletion(res, body.model, { content: nextReplyText }, { prompt_tokens: input, completion_tokens: 30, total_tokens: input + 30 });
+      return;
+    }
+    void writeSseCompletion(res, body.model, { content: nextReplyText }, nextUsage);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address() as { port: number };
@@ -211,7 +218,22 @@ export async function startCompactionHttpFixture() {
     requests,
     /** The next primary response not otherwise queued is a read_document tool call for this path. Queues (FIFO); call once per round that should start with a tool call. */
     setNextToolCallPath(path: string) {
-      toolCallQueue.push(path);
+      toolCallQueue.push({ name: "read_document", arguments: { path } });
+    },
+    /** Like setNextToolCallPath, for any tool: the next primary response not otherwise queued calls `name` with `args`. */
+    setNextToolCall(name: string, args: Record<string, unknown>) {
+      toolCallQueue.push({ name, arguments: args });
+    },
+    /**
+     * The next plain reply streams `chunks` as separate SSE content deltas.
+     * With `pauseAfter`, the stream holds after that many chunks until
+     * release(), so a test can inspect a reply mid-stream.
+     */
+    setNextReplyStream(chunks: readonly string[], options: { readonly pauseAfter?: number } = {}) {
+      const pause = options.pauseAfter === undefined
+        ? undefined
+        : { afterChunks: options.pauseAfter, until: new Promise<void>((resolve) => held.push(resolve)) };
+      nextReplyStream = { chunks, pause };
     },
     setNextUsage(usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) {
       nextUsage = usage;
@@ -267,12 +289,50 @@ export async function startCompactionHttpFixture() {
   };
 }
 
-function writeSseCompletion(
+/**
+ * Launches the desktop against a freshly seeded fixture agentDir and a running
+ * HTTP fixture, with auto-title requests deferred so the fixture only ever
+ * sees the requests a test drives. `close()` tears both down.
+ */
+export async function launchWithCompactionFixture(label: string) {
+  const userDataDir = await makeUserDataDir(`${label}-`);
+  const agentDir = join(userDataDir, "agent");
+  const workspacePath = await makeWorkspace(label);
+  await seedCompactionAgentDir(agentDir);
+  const http = await startCompactionHttpFixture();
+  const harness = await launchDesktop(userDataDir, {
+    agentDir,
+    initialWorkspaces: [workspacePath],
+    scrubProviderEnv: true,
+    testMode: "background",
+  });
+  const close = async () => {
+    await harness.close().catch(() => {});
+    await http.close();
+  };
+  try {
+    const page = await harness.firstWindow();
+    await http.install(harness);
+    await setDeferredThreadTitleMode(harness);
+    return { userDataDir, agentDir, workspacePath, http, harness, page, close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+interface SsePause {
+  readonly afterChunks: number;
+  readonly until: Promise<void>;
+}
+
+async function writeSseCompletion(
   res: import("node:http").ServerResponse,
   model: string,
-  delta: { content?: string; tool_calls?: unknown[] },
+  delta: { content?: string | readonly string[]; tool_calls?: unknown[] },
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number },
-): void {
+  pause?: SsePause,
+): Promise<void> {
   if (res.destroyed) return;
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
   const send = (chunkDelta: object, finish_reason: string | null = null) =>
@@ -290,7 +350,15 @@ function writeSseCompletion(
     send({ tool_calls: delta.tool_calls });
     send({}, "tool_calls");
   } else {
-    send({ content: delta.content ?? "" });
+    const contents = typeof delta.content === "object" ? delta.content : [delta.content ?? ""];
+    for (const [index, content] of contents.entries()) {
+      if (res.destroyed) return;
+      send({ content });
+      // A multi-chunk reply is spaced out so each delta arrives as its own
+      // network read, the way a real provider streams.
+      if (contents.length > 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      if (pause?.afterChunks === index + 1) await pause.until;
+    }
     send({}, "stop");
   }
   res.write(

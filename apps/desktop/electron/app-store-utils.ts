@@ -283,6 +283,13 @@ export function latestSessionActivityAt(updatedAt: string, transcript: readonly 
   return latest;
 }
 
+export function sameSessionRef(left: SessionRef | undefined, right: SessionRef | undefined): boolean {
+  if (!left || !right) {
+    return left === right;
+  }
+  return left.workspaceId === right.workspaceId && left.sessionId === right.sessionId;
+}
+
 export function toSessionRef(target: WorkspaceSessionTarget): SessionRef {
   return {
     workspaceId: target.workspaceId,

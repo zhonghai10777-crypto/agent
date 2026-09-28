@@ -8,6 +8,7 @@ import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { SessionDriverEvent, SessionRef } from "@pi-gui/session-driver";
 import { getSelectedSession } from "../src/desktop-state";
 import { isSessionActivelyViewed } from "./session-visibility";
+import { sameSessionRef } from "./app-store-utils";
 
 const MAX_COMPLETED_RUN_KEYS = 500;
 
@@ -362,11 +363,4 @@ function hostUiBody(event: Extract<SessionDriverEvent, { type: "hostUiRequest" }
     return event.request.title;
   }
   return "Needs your input";
-}
-
-function sameSessionRef(left: SessionRef | undefined, right: SessionRef | undefined): boolean {
-  if (!left || !right) {
-    return left === right;
-  }
-  return left.workspaceId === right.workspaceId && left.sessionId === right.sessionId;
 }

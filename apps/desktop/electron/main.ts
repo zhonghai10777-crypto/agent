@@ -30,6 +30,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { augmentPosixPath } from "../scripts/augment-path.cjs";
 import { DesktopAppStore, type DesktopAppViewState } from "./app-store";
+import { sameSessionRef } from "./app-store-utils";
 import {
   createOrchestrationRuntimeExtension,
   createOrchestrationRuntimeTools,
@@ -604,23 +605,58 @@ function publishStateToWindow(window: BrowserWindow, state: DesktopAppState = st
   window.webContents.send(desktopIpc.stateChanged, projected);
 }
 
+const selectedTranscriptPublishes = new Map<number, { dirty: boolean }>();
+
+/**
+ * Publish the selected transcript to a window, coalescing bursts: one session
+ * event both emits state (whose subscriber requests a publish) and pings the
+ * transcript subscriber, and each publish ships the whole transcript. Requests
+ * made while one is queued collapse into it; requests made while it is loading
+ * queue exactly one trailing publish.
+ */
+function requestSelectedTranscriptPublish(window: BrowserWindow): void {
+  if (!canPublishToWindow(window)) {
+    return;
+  }
+  const webContentsId = window.webContents.id;
+  const queued = selectedTranscriptPublishes.get(webContentsId);
+  if (queued) {
+    queued.dirty = true;
+    return;
+  }
+  const entry = { dirty: true };
+  selectedTranscriptPublishes.set(webContentsId, entry);
+  void (async () => {
+    // Let every request made in the current turn land on this entry first.
+    await Promise.resolve();
+    while (entry.dirty) {
+      entry.dirty = false;
+      try {
+        await publishSelectedTranscriptToWindow(window);
+      } catch (error) {
+        // Keep looping: a request that arrived meanwhile still needs its publish.
+        console.error("[main] failed to publish the selected transcript", error);
+      }
+    }
+    selectedTranscriptPublishes.delete(webContentsId);
+  })();
+}
+
 async function publishSelectedTranscriptToWindow(window: BrowserWindow): Promise<void> {
   if (!canPublishToWindow(window)) {
     return;
   }
   const webContentsId = window.webContents.id;
-  const payload = await store.getSelectedTranscriptForView(viewForWebContents(webContentsId));
-  if (canPublishToWindow(window)) {
-    const projected = projectStateForWindow(webContentsId);
-    if (payload) {
-      if (projected.selectedWorkspaceId !== payload.workspaceId || projected.selectedSessionId !== payload.sessionId) {
-        return;
-      }
-    } else if (projected.selectedSessionId) {
-      return;
-    }
-    window.webContents.send(desktopIpc.selectedTranscriptChanged, payload);
+  const prepared = await store.prepareSelectedTranscriptForView(viewForWebContents(webContentsId));
+  if (!canPublishToWindow(window)) {
+    return;
   }
+  if (!sameSessionRef(prepared, store.selectedSessionRefForView(viewForWebContents(webContentsId)))) {
+    // The selection moved while loading; that change publishes its own transcript.
+    return;
+  }
+  // Built and sent without yielding: see DesktopAppStore.selectedTranscriptRecord.
+  window.webContents.send(desktopIpc.selectedTranscriptChanged, store.selectedTranscriptRecord(prepared));
 }
 
 function publishAssistantDeltaToWindow(window: BrowserWindow, event: AssistantDeltaEvent): void {
@@ -775,7 +811,7 @@ async function runWindowScopedForWindow(
       const projected = projectStateForWindow(webContentsId, state, viewFromState(state), previousView);
       rememberWindowView(webContentsId, projected);
       publishStateToWindow(window, projected);
-      void publishSelectedTranscriptToWindow(window);
+      requestSelectedTranscriptPublish(window);
       return projected;
     } finally {
       currentWindowScopedWebContentsId = previousWindowScopedWebContentsId;
@@ -820,7 +856,7 @@ async function runImmediateStateResultForWindow(
   const projected = projectStateForWindow(webContentsId, state);
   rememberWindowView(webContentsId, projected);
   window.webContents.send(desktopIpc.stateChanged, projected);
-  void publishSelectedTranscriptToWindow(window);
+  requestSelectedTranscriptPublish(window);
   return projected;
 }
 
@@ -857,7 +893,7 @@ async function runWindowScopedStateResult<T extends { readonly state: DesktopApp
       const projected = projectStateForWindow(webContentsId, result.state, viewFromState(result.state), previousView);
       rememberWindowView(webContentsId, projected);
       publishStateToWindow(window, projected);
-      void publishSelectedTranscriptToWindow(window);
+      requestSelectedTranscriptPublish(window);
       return { ...result, state: projected };
     } finally {
       currentWindowScopedWebContentsId = previousWindowScopedWebContentsId;
@@ -909,10 +945,10 @@ function attachStatePublisher(window: BrowserWindow): void {
     stopPublishingAssistantDeltaByWebContentsId.get(webContentsId)?.();
     const stopPublishingState = store.subscribe((state) => {
       publishStateToWindow(window, state);
-      void publishSelectedTranscriptToWindow(window);
+      requestSelectedTranscriptPublish(window);
     });
     const stopPublishingSelectedTranscript = store.subscribeToSelectedTranscript(() => {
-      void publishSelectedTranscriptToWindow(window);
+      requestSelectedTranscriptPublish(window);
     });
     const stopPublishingAssistantDelta = store.subscribeToAssistantDeltas((event) => {
       publishAssistantDeltaToWindow(window, event);
@@ -948,7 +984,7 @@ function attachStatePublisher(window: BrowserWindow): void {
     startPublishing();
     // Push the current state immediately so the reloaded UI is fresh.
     publishStateToWindow(window);
-    void publishSelectedTranscriptToWindow(window);
+    requestSelectedTranscriptPublish(window);
   });
   window.once("closed", stopPublishing);
 }
