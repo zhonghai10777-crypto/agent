@@ -82,6 +82,54 @@ export interface CompactionHttpRequest {
   readonly body: any;
 }
 
+function isCjkCodePoint(codePoint: number): boolean {
+  return (codePoint >= 0x4e00 && codePoint <= 0x9fff) || (codePoint >= 0x3400 && codePoint <= 0x4dbf) || (codePoint >= 0xf900 && codePoint <= 0xfaff);
+}
+
+/**
+ * A "real tokenizer" stand-in used only when a fixture opts into
+ * `realTokenizerUsage` (case E) - CJK ~0.6 tok/char, everything else ~0.25,
+ * matching the plan's measured DeepSeek v4 ratio. Not used by cases A-D,
+ * which keep their fixed `nextUsage` values unchanged.
+ */
+export function realTokensForText(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of text) {
+    if (isCjkCodePoint(ch.codePointAt(0) ?? 0)) cjk += 1;
+    else other += 1;
+  }
+  return cjk * 0.6 + other * 0.25;
+}
+
+export function messageText(message: any): string {
+  const content = message?.content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  let text = "";
+  for (const block of content) {
+    if (block?.type === "text" && typeof block.text === "string") text += block.text;
+    else if (block?.type === "tool_calls" || block?.type === "toolCall") text += `${block.name ?? ""}${JSON.stringify(block.arguments ?? block.function?.arguments ?? {})}`;
+  }
+  return text;
+}
+
+/** Real-tokenizer prompt size for a full request body's message list (case E only). */
+export function realTokensForRequestMessages(messages: readonly unknown[]): number {
+  let total = 0;
+  for (const message of messages) {
+    total += realTokensForText(messageText(message));
+    const toolCalls = (message as { tool_calls?: readonly unknown[] })?.tool_calls;
+    if (Array.isArray(toolCalls)) {
+      for (const call of toolCalls) {
+        const fn = (call as { function?: { name?: string; arguments?: string } })?.function;
+        total += realTokensForText(`${fn?.name ?? ""}${fn?.arguments ?? ""}`);
+      }
+    }
+  }
+  return total;
+}
+
 /**
  * A real HTTP fixture reached only through test-owned transport injection
  * (mirrors vision-fixture.ts's startVisionHttpFixture). Every request is
@@ -96,7 +144,7 @@ export async function startCompactionHttpFixture() {
   const requests: CompactionHttpRequest[] = [];
   const held: Array<() => void> = [];
   let primaryCallCount = 0;
-  let nextToolCallPath: string | undefined;
+  const toolCallQueue: string[] = [];
   let nextUsage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } = {
     prompt_tokens: 300_000,
     completion_tokens: 40,
@@ -105,6 +153,12 @@ export async function startCompactionHttpFixture() {
   let nextReplyText = "Final answer after reading the file.";
   let summarizationMode: "success" | "http500" | "hold" = "success";
   let summaryText = "Fixed compaction summary text.";
+  // Case E only (realTokenizerUsage): computes usage.input from the actual
+  // request body via realTokensForRequestMessages, plus this fixed overhead
+  // (standing in for a system prompt/tool schemas, never reflected in the
+  // message list pi's own estimator sees). undefined means "off": cases A-D
+  // keep using the fixed nextUsage above, completely unaffected.
+  let realTokenizerOverhead: number | undefined;
 
   const server = createServer(async (req, res) => {
     if (req.headers.authorization !== `Bearer ${COMPACTION_TEST_KEY}`) {
@@ -133,16 +187,19 @@ export async function startCompactionHttpFixture() {
       return;
     }
 
-    const callIndex = primaryCallCount;
     primaryCallCount += 1;
-    if (callIndex === 0 && nextToolCallPath) {
-      const path = nextToolCallPath;
-      nextToolCallPath = undefined;
+    if (toolCallQueue.length > 0) {
+      const path = toolCallQueue.shift() as string;
       writeSseCompletion(res, body.model, {
         tool_calls: [
-          { index: 0, id: "read-document-call-1", type: "function", function: { name: "read_document", arguments: JSON.stringify({ path }) } },
+          { index: 0, id: `read-document-call-${primaryCallCount}`, type: "function", function: { name: "read_document", arguments: JSON.stringify({ path }) } },
         ],
       });
+      return;
+    }
+    if (realTokenizerOverhead !== undefined) {
+      const input = Math.round(realTokensForRequestMessages(body.messages ?? [])) + realTokenizerOverhead;
+      writeSseCompletion(res, body.model, { content: nextReplyText }, { prompt_tokens: input, completion_tokens: 30, total_tokens: input + 30 });
       return;
     }
     writeSseCompletion(res, body.model, { content: nextReplyText }, nextUsage);
@@ -152,15 +209,26 @@ export async function startCompactionHttpFixture() {
 
   return {
     requests,
-    /** The next turn's first response is a read_document tool call for this path (consumed once). */
+    /** The next primary response not otherwise queued is a read_document tool call for this path. Queues (FIFO); call once per round that should start with a tool call. */
     setNextToolCallPath(path: string) {
-      nextToolCallPath = path;
+      toolCallQueue.push(path);
     },
     setNextUsage(usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) {
       nextUsage = usage;
     },
     setNextReplyText(text: string) {
       nextReplyText = text;
+    },
+    /**
+     * Case E only: switch primary usage from the fixed `nextUsage` to a
+     * dynamic computation from the actual request body (see
+     * realTokensForRequestMessages), plus `overheadTokens` added
+     * unconditionally (standing in for a system prompt/tool schemas outside
+     * the message list). Cases A-D never call this, so their fixed-usage
+     * behavior is unchanged.
+     */
+    enableRealTokenizerUsage(overheadTokens: number) {
+      realTokenizerOverhead = overheadTokens;
     },
     setSummarizationMode(mode: typeof summarizationMode) {
       summarizationMode = mode;
