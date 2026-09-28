@@ -8,6 +8,36 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = __dirname;
 const pathsProject = path.resolve(projectRoot, "tsconfig.paths.json");
 const devPort = Number(process.env.PI_APP_DEV_PORT ?? "5173");
+/**
+ * Content-Security-Policy for the packaged renderer. It loads its bundle from
+ * its own files and renders images from data: URLs; xterm injects <style>
+ * elements, hence 'unsafe-inline' for styles only. Scripts stay limited to the
+ * bundle, so injected markup can never run code. Applied to builds only: the
+ * dev server needs an inline React-refresh script and a websocket.
+ */
+const RENDERER_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "connect-src 'self'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+].join("; ");
+
+function rendererContentSecurityPolicy() {
+  return {
+    name: "pi-renderer-content-security-policy",
+    apply: "build",
+    transformIndexHtml: () => [
+      { tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: RENDERER_CSP }, injectTo: "head-prepend" },
+    ],
+  };
+}
+
 export default defineConfig(({ command }) => {
   const cleanOutputs = command === "build";
 
@@ -57,7 +87,7 @@ export default defineConfig(({ command }) => {
     renderer: {
       root: projectRoot,
       base: "./",
-      plugins: [react(), tsconfigPaths({ projects: [pathsProject] })],
+      plugins: [react(), tsconfigPaths({ projects: [pathsProject] }), rendererContentSecurityPolicy()],
       server: {
         port: devPort,
         strictPort: true,
