@@ -115,3 +115,41 @@ test("auto-compaction C: below the budget threshold, no compaction runs at all",
     await closeAll(f);
   }
 });
+
+test("auto-compaction D: a message sent while auto-compaction is running is queued, not rejected, and is delivered once compaction finishes", async () => {
+  const f = await setup();
+  try {
+    f.http.setSummarizationMode("hold");
+    await startThreadFromSurface(f.page, { prompt: "Read report.txt and summarize it" });
+    await expect(f.page.locator(".timeline-item--assistant").last()).toContainText("Final answer after reading the file.", { timeout: 15_000 });
+    await expect(f.page.locator(".timeline-activity", { hasText: "Automatically compacting session context" })).toBeVisible({ timeout: 15_000 });
+
+    // Small usage for the queued follow-up's own reply so it doesn't trigger
+    // a second round of compaction and complicate the assertions below.
+    f.http.setNextUsage({ prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 });
+    await f.page.getByTestId("composer").fill("Follow-up while compacting");
+    await f.page.getByTestId("send").click();
+
+    // Sent while the driver still reports the session as busy compacting: it
+    // must be queued (composer.tsx's isRunning check), not rejected outright
+    // by sendUserMessageOnce ("already streaming") and lost.
+    await expect(f.page.getByTestId("composer-error-banner")).toHaveCount(0);
+    await expect(f.page.getByTestId("queued-composer-message").filter({ hasText: "Follow-up while compacting" })).toHaveCount(1);
+
+    f.http.release();
+    await expect(f.page.locator(".timeline-activity", { hasText: "Session context automatically compacted" })).toBeVisible({ timeout: 15_000 });
+
+    // The queued follow-up is delivered once compaction finishes: a third
+    // primary request reaches the fixture, its reply lands in the transcript,
+    // and the queue empties.
+    await expect.poll(() => f.http.requests.filter((r) => r.kind === "primary").length, { timeout: 15_000 }).toBeGreaterThanOrEqual(3);
+    await expect(f.page.locator(".timeline-item--assistant", { hasText: "Final answer after reading the file." })).toHaveCount(2, { timeout: 15_000 });
+    await expect(f.page.getByTestId("queued-composer-message")).toHaveCount(0);
+
+    // And the session ends idle, not stuck "running" - no duplicate "Agent
+    // finished responding" notification path left dangling either.
+    await expect(f.page.getByTestId("send")).toHaveAttribute("aria-label", "Send message", { timeout: 15_000 });
+  } finally {
+    await closeAll(f);
+  }
+});

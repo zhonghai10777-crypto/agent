@@ -2265,10 +2265,20 @@ export class SessionSupervisor {
         refreshSessionContextUsage(record);
         return [sessionUpdatedEvent(record)];
       case "compaction_start":
-        // Tagged with the active run (if any) so a threshold/overflow
-        // compaction mid-run shows up alongside that run in the timeline. A
-        // manual /compact has no active run at this point (compact() aborts
-        // it first), so record.runningRunId is already undefined there.
+        // Automatic (threshold/overflow) compaction runs from inside pi's
+        // post-run loop, which fires *after* agent_end already marked this
+        // record idle and cleared runningRunId. Left alone, the desktop
+        // would believe the session is free to accept a new prompt while pi
+        // is still busy compacting, and a message sent in that window is
+        // rejected outright ("already streaming") and lost instead of being
+        // queued like any other in-flight run. Reopening "running" here
+        // makes the composer queue it the same way it would for a real run.
+        // Manual /compact has no active run at this point (compact() aborts
+        // it first) and manages its own status directly, so it is excluded.
+        // agent_settled (below) is the backstop that returns this to idle.
+        if (event.reason !== "manual" && record.status !== "running") {
+          record.status = "running";
+        }
         return toDriverEvents(
           {
             type: "compactionStarted" as const,
@@ -2284,6 +2294,19 @@ export class SessionSupervisor {
         // awaiting compact(); this additionally covers automatic compaction,
         // which never leaves that method.
         refreshSessionContextUsage(record);
+        // Close the "running" window compaction_start opened. Done directly
+        // here rather than left to the agent_settled backstop below: pi's
+        // event normalizer latches "terminal" on the original agent_end (the
+        // one that preceded this compaction) and only resets on a queued
+        // message's own message_start, so for the common "compaction with no
+        // queued follow-up" case, agent_settled is normalized away entirely
+        // (verified empirically - see compaction-events.test.mts) and never
+        // reaches the code below. No queued continuation can have started
+        // yet at this point either way: the agent loop only checks for one
+        // after compact() returns, so this can't race a genuine new run.
+        if (event.reason !== "manual") {
+          record.status = "idle";
+        }
         return toDriverEvents(
           {
             type: "compactionFinished" as const,
@@ -2394,6 +2417,17 @@ export class SessionSupervisor {
         record.status = "idle";
         record.updatedAt = timestamp;
         refreshSessionContextUsage(record);
+        if (!runId) {
+          // Reached only when compaction_start reopened "running" (above)
+          // and nothing else ran during it (no queued follow-up, which would
+          // have claimed its own runId via message_start). Nothing new
+          // happened for the user here — compactionFinished already reported
+          // the outcome on its own channel — so this is a quiet return to
+          // idle, not a runCompleted: emitting one with no real runId would
+          // need a synthetic fallback key and risks a duplicate "Agent
+          // finished responding" notification alongside the original run's.
+          return [sessionUpdatedEvent(record)];
+        }
         return toDriverEvents(
           {
             type: "runCompleted" as const,

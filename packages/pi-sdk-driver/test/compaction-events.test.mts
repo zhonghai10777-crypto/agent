@@ -35,7 +35,10 @@ function zeroUsage() {
  * `this.agent.streamFunction`, and the summarization request is
  * distinguishable by its system prompt (see pi's SUMMARIZATION_SYSTEM_PROMPT).
  */
-async function makeRealSession(label: string, options: { failSummarization?: boolean } = {}) {
+async function makeRealSession(
+  label: string,
+  options: { failSummarization?: boolean; turnUsage?: (turn: number) => { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } } | undefined } = {},
+) {
   // Resolved to match createCanonicalWorkspaceRef's realpath'd cwd (macOS
   // tmpdir() lives under the /var -> /private/var symlink).
   const dir = await realpath(await mkdtemp(join(tmpdir(), `compaction-events-${label}-`)));
@@ -63,10 +66,11 @@ async function makeRealSession(label: string, options: { failSummarization?: boo
         }
         turn += 1;
         const text = isSummarization ? "Summary text." : `Reply ${turn}`;
+        const usage = !isSummarization ? options.turnUsage?.(turn) : undefined;
         const message = {
           role: "assistant", api: requestModel.api, provider: requestModel.provider, model: requestModel.id,
           content: [{ type: "text", text }],
-          usage: { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 70, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+          usage: usage ?? { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 70, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
           stopReason: "stop", timestamp: Date.now(),
         };
         stream.push({ type: "start", partial: message });
@@ -208,5 +212,79 @@ test("S2.4: compacting one session emits no compaction events on another session
   } finally {
     await a.close();
     await b.close();
+  }
+});
+
+test("automatic threshold compaction reopens 'running' while it runs and settles to idle without a duplicate runCompleted", async () => {
+  // 199,990 sits strictly between the compaction threshold (contextWindow 200,000
+  // minus reserveTokens 16 = 199,984) and the full context window (200,000):
+  // enough to trigger threshold compaction, not so much it reads as overflow.
+  const a = await makeRealSession("auto", {
+    turnUsage: (turn) => (turn === 3 ? { input: 199_970, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 199_990, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } : undefined),
+  });
+  try {
+    const { supervisor, refs } = await makeSupervised([{ label: "a", dir: a.dir, session: a.session }]);
+    const events = collectEvents(supervisor, refs.a);
+
+    await a.session.prompt("Trigger threshold compaction");
+    await waitUntil(() => compactionTypes(events).length >= 2, 5000);
+
+    const compactionEvents = events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished");
+    assert.equal((compactionEvents[0] as { reason: string }).reason, "threshold");
+    assert.equal((compactionEvents[1] as { reason: string }).reason, "threshold");
+
+    // Exactly one runCompleted for the actual reply. Reopening "running" for
+    // compaction and settling back to idle afterward must not add a second
+    // one (that would risk a duplicate "Agent finished responding" notification).
+    assert.equal(events.filter((e) => e.type === "runCompleted").length, 1);
+
+    // Between compactionStarted and compactionFinished, at least one
+    // sessionUpdated shows the session as "running" - so the composer
+    // queues a message sent in that window instead of rejecting it.
+    const startedAt = events.indexOf(compactionEvents[0]);
+    const finishedAt = events.indexOf(compactionEvents[1]);
+    assert.ok(startedAt >= 0 && finishedAt > startedAt);
+    const duringCompaction = events.slice(startedAt, finishedAt) as { type: string; snapshot?: { status: string } }[];
+    assert.ok(
+      duringCompaction.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "running"),
+      "session must read as running while auto-compaction is in progress",
+    );
+
+    // And it settles back to idle as soon as compaction finishes.
+    await waitUntil(() => {
+      const afterFinished = events.slice(finishedAt) as { type: string; snapshot?: { status: string } }[];
+      return afterFinished.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "idle");
+    }, 5000);
+  } finally {
+    await a.close();
+  }
+});
+
+test("a failed automatic compaction also settles back to idle without a duplicate runCompleted", async () => {
+  const a = await makeRealSession("auto-fail", {
+    failSummarization: true,
+    turnUsage: (turn) => (turn === 3 ? { input: 199_970, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 199_990, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } : undefined),
+  });
+  try {
+    const { supervisor, refs } = await makeSupervised([{ label: "a", dir: a.dir, session: a.session }]);
+    const events = collectEvents(supervisor, refs.a);
+
+    await a.session.prompt("Trigger threshold compaction");
+    await waitUntil(() => compactionTypes(events).length >= 2, 5000);
+
+    const compactionEvents = events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished");
+    const finished = compactionEvents[1] as { reason: string; aborted: boolean; errorMessage?: string };
+    assert.equal(finished.reason, "threshold");
+    assert.match(finished.errorMessage ?? "", /summarization boom/);
+
+    assert.equal(events.filter((e) => e.type === "runCompleted").length, 1, "the failed compaction itself must not be reported as a run completion");
+
+    const finishedAt = events.indexOf(compactionEvents[1]);
+    await waitUntil(() => {
+      const afterFinished = events.slice(finishedAt) as { type: string; snapshot?: { status: string } }[];
+      return afterFinished.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "idle");
+    }, 5000);
+  } finally {
+    await a.close();
   }
 });
