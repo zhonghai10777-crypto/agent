@@ -25,6 +25,20 @@ function zeroUsage() {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 }
 
+type Usage = ReturnType<typeof zeroUsage>;
+
+/**
+ * 199,990 sits strictly between the compaction threshold (model.contextWindow
+ * 200,000 minus reserveTokens 16 = 199,984) and the full context window
+ * (200,000): enough to trigger threshold compaction, not so much it reads as
+ * overflow. Shared by both automatic-compaction tests below.
+ */
+function thresholdTriggerUsage(turn: number): Usage | undefined {
+  return turn === 3
+    ? { input: 199_970, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 199_990, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
+    : undefined;
+}
+
 /**
  * A real pi AgentSession backed by a fake provider, so manual compaction
  * (`session.compact()`) runs pi's actual compaction/event-emission code -
@@ -37,7 +51,7 @@ function zeroUsage() {
  */
 async function makeRealSession(
   label: string,
-  options: { failSummarization?: boolean; turnUsage?: (turn: number) => { input: number; output: number; cacheRead: number; cacheWrite: number; totalTokens: number; cost: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number } } | undefined } = {},
+  options: { failSummarization?: boolean; turnUsage?: (turn: number) => Usage | undefined } = {},
 ) {
   // Resolved to match createCanonicalWorkspaceRef's realpath'd cwd (macOS
   // tmpdir() lives under the /var -> /private/var symlink).
@@ -145,6 +159,19 @@ function compactionTypes(events: { type: string }[]): string[] {
   return events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished").map((e) => e.type);
 }
 
+/** Polls until some sessionUpdated at or after `fromIndex` reports the given status. */
+async function waitForStatus(
+  events: { type: string; snapshot?: { status: string } }[],
+  fromIndex: number,
+  status: string,
+  timeoutMs = 5000,
+): Promise<void> {
+  await waitUntil(
+    () => events.slice(fromIndex).some((e) => e.type === "sessionUpdated" && e.snapshot?.status === status),
+    timeoutMs,
+  );
+}
+
 test("S2.1/manual: compactionStarted and compactionFinished are emitted, in order, with reason 'manual'", async () => {
   const a = await makeRealSession("a");
   try {
@@ -216,12 +243,7 @@ test("S2.4: compacting one session emits no compaction events on another session
 });
 
 test("automatic threshold compaction reopens 'running' while it runs and settles to idle without a duplicate runCompleted", async () => {
-  // 199,990 sits strictly between the compaction threshold (contextWindow 200,000
-  // minus reserveTokens 16 = 199,984) and the full context window (200,000):
-  // enough to trigger threshold compaction, not so much it reads as overflow.
-  const a = await makeRealSession("auto", {
-    turnUsage: (turn) => (turn === 3 ? { input: 199_970, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 199_990, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } : undefined),
-  });
+  const a = await makeRealSession("auto", { turnUsage: thresholdTriggerUsage });
   try {
     const { supervisor, refs } = await makeSupervised([{ label: "a", dir: a.dir, session: a.session }]);
     const events = collectEvents(supervisor, refs.a);
@@ -251,20 +273,14 @@ test("automatic threshold compaction reopens 'running' while it runs and settles
     );
 
     // And it settles back to idle as soon as compaction finishes.
-    await waitUntil(() => {
-      const afterFinished = events.slice(finishedAt) as { type: string; snapshot?: { status: string } }[];
-      return afterFinished.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "idle");
-    }, 5000);
+    await waitForStatus(events as { type: string; snapshot?: { status: string } }[], finishedAt, "idle");
   } finally {
     await a.close();
   }
 });
 
 test("a failed automatic compaction also settles back to idle without a duplicate runCompleted", async () => {
-  const a = await makeRealSession("auto-fail", {
-    failSummarization: true,
-    turnUsage: (turn) => (turn === 3 ? { input: 199_970, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 199_990, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } : undefined),
-  });
+  const a = await makeRealSession("auto-fail", { failSummarization: true, turnUsage: thresholdTriggerUsage });
   try {
     const { supervisor, refs } = await makeSupervised([{ label: "a", dir: a.dir, session: a.session }]);
     const events = collectEvents(supervisor, refs.a);
@@ -280,10 +296,7 @@ test("a failed automatic compaction also settles back to idle without a duplicat
     assert.equal(events.filter((e) => e.type === "runCompleted").length, 1, "the failed compaction itself must not be reported as a run completion");
 
     const finishedAt = events.indexOf(compactionEvents[1]);
-    await waitUntil(() => {
-      const afterFinished = events.slice(finishedAt) as { type: string; snapshot?: { status: string } }[];
-      return afterFinished.some((e) => e.type === "sessionUpdated" && e.snapshot?.status === "idle");
-    }, 5000);
+    await waitForStatus(events as { type: string; snapshot?: { status: string } }[], finishedAt, "idle");
   } finally {
     await a.close();
   }

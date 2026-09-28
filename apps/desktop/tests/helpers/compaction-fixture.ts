@@ -20,57 +20,61 @@ export async function seedCompactionAgentDir(
   options: { readonly contextWindow?: number; readonly maxTokens?: number; readonly keepRecentTokens?: number } = {},
 ): Promise<void> {
   await mkdir(agentDir, { recursive: true });
-  await writeFile(
-    join(agentDir, "auth.json"),
-    JSON.stringify({ [COMPACTION_TEST_PROVIDER]: { type: "api_key", key: COMPACTION_TEST_KEY } }),
-  );
-  await writeFile(
-    join(agentDir, "models.json"),
-    JSON.stringify({
-      providers: {
-        [COMPACTION_TEST_PROVIDER]: {
-          baseUrl: COMPACTION_TEST_BASE_URL,
-          api: "openai-completions",
-          apiKey: COMPACTION_TEST_KEY,
-          models: [
-            {
-              id: COMPACTION_TEST_MODEL_ID,
-              name: COMPACTION_TEST_MODEL_ID,
-              reasoning: false,
-              input: ["text"],
-              contextWindow: options.contextWindow ?? 1_000_000,
-              maxTokens: options.maxTokens ?? 384_000,
-              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, supportsStore: false },
-            },
-          ],
+  // The three files are independent (no ordering requirement between them),
+  // so write them concurrently rather than one after another.
+  await Promise.all([
+    writeFile(
+      join(agentDir, "auth.json"),
+      JSON.stringify({ [COMPACTION_TEST_PROVIDER]: { type: "api_key", key: COMPACTION_TEST_KEY } }),
+    ),
+    writeFile(
+      join(agentDir, "models.json"),
+      JSON.stringify({
+        providers: {
+          [COMPACTION_TEST_PROVIDER]: {
+            baseUrl: COMPACTION_TEST_BASE_URL,
+            api: "openai-completions",
+            apiKey: COMPACTION_TEST_KEY,
+            models: [
+              {
+                id: COMPACTION_TEST_MODEL_ID,
+                name: COMPACTION_TEST_MODEL_ID,
+                reasoning: false,
+                input: ["text"],
+                contextWindow: options.contextWindow ?? 1_000_000,
+                maxTokens: options.maxTokens ?? 384_000,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, supportsStore: false },
+              },
+            ],
+          },
         },
-      },
-    }),
-  );
-  await writeFile(
-    join(agentDir, "settings.json"),
-    JSON.stringify({
-      defaultProvider: COMPACTION_TEST_PROVIDER,
-      defaultModel: COMPACTION_TEST_MODEL_ID,
-      defaultThinkingLevel: "off",
-      enabledModels: [`${COMPACTION_TEST_PROVIDER}/${COMPACTION_TEST_MODEL_ID}`],
-      // The token budget that decides WHETHER to compact (shouldCompact) is
-      // driven entirely by the model's reported usage.totalTokens, which
-      // these fixtures fake freely. But WHAT gets summarized (prepareCompaction
-      // -> findCutPoint) is driven by pi's own character-count token estimate
-      // of the real, tiny fixture conversation, entirely independent of that
-      // faked usage. Left at its default (20,000), findCutPoint would walk
-      // back through the whole (small) conversation without ever reaching the
-      // threshold and keep everything, leaving nothing to summarize -
-      // prepareCompaction then returns undefined and _runAutoCompaction
-      // no-ops silently, without ever emitting compaction_start/end. A tiny
-      // keepRecentTokens keeps only the last message and makes the rest
-      // (real content) eligible to summarize.
-      compaction: { enabled: true, keepRecentTokens: options.keepRecentTokens ?? 8 },
-      retry: { enabled: false, maxRetries: 0, baseDelayMs: 1 },
-    }),
-  );
+      }),
+    ),
+    writeFile(
+      join(agentDir, "settings.json"),
+      JSON.stringify({
+        defaultProvider: COMPACTION_TEST_PROVIDER,
+        defaultModel: COMPACTION_TEST_MODEL_ID,
+        defaultThinkingLevel: "off",
+        enabledModels: [`${COMPACTION_TEST_PROVIDER}/${COMPACTION_TEST_MODEL_ID}`],
+        // The token budget that decides WHETHER to compact (shouldCompact) is
+        // driven entirely by the model's reported usage.totalTokens, which
+        // these fixtures fake freely. But WHAT gets summarized (prepareCompaction
+        // -> findCutPoint) is driven by pi's own character-count token estimate
+        // of the real, tiny fixture conversation, entirely independent of that
+        // faked usage. Left at its default (20,000), findCutPoint would walk
+        // back through the whole (small) conversation without ever reaching the
+        // threshold and keep everything, leaving nothing to summarize -
+        // prepareCompaction then returns undefined and _runAutoCompaction
+        // no-ops silently, without ever emitting compaction_start/end. A tiny
+        // keepRecentTokens keeps only the last message and makes the rest
+        // (real content) eligible to summarize.
+        compaction: { enabled: true, keepRecentTokens: options.keepRecentTokens ?? 8 },
+        retry: { enabled: false, maxRetries: 0, baseDelayMs: 1 },
+      }),
+    ),
+  ]);
 }
 
 export interface CompactionHttpRequest {

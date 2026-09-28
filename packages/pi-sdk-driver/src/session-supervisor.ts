@@ -2275,8 +2275,16 @@ export class SessionSupervisor {
         // makes the composer queue it the same way it would for a real run.
         // Manual /compact has no active run at this point (compact() aborts
         // it first) and manages its own status directly, so it is excluded.
-        // agent_settled (below) is the backstop that returns this to idle.
-        if (event.reason !== "manual" && record.status !== "running") {
+        //
+        // Deliberately not `record.session.isStreaming`/`isCompacting`
+        // (pi's own "is work in flight" getters, and the idiom this file
+        // otherwise uses for record.status elsewhere): both stay true from
+        // this point all the way through compaction_end and past it - they
+        // reflect the whole run+continuation lifecycle, not this specific
+        // transition - so they cannot tell "running" and "idle" apart at
+        // either end of this window. See compaction_end below for the same
+        // reasoning on the way back down.
+        if (event.reason !== "manual") {
           record.status = "running";
         }
         return toDriverEvents(
