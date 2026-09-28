@@ -2521,6 +2521,16 @@ export class DesktopAppStore implements AppStoreInternals {
         case "extensionCompatibilityIssue":
           this.reportExtensionCompatibilityIssue(event.sessionRef, event.issue, event.timestamp);
           break;
+        case "compactionFinished":
+          // Automatic compaction rewrites session history (a new compaction
+          // entry replaces the summarized range) outside the manual /compact
+          // command path, which already reloads the transcript itself after
+          // driver.compactSession() resolves. Without this, the compaction
+          // summary card would stay invisible until some unrelated reload.
+          if (event.reason !== "manual" && !event.aborted && !event.errorMessage) {
+            await this.reloadTranscriptFromDriver(event.sessionRef);
+          }
+          break;
         case "sessionClosed":
           this.clearExtensionDialogTimeoutsForSession(event.sessionRef);
           this.sessionState.extensionUiBySession.delete(key);
