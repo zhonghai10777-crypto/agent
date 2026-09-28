@@ -236,6 +236,9 @@ const NEW_THREAD_PLACEHOLDER_TITLE = "New thread";
  */
 const ABORT_SETTLE_TIMEOUT_MS = 2000;
 
+/** How long a new message waits for a stopped run that outlived ABORT_SETTLE_TIMEOUT_MS. */
+const STOPPED_RUN_WAIT_MS = 5000;
+
 /**
  * Minimum gap between sessionUpdated snapshots published for message_update.
  * pi emits one message_update per streamed token, and a snapshot per token made
@@ -993,6 +996,17 @@ export class SessionSupervisor {
     const session = this.requireSession(record);
     if (record.pendingVisionRetry && !session.isStreaming) throw new Error("The image retry is starting. Wait for it to start before sending another message.");
     const isExtensionCommand = this.isExtensionCommand(session, input.text);
+    if (!isExtensionCommand && record.cancelRequested && !session.isIdle) {
+      // A Stop whose abort outlived ABORT_SETTLE_TIMEOUT_MS reported idle while
+      // the stopped run is still unwinding (a tool ignoring its abort signal).
+      // A new prompt now would be refused as "already streaming", and a queued
+      // one would ride a run that is about to end, so give it a bounded wait.
+      if (!(await waitForIdleWithin(session, STOPPED_RUN_WAIT_MS))) {
+        throw new Error("The stopped run is still shutting down because a tool is not responding to Stop. Try again in a moment.");
+      }
+      // The stopped run is over; its cancel flag must not classify this one.
+      record.cancelRequested = false;
+    }
     if (session.isStreaming && !isExtensionCommand && !input.deliverAs) {
       throw new Error("Session is already streaming. Specify deliverAs ('steer' or 'followUp') to queue the message.");
     }
@@ -3262,6 +3276,20 @@ function withCompactAt(usage: SessionContextUsage, session: AgentSession): Sessi
   } catch {
     return usage;
   }
+}
+
+/** Waits up to `ms` for the session's agent run to end; reports whether it did. */
+async function waitForIdleWithin(session: AgentSession, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+  });
+  try {
+    await Promise.race([session.waitForIdle(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+  return session.isIdle;
 }
 
 function withRunId(

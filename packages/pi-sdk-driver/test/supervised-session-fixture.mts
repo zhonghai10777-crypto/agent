@@ -29,15 +29,19 @@ const usage = { input: 50, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens:
 
 export type Turn =
   | { readonly kind: "text"; readonly deltas: readonly string[] }
-  | { readonly kind: "bash"; readonly command: string };
+  | { readonly kind: "tool"; readonly name: string; readonly arguments: Record<string, unknown> };
 
 /**
  * A real pi AgentSession behind a fake provider that replays `turns` in
  * order: a text turn streams its deltas one `text_delta` at a time (yielding
- * to the event loop every few deltas, like a network stream would); a bash
- * turn asks pi's built-in bash tool to run `command`.
+ * to the event loop every few deltas, like a network stream would); a tool
+ * turn calls `name` (pi's built-in bash, or one of `customTools`).
  */
-export async function makeSupervisedSession(label: string, turns: Turn[]) {
+export async function makeSupervisedSession(
+  label: string,
+  turns: Turn[],
+  options: { readonly customTools?: readonly { readonly name: string }[] } = {},
+) {
   const dir = await realpath(await mkdtemp(join(tmpdir(), `supervised-session-${label}-`)));
   const agentDir = join(dir, "agent");
   await mkdir(agentDir);
@@ -53,8 +57,8 @@ export async function makeSupervisedSession(label: string, turns: Turn[]) {
       const turn = turns.shift() ?? { kind: "text", deltas: ["done"] };
       queueMicrotask(async () => {
         const base = { role: "assistant", api: requestModel.api, provider: requestModel.provider, model: requestModel.id, usage, timestamp: Date.now() };
-        if (turn.kind === "bash") {
-          const message = { ...base, content: [{ type: "toolCall", id: "bash-call-1", name: "bash", arguments: { command: turn.command } }], stopReason: "toolUse" };
+        if (turn.kind === "tool") {
+          const message = { ...base, content: [{ type: "toolCall", id: `${turn.name}-call`, name: turn.name, arguments: turn.arguments }], stopReason: "toolUse" };
           stream.push({ type: "start", partial: message });
           stream.push({ type: "done", reason: "toolUse", message });
           return;
@@ -82,7 +86,8 @@ export async function makeSupervisedSession(label: string, turns: Turn[]) {
   const { session } = await createAgentSession({
     cwd: dir, agentDir, modelRuntime: runtime, model: selectedModel, thinkingLevel: "off", settingsManager,
     sessionManager: SessionManager.create(dir, join(dir, "sessions")), resourceLoader: loader,
-    tools: ["bash"],
+    tools: ["bash", ...(options.customTools ?? []).map((tool) => tool.name)],
+    ...(options.customTools ? { customTools: [...options.customTools] as never } : {}),
   });
   await session.bindExtensions({});
 

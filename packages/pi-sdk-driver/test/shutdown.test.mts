@@ -11,7 +11,7 @@ test("shutdown kills the process tree of a bash tool call that is still running"
   const pidFile = join(pidDir, "pid");
   // `exec` keeps the shell's pid for sleep, so the recorded pid is the
   // long-running process itself - the one that used to outlive the app.
-  const fixture = await makeSupervisedSession("bash", [{ kind: "bash", command: `echo $$ > '${pidFile}' && exec sleep 120` }]);
+  const fixture = await makeSupervisedSession("bash", [{ kind: "tool", name: "bash", arguments: { command: `echo $$ > '${pidFile}' && exec sleep 120` } }]);
   try {
     const completion = fixture.supervisor.sendUserMessage(fixture.ref, { text: "run it" }).catch(() => {});
     await waitUntil(() => existsSync(pidFile));
