@@ -44,19 +44,26 @@ export interface DesktopFileOps {
  * while a successful write's details are an `OfficeWriteResult` whose
  * `outputPath` is always present. So `outputPath` presence is the real
  * success signal for these tools, not `isError` (S3.2).
+ *
+ * Takes one or more message batches (e.g. pi's separate `messagesToSummarize`
+ * and `turnPrefixMessages`) and iterates each in place rather than requiring
+ * the caller to concatenate them first — a compaction's `messagesToSummarize`
+ * can be the bulk of a long session, so avoiding that copy matters here.
  */
-export function collectDesktopFileOps(messages: readonly unknown[]): DesktopFileOps {
+export function collectDesktopFileOps(...messageBatches: readonly (readonly unknown[])[]): DesktopFileOps {
   const read = new Set<string>();
   const written = new Set<string>();
-  for (const message of messages) {
-    if (typeof message !== "object" || message === null) {
-      continue;
-    }
-    const role = (message as { role?: unknown }).role;
-    if (role === "assistant") {
-      collectReadsFromAssistantMessage(message as { content?: unknown }, read);
-    } else if (role === "toolResult") {
-      collectWriteFromToolResult(message as { toolName?: unknown; details?: unknown }, written);
+  for (const messages of messageBatches) {
+    for (const message of messages) {
+      if (typeof message !== "object" || message === null) {
+        continue;
+      }
+      const role = (message as { role?: unknown }).role;
+      if (role === "assistant") {
+        collectReadsFromAssistantMessage(message as { content?: unknown }, read);
+      } else if (role === "toolResult") {
+        collectWriteFromToolResult(message as { toolName?: unknown; details?: unknown }, written);
+      }
     }
   }
   return { read: [...read].sort(), written: [...written].sort() };
@@ -118,7 +125,7 @@ export function createCompactionFileOpsExtension(): ExtensionFactory {
   return (pi: ExtensionAPI) => {
     pi.on("session_before_compact", (event: SessionBeforeCompactEvent) => {
       const { fileOps, messagesToSummarize, turnPrefixMessages } = event.preparation;
-      const ops = collectDesktopFileOps([...messagesToSummarize, ...turnPrefixMessages]);
+      const ops = collectDesktopFileOps(messagesToSummarize, turnPrefixMessages);
       for (const path of ops.read) {
         fileOps.read.add(path);
       }

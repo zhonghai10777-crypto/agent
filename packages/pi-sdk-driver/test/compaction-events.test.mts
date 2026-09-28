@@ -151,7 +151,7 @@ test("S2.1/manual: compactionStarted and compactionFinished are emitted, in orde
     await waitUntil(() => compactionTypes(events).length >= 2);
 
     const compactionEvents = events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished");
-    assert.deepEqual(compactionTypes(events), ["compactionStarted", "compactionFinished"]);
+    assert.deepEqual(compactionEvents.map((e) => e.type), ["compactionStarted", "compactionFinished"]);
     assert.equal((compactionEvents[0] as { reason: string }).reason, "manual");
     const finished = compactionEvents[1] as { reason: string; aborted: boolean; willRetry: boolean; errorMessage?: string };
     assert.equal(finished.reason, "manual");
@@ -173,7 +173,7 @@ test("S2.2: a failed compaction reports compactionFinished with the failure reas
     await waitUntil(() => compactionTypes(events).length >= 2);
 
     const compactionEvents = events.filter((e) => e.type === "compactionStarted" || e.type === "compactionFinished");
-    assert.deepEqual(compactionTypes(events), ["compactionStarted", "compactionFinished"]);
+    assert.deepEqual(compactionEvents.map((e) => e.type), ["compactionStarted", "compactionFinished"]);
     const finished = compactionEvents[1] as { errorMessage?: string; aborted: boolean };
     assert.equal(finished.aborted, false);
     assert.match(finished.errorMessage ?? "", /summarization boom/);

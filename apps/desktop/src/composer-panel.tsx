@@ -135,12 +135,12 @@ export function ComposerPanel({
   // Once auto-compaction has an effective threshold below the raw context
   // window (see compaction-budget.ts), show usage relative to that
   // threshold rather than the window itself — that is the number that
-  // predicts when compaction actually fires.
-  const contextPercent = contextUsage == null
+  // predicts when compaction actually fires. Every caller below only checks
+  // "is this null-ish", so a missing contextUsage and a missing token count
+  // collapse into the same undefined case.
+  const contextPercent = contextUsage?.tokens == null
     ? undefined
-    : contextUsage.tokens == null
-      ? null
-      : (contextUsage.tokens / (contextUsage.compactAt ?? contextUsage.contextWindow)) * 100;
+    : (contextUsage.tokens / (contextUsage.compactAt ?? contextUsage.contextWindow)) * 100;
   const contextUsageSeverity = contextPercent == null ? "none" : contextPercent >= 75 ? "critical" : contextPercent >= 55 ? "warn" : "ok";
 
   return (
