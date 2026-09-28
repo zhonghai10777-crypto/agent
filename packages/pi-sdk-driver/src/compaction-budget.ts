@@ -157,15 +157,20 @@ export function estimateCalibrationFactor(branchEntries: readonly SessionEntry[]
 export type CalibrationBranchSource = Pick<SessionManager, "getBranch" | "getLeafId">;
 
 /**
- * Memoizes a calibration factor computation by branch leaf id + entry count.
+ * Memoizes a calibration factor computation by branch leaf id.
  * `getCompactionSettings()` is read on every context-usage refresh (turn end,
  * every assistant message, compaction start/end - see session-supervisor.ts),
  * not only right before a compaction decision, so recomputing
  * `estimateCalibrationFactor` by walking the whole branch on every call would
- * turn an O(1) settings read into an O(branch length) one on a hot path. The
- * leaf id and entry count are cheap to read and change exactly when the
- * branch's tail does (a new message, a fork, a compaction), so comparing
- * them is sufficient to know the cached factor is still valid.
+ * turn an O(1) settings read into an O(branch length) one on a hot path.
+ *
+ * Leaf id alone is sufficient to detect staleness (any branch mutation - a
+ * new message, a fork, a compaction - changes what the leaf entry is, so its
+ * id changes too) and, unlike entry count, is cheap to read on its own: pi's
+ * `getLeafId()` is a field read, while `getBranch()` walks the whole parent
+ * chain from leaf to root and builds a fresh array. Checking the leaf id
+ * first means the branch is only ever walked when the cache is actually
+ * stale, not on every call just to learn its length.
  *
  * `compute` defaults to `estimateCalibrationFactor` and is otherwise
  * injectable so tests can substitute a call-counting wrapper to prove the
@@ -175,19 +180,14 @@ export function createCalibratedFactorCache(
   compute: (branchEntries: readonly SessionEntry[]) => number = estimateCalibrationFactor,
 ): (branchSource: CalibrationBranchSource) => number {
   let cachedLeafId: string | null | undefined;
-  let cachedEntryCount = -1;
   let cachedFactor = 1;
-  let hasCached = false;
   return (branchSource: CalibrationBranchSource): number => {
     const leafId = branchSource.getLeafId();
-    const branch = branchSource.getBranch();
-    if (hasCached && leafId === cachedLeafId && branch.length === cachedEntryCount) {
+    if (cachedLeafId !== undefined && leafId === cachedLeafId) {
       return cachedFactor;
     }
     cachedLeafId = leafId;
-    cachedEntryCount = branch.length;
-    cachedFactor = compute(branch);
-    hasCached = true;
+    cachedFactor = compute(branchSource.getBranch());
     return cachedFactor;
   };
 }

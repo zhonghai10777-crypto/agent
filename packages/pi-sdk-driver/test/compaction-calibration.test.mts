@@ -201,15 +201,17 @@ test("estimateCalibrationFactor: never returns below 1 even if the measured rati
 function fakeBranchSource(initialLeafId: string, initialLength: number) {
   let leafId: string | null = initialLeafId;
   let length = initialLength;
+  let getBranchCalls = 0;
   return {
-    getBranch: () => Array.from({ length }, (_, i) => messageEntry(userMessage(String(i)))),
+    getBranch: () => { getBranchCalls += 1; return Array.from({ length }, (_, i) => messageEntry(userMessage(String(i)))); },
     getLeafId: () => leafId,
     setLeafId: (next: string | null) => { leafId = next; },
     setLength: (next: number) => { length = next; },
+    get getBranchCallCount() { return getBranchCalls; },
   };
 }
 
-test("createCalibratedFactorCache: does not recompute while leaf id and entry count are unchanged", () => {
+test("createCalibratedFactorCache: does not recompute (or even read the branch) while the leaf id is unchanged", () => {
   let calls = 0;
   const cache = createCalibratedFactorCache(() => { calls += 1; return 2; });
   const source = fakeBranchSource("leaf-1", 5);
@@ -217,16 +219,21 @@ test("createCalibratedFactorCache: does not recompute while leaf id and entry co
   assert.equal(cache(source), 2);
   assert.equal(cache(source), 2);
   assert.equal(calls, 1, "three reads of an unchanged branch must compute exactly once");
+  assert.equal(source.getBranchCallCount, 1, "getBranch() (an O(branch length) walk in pi's own SessionManager) must only be read on the first, cache-populating call");
 });
 
-test("createCalibratedFactorCache: recomputes when the entry count changes (branch grew)", () => {
+test("createCalibratedFactorCache: an entry-count change alone (same leaf id) is not a real branch mutation and is not recomputed", () => {
+  // A session's leaf id changes on every branch mutation (new message, fork,
+  // compaction), so "same leaf id, different length" cannot happen for a
+  // real SessionManager - this documents that the cache intentionally does
+  // not pay for a getBranch() call to guard against a case that isn't real.
   let calls = 0;
   const cache = createCalibratedFactorCache(() => { calls += 1; return 2; });
   const source = fakeBranchSource("leaf-1", 5);
   cache(source);
   source.setLength(6);
   cache(source);
-  assert.equal(calls, 2);
+  assert.equal(calls, 1);
 });
 
 test("createCalibratedFactorCache: recomputes when the leaf id changes even if the length happens to match", () => {
