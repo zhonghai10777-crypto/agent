@@ -40,6 +40,36 @@ test("picks up a file created after launch once a new @ query starts", async () 
   }
 });
 
+test("lists and inserts a Chinese file name in a git workspace verbatim", async () => {
+  test.setTimeout(30_000);
+  const userDataDir = await makeUserDataDir();
+  const workspacePath = await makeGitWorkspace("mention-cjk-workspace");
+  // Without `git ls-files -z` this surfaced as "\345\217\221..." and never matched.
+  await writeTextFile(join(workspacePath, "发电报告.md"), "# 报告\n");
+
+  const harness = await launchDesktop(userDataDir, {
+    initialWorkspaces: [workspacePath],
+    testMode: "background",
+  });
+
+  try {
+    const window = await harness.firstWindow();
+    await createNamedThread(window, "CJK mention test");
+
+    const composer = window.getByTestId("composer");
+    const mentionMenu = window.getByTestId("mention-menu");
+    await composer.click();
+    await composer.pressSequentially("@发电");
+    await expect(mentionMenu).toBeVisible();
+    await expect(mentionMenu.locator(".mention-menu__filename")).toHaveText(["发电报告.md"]);
+
+    await composer.press("Tab");
+    await expect(composer).toHaveValue("@发电报告.md ");
+  } finally {
+    await harness.close();
+  }
+});
+
 test("falls back to a directory walk for @ mentions in a non-git workspace", async () => {
   test.setTimeout(30_000);
   const userDataDir = await makeUserDataDir();
