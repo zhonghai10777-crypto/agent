@@ -1,15 +1,13 @@
-import { execFile } from "node:child_process";
 import { mkdir, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
 import type {
   CatalogStorage,
   WorktreeCatalogEntry,
   WorktreeCatalogSnapshot,
 } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
+import { execGit } from "./git-exec";
 
-const execFileAsync = promisify(execFile);
 
 export interface GitWorktreeManagerOptions {
   readonly catalogStorage: CatalogStorage;
@@ -450,10 +448,10 @@ function normalizeBranchName(value: string): string | undefined {
 }
 
 async function runGit(args: readonly string[]): Promise<string> {
-  const { stdout } = await execFileAsync("git", [...args], {
-    encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024,
-  });
+  const { error, stdout } = await execGit(args, { maxBuffer: 10 * 1024 * 1024 });
+  if (error) {
+    throw error;
+  }
   return stdout;
 }
 

@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
 import type { ChangedFileEntry, ChangedFilesResult } from "../src/ipc";
+import { execGit } from "./git-exec";
 import { resolveWorkspacePath } from "./workspace-paths";
 
 export interface GitCommandOptions {
@@ -24,7 +24,7 @@ export interface StageFileOptions {
 
 export async function getChangedFiles(
   workspacePath: string,
-  executeGit: GitCommandExecutor = executeGitCommand,
+  executeGit: GitCommandExecutor = execGit,
 ): Promise<ChangedFilesResult> {
   let result: GitCommandResult;
   try {
@@ -86,7 +86,7 @@ export function parseGitStatusPorcelainV1Z(output: string): ChangedFileEntry[] {
 export async function getFileDiff(
   workspacePath: string,
   filePath: string,
-  executeGit: GitCommandExecutor = executeGitCommand,
+  executeGit: GitCommandExecutor = execGit,
 ): Promise<string> {
   resolveWorkspacePath(workspacePath, filePath);
   const options = { cwd: workspacePath, maxBuffer: 5 * 1024 * 1024 };
@@ -119,32 +119,13 @@ export async function stageFile(
     resolveWorkspacePath(workspacePath, options.sourcePath);
   }
   const paths = options.sourcePath === undefined ? [filePath] : [filePath, options.sourcePath];
-  const result = await (options.executeGit ?? executeGitCommand)(
+  const result = await (options.executeGit ?? execGit)(
     ["--literal-pathspecs", "add", "--", ...paths],
     { cwd: workspacePath },
   );
   if (result.error) {
     throw result.error;
   }
-}
-
-function executeGitCommand(
-  args: readonly string[],
-  options: GitCommandOptions,
-): Promise<GitCommandResult> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      [...args],
-      options,
-      (error, stdout) => {
-        resolve({
-          error,
-          stdout,
-        });
-      },
-    );
-  });
 }
 
 function gitStatusUnavailable(

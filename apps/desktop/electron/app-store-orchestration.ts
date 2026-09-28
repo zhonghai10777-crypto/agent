@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import type { AgentToolResult } from "@earendil-works/pi-coding-agent";
 import { sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { SessionDriverEvent, SessionRef } from "@pi-gui/session-driver";
@@ -20,6 +18,7 @@ import type {
 import { submitComposerToSession } from "./app-store-composer";
 import { assertModelDelegationAllowed } from "./permission-mode";
 import type { AppStoreInternals } from "./app-store-internals";
+import { execGit } from "./git-exec";
 import { latestSessionActivityAt, previewFromTranscript } from "./app-store-utils";
 import {
   createChildThreadAction,
@@ -52,7 +51,6 @@ const MIN_SUPERVISION_INTERVAL_MS = 250;
 const CHILD_START_TIMEOUT_MS = 10_000;
 const CHILD_RUNNING_FAILURE_GRACE_MS = 1_000;
 const pendingCreateChildThreadToolCalls = new Set<string>();
-const execFileAsync = promisify(execFile);
 
 interface SpawnChildThreadInput {
   readonly parentWorkspaceId: string;
@@ -1784,12 +1782,8 @@ async function workspaceGitRef(
 }
 
 async function gitOutputLines(workspacePath: string, args: readonly string[]): Promise<readonly string[]> {
-  try {
-    const { stdout } = await execFileAsync("git", args, { cwd: workspacePath });
-    return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-  } catch {
-    return [];
-  }
+  const { error, stdout } = await execGit(args, { cwd: workspacePath });
+  return error ? [] : stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
 function childForToolCall(

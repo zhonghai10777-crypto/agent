@@ -1,7 +1,7 @@
-import { execFile } from "node:child_process";
 import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceFileListResult, WorkspaceFilePreview } from "../src/ipc";
+import { execGit } from "./git-exec";
 import { resolveExistingWorkspacePath } from "./workspace-paths";
 
 const fileCache = new Map<string, WorkspaceFileListResult & { timestamp: number }>();
@@ -42,28 +42,18 @@ export async function listWorkspaceFiles(
  * a real directory walk instead of silently reporting "no files" for a workspace that
  * simply isn't a git repo (e.g. the built-in personal workspace) or whose tracked-file
  * list exceeds the output buffer. */
-function listFilesViaGit(workspacePath: string): Promise<WorkspaceFileListResult | null> {
-  return new Promise((resolve) => {
-    execFile(
-      "git",
-      // -z: without it git quotes any path with non-ASCII bytes as an octal
-      // escape ("\345\217\221..."), which the mention menu can neither show
-      // nor open. NUL-separated output is the raw path, spaces included.
-      ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
-      { cwd: workspacePath, maxBuffer: 5 * 1024 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          resolve(null);
-          return;
-        }
-        const files = stdout
-          .split("\0")
-          .filter(Boolean)
-          .sort();
-        resolve({ files, truncated: false });
-      },
-    );
-  });
+async function listFilesViaGit(workspacePath: string): Promise<WorkspaceFileListResult | null> {
+  const { error, stdout } = await execGit(
+    // -z: without it git quotes any path with non-ASCII bytes as an octal
+    // escape ("\345\217\221..."), which the mention menu can neither show
+    // nor open. NUL-separated output is the raw path, spaces included.
+    ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+    { cwd: workspacePath, maxBuffer: 5 * 1024 * 1024 },
+  );
+  if (error) {
+    return null;
+  }
+  return { files: stdout.split("\0").filter(Boolean).sort(), truncated: false };
 }
 
 /** Bounded filesystem walk used when the workspace isn't a git repo (or git failed).
