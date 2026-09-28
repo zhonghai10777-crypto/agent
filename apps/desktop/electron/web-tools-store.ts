@@ -1,6 +1,6 @@
 import type { SafeStorage } from "electron";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { writeFileAtomicSync } from "./atomic-file-write";
 import {
   DEFAULT_WEB_TOOLS_SETTINGS,
   normalizeWebToolsSettings,
@@ -65,8 +65,7 @@ export class WebToolsStore {
       ...rest,
       ...(encryptedApiKey ? { encryptedApiKey } : {}),
     };
-    mkdirSync(dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    writeFileAtomicSync(this.filePath, `${JSON.stringify(payload, null, 2)}\n`);
 
     // Keep the live key in memory even when it could not be encrypted, so the
     // current session still works; it simply will not survive a restart.

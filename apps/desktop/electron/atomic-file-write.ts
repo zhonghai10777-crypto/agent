@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
@@ -33,6 +34,30 @@ export async function writeFileAtomicQueued(
     }
     await syncDirectory(dir, io);
   });
+}
+
+/**
+ * Synchronous replace for small settings files owned by synchronous stores:
+ * stage and fsync a sibling, then rename it over the target, so a crash
+ * mid-write leaves the old file or the new one, never a torn mix. Unlike
+ * `writeFileAtomicQueued` it keeps no backup and does not retry.
+ */
+export function writeFileAtomicSync(filePath: string, contents: string): void {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tempPath = siblingPath(filePath, "tmp");
+  try {
+    const fd = openSync(tempPath, "wx");
+    try {
+      writeFileSync(fd, contents, "utf8");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tempPath, filePath);
+  } catch (error) {
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 export interface AtomicReadResult<T> {

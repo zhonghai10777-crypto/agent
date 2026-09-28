@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
+import { writeFileAtomicSync } from "./atomic-file-write";
 
 export interface LibrarySettings {
   readonly enabled: boolean;
@@ -50,8 +51,7 @@ export class LibraryStore {
 
   write(next: LibrarySettings): LibrarySettings {
     const normalized = normalizeLibrarySettings(next);
-    mkdirSync(path.dirname(this.filePath), { recursive: true });
-    writeFileSync(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`, "utf8");
+    writeFileAtomicSync(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`);
     this.cached = normalized;
     return normalized;
   }
