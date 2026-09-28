@@ -446,6 +446,15 @@ function isInAppNavigationUrl(url: string): boolean {
   }
 }
 
+/** Opens an http(s) URL in the user's browser and refuses anything else. */
+function openExternalWebUrlOrThrow(url: string): Promise<void> {
+  const parsed = parseExternalWebUrl(url);
+  if (!parsed) {
+    throw new Error(`Refusing to open unsupported URL: ${url}`);
+  }
+  return shell.openExternal(parsed.toString());
+}
+
 function openExternalWebUrl(url: string): boolean {
   const parsed = parseExternalWebUrl(url);
   if (!parsed) {
@@ -1490,6 +1499,7 @@ app.whenReady().then(async () => {
         },
         promptForText: (message: string, placeholder?: string, allowEmpty?: boolean) =>
           promptForText(mainWindow, message, placeholder ?? "", allowEmpty ?? false),
+        openLoginUrl: (url: string) => createRuntimeLoginCallbacks(mainWindow).onAuth({ url }),
         runOrchestrationRuntimeTool: (input: OrchestrationRuntimeToolTestInput) =>
           runOrchestrationRuntimeToolForTest(orchestrationRuntimeBridge, input),
         // Direct Store entry: regression tests deliberately bypass the model hook.
@@ -1570,13 +1580,7 @@ app.whenReady().then(async () => {
     runWindowScopedForEvent(event, () => store.setRuntimeMode(mode)),
   );
   ipcMain.handle(desktopIpc.checkForUpdates, () => checkForUpdate());
-  ipcMain.handle(desktopIpc.openExternal, (_event, url: string) => {
-    const parsed = parseExternalWebUrl(url);
-    if (!parsed) {
-      throw new Error(`Refusing to open unsupported URL: ${url}`);
-    }
-    return shell.openExternal(parsed.toString());
-  });
+  ipcMain.handle(desktopIpc.openExternal, (_event, url: string) => openExternalWebUrlOrThrow(url));
   ipcMain.handle(desktopIpc.stateRequest, (event) => store.getStateForView(viewForWebContents(event.sender.id)));
   ipcMain.handle(desktopIpc.selectedTranscriptRequest, (event) =>
     store.getSelectedTranscriptForView(viewForWebContents(event.sender.id)),
@@ -2272,7 +2276,8 @@ function validateComposerAttachmentPayload(attachment: ComposerAttachment): Comp
 function createRuntimeLoginCallbacks(window?: BrowserWindow | null) {
   return {
     onAuth: async ({ url, instructions }: { readonly url: string; readonly instructions?: string }) => {
-      await shell.openExternal(url);
+      // Provider/extension login code supplies this URL: same http(s)-only rule.
+      await openExternalWebUrlOrThrow(url);
       if (instructions?.trim()) {
         await showLoginInstructions(window, instructions.trim());
       }

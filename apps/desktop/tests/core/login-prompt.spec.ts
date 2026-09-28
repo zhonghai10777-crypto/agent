@@ -98,3 +98,24 @@ test("rejects the login prompt when cancelled", async () => {
     await harness.close();
   }
 });
+
+test("refuses to hand a non-web login URL to the OS", async () => {
+  const harness = await launchDesktop(await makeUserDataDir(), { testMode: "background" });
+
+  try {
+    await harness.firstWindow();
+    // Only the refusal path is driven: an accepted URL would open a real browser.
+    for (const url of ["file:///etc/passwd", "smb://attacker.test/share", "not a url"]) {
+      const outcome = await harness.electronApp.evaluate(async (_electron, target) => {
+        const hooks = (globalThis as { __PI_APP_TEST_HOOKS?: { openLoginUrl?: (url: string) => Promise<void> } }).__PI_APP_TEST_HOOKS;
+        if (!hooks?.openLoginUrl) {
+          throw new Error("openLoginUrl test hook is unavailable");
+        }
+        return hooks.openLoginUrl(target).then(() => "opened", (error: unknown) => String(error));
+      }, url);
+      expect(outcome, url).toContain("Refusing to open unsupported URL");
+    }
+  } finally {
+    await harness.close();
+  }
+});
