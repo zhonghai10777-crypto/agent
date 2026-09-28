@@ -87,6 +87,7 @@ import {
   createOfficeComposeTools,
 } from "./office-compose";
 import { createPermissionModeExtension } from "./permission-runtime";
+import { createCompactionFileOpsExtension } from "./compaction-file-ops";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import {
@@ -1375,6 +1376,11 @@ app.whenReady().then(async () => {
       // register. Reads the mode per call, so toggling plan/auto takes effect
       // on the next tool call without restarting the session.
       createPermissionModeExtension(permissionModeFor),
+      // Folds this app's read/write tool calls into pi's own compaction file
+      // tracking so summaries list them in <read-files>/<modified-files>.
+      // Order-independent relative to the other factories above: it only
+      // reads pi's compaction preparation, never blocks or rewrites a call.
+      createCompactionFileOpsExtension(),
     ],
     inlineExtensionMetadata: [
       {
@@ -1407,6 +1413,10 @@ app.whenReady().then(async () => {
       {
         displayName: "Permission gate",
         description: "Read-only plan mode blocks write/edit/bash tools until the user switches to auto",
+      },
+      {
+        displayName: "Compaction file tracking",
+        description: "Lists office/document files this app's tools read or wrote in compaction summaries",
       },
     ],
     credentialStore: secureAuthStorageBackend,
