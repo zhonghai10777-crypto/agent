@@ -1,9 +1,9 @@
 import test, { mock } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { stat, utimes } from "node:fs/promises";
+import { existsSync, statSync } from "node:fs";
+import { utimes } from "node:fs/promises";
 import { DEFAULT_LEASE_TTL_MS, LEASE_REFRESH_INTERVAL_MS, sessionLeasePath } from "../dist/session-lease.js";
-import { makeSupervisedSession } from "./supervised-session-fixture.mts";
+import { makeSupervisedSession, waitUntil } from "./supervised-session-fixture.mts";
 
 test("a bound session keeps its lease fresh, and stops once the runtime is released", async () => {
   mock.timers.enable({ apis: ["setInterval"] });
@@ -18,11 +18,8 @@ test("a bound session keeps its lease fresh, and stops once the runtime is relea
     await utimes(leasePath, stale, stale);
 
     mock.timers.tick(LEASE_REFRESH_INTERVAL_MS);
-    const deadline = Date.now() + 5_000;
-    while ((await stat(leasePath)).mtimeMs < Date.now() - LEASE_REFRESH_INTERVAL_MS) {
-      assert.ok(Date.now() < deadline, "the lease mtime was never refreshed");
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
+    // Only setInterval is mocked, so waitUntil's own setTimeout still runs.
+    await waitUntil(() => statSync(leasePath).mtimeMs > stale.getTime());
 
     await fixture.supervisor.shutdown();
     assert.equal(existsSync(leasePath), false, "releasing the runtime removes the lease");

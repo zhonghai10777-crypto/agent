@@ -1662,14 +1662,13 @@ export class SessionSupervisor {
       await this.releaseSessionLease(record);
     }
     try {
-      const lease = buildOwnLease(this.leaseIdentity, Date.now());
-      await writeLeaseFile(nextLeasePath, lease);
+      await writeLeaseFile(nextLeasePath, buildOwnLease(this.leaseIdentity, Date.now()));
       record.leasePath = nextLeasePath;
       // Other hosts treat a lease as dead once its mtime is older than the
       // TTL, so a runtime bound for longer has to keep refreshing it.
       clearInterval(record.leaseRefreshTimer);
       record.leaseRefreshTimer = setInterval(() => {
-        refreshLeaseFile(nextLeasePath, lease).catch((error) => {
+        refreshLeaseFile(nextLeasePath).catch((error) => {
           console.warn(`[pi-sdk-driver] failed to refresh session lease for ${sessionKey(record.ref)}:`, error);
         });
       }, LEASE_REFRESH_INTERVAL_MS);

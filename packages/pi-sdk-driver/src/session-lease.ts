@@ -172,10 +172,11 @@ export async function writeLeaseFile(leasePath: string, info: LeaseInfo): Promis
 }
 
 /**
- * Keep a held lease alive: only its mtime matters for staleness. Rewrites the
- * lease if something removed it meanwhile.
+ * Keep a held lease alive: only its mtime matters for staleness. A missing
+ * lease has been released (possibly while this refresh was in flight) or
+ * taken over, and must not be recreated.
  */
-export async function refreshLeaseFile(leasePath: string, info: LeaseInfo): Promise<void> {
+export async function refreshLeaseFile(leasePath: string): Promise<void> {
   const now = new Date();
   try {
     await utimes(leasePath, now, now);
@@ -183,7 +184,6 @@ export async function refreshLeaseFile(leasePath: string, info: LeaseInfo): Prom
     if (!isMissingFileError(error)) {
       throw error;
     }
-    await writeLeaseFile(leasePath, info);
   }
 }
 
