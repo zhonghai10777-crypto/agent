@@ -149,6 +149,11 @@ export class PiSdkDriver implements SessionDriver {
     return this.supervisor.closeSession(sessionRef);
   }
 
+  /** See SessionSupervisor.shutdown. */
+  shutdown(): Promise<void> {
+    return this.supervisor.shutdown();
+  }
+
   listWorkspaces(): Promise<WorkspaceCatalogSnapshot> {
     return this.supervisor.listWorkspaces();
   }

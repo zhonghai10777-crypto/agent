@@ -2130,6 +2130,11 @@ app.on("before-quit", (event) => {
 
   event.preventDefault();
   quittingAfterStoreFlush = true;
+  // Abort running agent work so tool processes don't outlive the app (see
+  // SessionSupervisor.shutdown); the deadline below bounds only its dispose tail.
+  const stopSessions = store.driver.shutdown().catch((error) => {
+    console.error("pi-gui: session shutdown failed during quit:", error);
+  });
   const flush = store
     .flushPersistence()
     .catch((error) => {
@@ -2142,7 +2147,7 @@ app.on("before-quit", (event) => {
       resolve();
     }, QUIT_FLUSH_TIMEOUT_MS);
   });
-  void Promise.race([flush, flushDeadline]).finally(() => {
+  void Promise.race([Promise.all([stopSessions, flush]), flushDeadline]).finally(() => {
     app.quit();
   });
 });

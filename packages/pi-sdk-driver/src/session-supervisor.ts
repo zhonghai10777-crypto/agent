@@ -1409,6 +1409,25 @@ export class SessionSupervisor {
     });
   }
 
+  /**
+   * Tear down every live runtime for app exit. pi's bash tool runs commands in
+   * detached process groups that outlive the app unless their run is aborted;
+   * pi's CLI kills them on exit through an internal registry the package does
+   * not export, so this aborts every run instead (which kills a running tool's
+   * process tree) and then disposes each runtime (session_shutdown to
+   * extensions). The aborts fire first and synchronously, so an extension
+   * shutdown handler that never returns cannot keep a tool process alive. The
+   * supervisor is not usable afterwards.
+   */
+  async shutdown(): Promise<void> {
+    const live = [...this.records.values()].filter((record) => record.session && !record.closed);
+    for (const session of live.map((record) => record.session!)) {
+      session.abortBash();
+      void session.abort().catch(() => {});
+    }
+    await Promise.all(live.map((record) => this.disposeRecordRuntimeSafely(record)));
+  }
+
   private async ensureRecord(sessionRef: SessionRef): Promise<ManagedSessionRecord> {
     const key = sessionKey(sessionRef);
     const existing = this.records.get(key);
