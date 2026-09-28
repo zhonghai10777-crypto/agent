@@ -4,21 +4,32 @@ import type {
   ExtensionContext,
   ToolCallEvent,
 } from "@earendil-works/pi-coding-agent";
-import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES, sessionToolNames } from "@pi-gui/pi-sdk-driver/windows-shell";
+import { FILE_MUTATION_TOOL_NAMES, READ_ONLY_TOOL_NAMES, SHELL_TOOL_NAMES, sessionToolNames } from "@pi-gui/pi-sdk-driver/windows-shell";
 import { createChildThreadToolName, sendMessageToThreadToolName } from "../../electron/orchestration-runtime";
 import { officeToolNames } from "../../electron/office-runtime";
-import { PLAN_BLOCKED_TOOLS, shouldBlockTool } from "../../electron/permission-mode";
+import { composeMutatingToolNames } from "../../electron/office-compose";
+import { PLAN_ALLOWED_TOOLS, shouldBlockTool } from "../../electron/permission-mode";
 import { createPermissionModeExtension } from "../../electron/permission-runtime";
 import type { PermissionMode } from "@pi-gui/session-driver";
 
+// Every tool the app or pi might run that changes something.
+const WRITING_TOOLS = [
+  ...SHELL_TOOL_NAMES,
+  ...FILE_MUTATION_TOOL_NAMES,
+  createChildThreadToolName,
+  sendMessageToThreadToolName,
+  ...officeToolNames,
+  ...composeMutatingToolNames,
+];
+
 test("shouldBlockTool: auto mode never blocks", () => {
-  for (const toolName of PLAN_BLOCKED_TOOLS) {
+  for (const toolName of [...WRITING_TOOLS, ...PLAN_ALLOWED_TOOLS, "some_extension_tool"]) {
     expect(shouldBlockTool("auto", toolName), `auto/${toolName}`).toBeNull();
   }
 });
 
-test("shouldBlockTool: plan mode blocks mutating tools with a model-facing reason", () => {
-  for (const toolName of PLAN_BLOCKED_TOOLS) {
+test("shouldBlockTool: plan mode blocks writing tools with a model-facing reason", () => {
+  for (const toolName of WRITING_TOOLS) {
     const result = shouldBlockTool("plan", toolName);
     expect(result, `plan/${toolName}`).not.toBeNull();
     expect(result!.block).toBe(true);
@@ -31,22 +42,18 @@ test("shouldBlockTool: plan mode blocks mutating tools with a model-facing reaso
 
 test("shouldBlockTool: plan mode blocks every shell tool, not just bash", () => {
   // Windows swaps pi's `bash` tool for `powershell` when no Git Bash is
-  // installed (`windows-shell.ts`). A blocklist that named only `bash` left
-  // plan mode letting commands run on exactly those machines.
+  // installed (`windows-shell.ts`).
   for (const shell of ["bash", "powershell"]) {
     expect(shouldBlockTool("plan", shell)?.block, `plan/${shell}`).toBe(true);
   }
-  for (const name of [...SHELL_TOOL_NAMES, ...FILE_MUTATION_TOOL_NAMES]) {
-    expect(PLAN_BLOCKED_TOOLS.has(name), `plan must block ${name}`).toBe(true);
-  }
 });
 
-test("shouldBlockTool: plan blocks whatever tool the platform actually activates", () => {
-  // Ties the blocklist to the tool set a Windows session runs with: any active
+test("shouldBlockTool: plan blocks whatever writing tool the platform actually activates", () => {
+  // Ties the policy to the tool set a Windows session runs with: any active
   // built-in that is not read-only must be blocked in plan mode.
   const active = sessionToolNames({ registryInstallPaths: () => [], gitExecutableFromPath: () => undefined })
     ?? ["read", "bash", "edit", "write"];
-  const unblocked = active.filter((name) => name !== "read" && !PLAN_BLOCKED_TOOLS.has(name));
+  const unblocked = active.filter((name) => !READ_ONLY_TOOL_NAMES.includes(name) && !shouldBlockTool("plan", name));
   expect(unblocked, "every mutating built-in a session activates must be blocked in plan mode").toEqual([]);
 });
 
@@ -56,25 +63,33 @@ test("shouldBlockTool: plan mode blocks every Office writer", () => {
   }
 });
 
-test("shouldBlockTool: plan mode lets read-only tools through", () => {
-  expect(shouldBlockTool("plan", "read")).toBeNull();
-  expect(shouldBlockTool("plan", "read_document")).toBeNull();
-  expect(shouldBlockTool("plan", "web_search")).toBeNull();
-  expect(shouldBlockTool("plan", "list_threads")).toBeNull();
-  expect(shouldBlockTool("plan", "read_thread")).toBeNull();
+test("shouldBlockTool: plan mode lets every known read-only tool through", () => {
+  for (const name of [
+    ...READ_ONLY_TOOL_NAMES,
+    "read_document",
+    "library_search",
+    "library_list",
+    "web_search",
+    "web_fetch",
+    "web_read",
+    "list_threads",
+    "read_thread",
+    "inspect_images",
+    "word_template_inspect",
+  ]) {
+    expect(shouldBlockTool("plan", name), `plan/${name}`).toBeNull();
+  }
 });
 
-test("shouldBlockTool: unknown tools fail open in plan mode, not starved", () => {
-  // A tool pi added that this allowlist doesn't know about must not be silently
-  // blocked — blocking would look like the tool is broken. Plan is opt-in, not
-  // a security boundary.
-  expect(shouldBlockTool("plan", "totally_made_up_tool")).toBeNull();
+test("shouldBlockTool: plan mode blocks tools it does not know, such as third-party extension tools", () => {
+  // Plan means "don't change anything": a tool not known to be read-only may
+  // write, so it is refused (with a reason the model relays) rather than trusted.
+  const result = shouldBlockTool("plan", "some_extension_tool");
+  expect(result?.block).toBe(true);
+  expect(result?.reason).toContain("some_extension_tool");
 });
 
-test("shouldBlockTool: create_child_thread is blocked via the orchestration constant, not a restated string", () => {
-  // Guards against the tool name drifting in orchestration-runtime while this
-  // allowlist keeps a stale literal.
-  expect(PLAN_BLOCKED_TOOLS.has(createChildThreadToolName)).toBe(true);
+test("shouldBlockTool: thread delegation is blocked via the orchestration constants, not restated strings", () => {
   expect(shouldBlockTool("plan", createChildThreadToolName)?.block).toBe(true);
   expect(shouldBlockTool("plan", sendMessageToThreadToolName)?.block).toBe(true);
 });

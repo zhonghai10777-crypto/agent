@@ -5,9 +5,9 @@
  * surface is aimed at non-programmer engineers who often run read-only
  * "look something up" sessions. The two modes here add an explicit read-only
  * gear without forking pi: an extension subscribes to pi's pre-execution
- * `tool_call` event (see `permission-runtime.ts`) and blocks the mutating
- * tools when the active session is in `plan` mode, returning a reason the
- * model relays to the user instead of throwing.
+ * `tool_call` event (see `permission-runtime.ts`) and, when the active session
+ * is in `plan` mode, blocks every tool not known to be read-only, returning a
+ * reason the model relays to the user instead of throwing.
  *
  * Default is `auto` (the session is writable). `plan` is an opt-in "this turn
  * should only read, not change anything" gear — chosen for default-writable so
@@ -17,26 +17,36 @@
  * (state projection), the main process (permission logic) and the extension
  * provider all read one source of truth for the default.
  */
-import { FILE_MUTATION_TOOL_NAMES, SHELL_TOOL_NAMES } from "@pi-gui/pi-sdk-driver/windows-shell";
-import { createChildThreadToolName, sendMessageToThreadToolName } from "./orchestration-runtime";
-import { officeToolNames } from "./office-runtime";
-import { composeMutatingToolNames } from "./office-compose";
+import { READ_ONLY_TOOL_NAMES } from "@pi-gui/pi-sdk-driver/windows-shell";
+import { readDocumentToolName } from "./document-runtime";
+import { inspectImagesToolName } from "./image-inspection-runtime";
+import { libraryListToolName, librarySearchToolName } from "./library-runtime";
+import { composeMutatingToolNames, composeToolNames } from "./office-compose";
+import { listThreadsToolName, readThreadToolName } from "./orchestration-runtime";
+import { webFetchToolName, webReadToolName, webSearchToolName } from "./web-runtime";
 import type { PermissionMode, SessionRef } from "@pi-gui/session-driver";
 import type { AppStoreInternals } from "./app-store-internals";
 
 /**
- * Tool names blocked in `plan` mode.
+ * Tool names `plan` mode lets through; every other tool is blocked.
  *
- * Names come from the owning modules, including both shells because Windows
- * can substitute PowerShell for Bash. Read-only tools remain available.
+ * Plan mode means "look, don't change anything", so it is an allowlist rather
+ * than a list of known writers: a tool this list does not know - including any
+ * tool a third-party extension registers - may write, and is refused with a
+ * reason the model relays. Names come from the owning modules.
  */
-export const PLAN_BLOCKED_TOOLS: ReadonlySet<string> = new Set([
-  ...SHELL_TOOL_NAMES,
-  ...FILE_MUTATION_TOOL_NAMES,
-  createChildThreadToolName,
-  sendMessageToThreadToolName,
-  ...officeToolNames,
-  ...composeMutatingToolNames,
+export const PLAN_ALLOWED_TOOLS: ReadonlySet<string> = new Set([
+  ...READ_ONLY_TOOL_NAMES,
+  readDocumentToolName,
+  librarySearchToolName,
+  libraryListToolName,
+  webSearchToolName,
+  webFetchToolName,
+  webReadToolName,
+  listThreadsToolName,
+  readThreadToolName,
+  inspectImagesToolName,
+  ...composeToolNames.filter((name) => !(composeMutatingToolNames as readonly string[]).includes(name)),
 ]);
 
 export interface ToolBlock {
@@ -59,7 +69,7 @@ export function shouldBlockTool(
   mode: PermissionMode,
   toolName: string,
 ): ToolBlock | null {
-  if (mode === "plan" && PLAN_BLOCKED_TOOLS.has(toolName)) {
+  if (mode === "plan" && !PLAN_ALLOWED_TOOLS.has(toolName)) {
     return {
       block: true,
       reason: `Read-only (plan) mode blocks ${toolName}. Switch the session to auto mode to modify files or run commands.`,

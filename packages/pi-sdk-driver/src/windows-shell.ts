@@ -19,6 +19,9 @@ export const SHELL_TOOL_NAMES: readonly string[] = ["bash", "powershell"];
 /** Built-in tools that mutate files without going through a shell. */
 export const FILE_MUTATION_TOOL_NAMES: readonly string[] = ["edit", "write"];
 
+/** Built-in tools that only read the workspace. */
+export const READ_ONLY_TOOL_NAMES: readonly string[] = ["read", "grep", "find", "ls"];
+
 /** Built-in command and file-writing tools excluded from light mode. */
 export const LIGHT_MODE_EXCLUDED_TOOLS: readonly string[] = [
   ...SHELL_TOOL_NAMES,
