@@ -804,8 +804,9 @@ export function describeWebAccessRefusal(url: string, settings: WebToolsSettings
  * (loopback and the unspecified address) and link-local networks, which is
  * where cloud metadata endpoints live. A fetched page can carry instructions
  * that steer the model into reading a local service and leaking its response
- * through a later request. Private LAN ranges stay reachable, because reading
- * intranet pages is a supported use.
+ * through a later request. This matters most in plan mode, which blocks the
+ * shell tools that could otherwise reach the same addresses. Private LAN
+ * ranges stay reachable, because reading intranet pages is a supported use.
  */
 const LOCAL_FETCH_TARGETS = (() => {
   const list = new BlockList();
@@ -839,17 +840,12 @@ async function assertNotLocalFetchTarget(url: string): Promise<void> {
     return;
   }
   const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
-  let addresses: readonly { readonly address: string; readonly family: number }[];
-  if (isIP(host)) {
-    addresses = [{ address: host, family: isIP(host) }];
-  } else {
-    try {
-      addresses = await lookup(host, { all: true, verbatim: true });
-    } catch {
-      return; // The fetch reports the DNS failure itself.
-    }
-  }
-  if (addresses.some(({ address, family }) => LOCAL_FETCH_TARGETS.check(address, family === 6 ? "ipv6" : "ipv4"))) {
+  const family = isIP(host);
+  // A DNS failure is left for the fetch itself to report.
+  const addresses = family
+    ? [{ address: host, family }]
+    : await lookup(host, { all: true, verbatim: true }).catch(() => undefined);
+  if (addresses?.some((entry) => LOCAL_FETCH_TARGETS.check(entry.address, entry.family === 6 ? "ipv6" : "ipv4"))) {
     throw new Error("That address points at this computer or a link-local network, which web_fetch does not access.");
   }
 }

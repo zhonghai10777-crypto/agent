@@ -1,6 +1,6 @@
 import type { SafeStorage } from "electron";
 import { readFileSync } from "node:fs";
-import { writeFileAtomicSync } from "./atomic-file-write";
+import { writeFileAtomicQueued } from "./atomic-file-write";
 import {
   DEFAULT_WEB_TOOLS_SETTINGS,
   normalizeWebToolsSettings,
@@ -45,7 +45,7 @@ export class WebToolsStore {
     return this.cached;
   }
 
-  write(settings: WebToolsSettings): WebToolsSettings {
+  async write(settings: WebToolsSettings): Promise<WebToolsSettings> {
     const normalized = normalizeWebToolsSettings(settings);
     const { apiKey, ...rest } = normalized;
 
@@ -65,12 +65,12 @@ export class WebToolsStore {
       ...rest,
       ...(encryptedApiKey ? { encryptedApiKey } : {}),
     };
-    writeFileAtomicSync(this.filePath, `${JSON.stringify(payload, null, 2)}\n`);
-
     // Keep the live key in memory even when it could not be encrypted, so the
     // current session still works; it simply will not survive a restart.
-    this.cached = { ...normalized, apiKey: storedApiKey || apiKey };
-    return this.cached;
+    const next = { ...normalized, apiKey: storedApiKey || apiKey };
+    this.cached = next;
+    await writeFileAtomicQueued(this.filePath, `${JSON.stringify(payload, null, 2)}\n`);
+    return next;
   }
 
   /** True when a key is set — used to render "saved" without exposing the secret. */

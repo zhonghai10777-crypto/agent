@@ -1742,8 +1742,8 @@ app.whenReady().then(async () => {
       return { ok: true, requestMade: true, ...(usage ? { usage } : {}) };
     } catch (error) { return { ok: false, requestMade, error: error instanceof Error ? error.message : "Image connection test failed." }; }
   });
-  ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
-    webToolsStore.write(applyWebToolsSettingsUpdate(webToolsStore.read(), update));
+  ipcMain.handle(desktopIpc.setWebToolsSettings, async (_event, update: unknown) => {
+    await webToolsStore.write(applyWebToolsSettingsUpdate(webToolsStore.read(), update));
     // Re-read so the view reflects what was just persisted, including whether a
     // borrowed provider key is still standing in behind an emptied field.
     return readWebToolsSettingsView();
@@ -1766,7 +1766,7 @@ app.whenReady().then(async () => {
   ipcMain.handle(desktopIpc.getLibrarySettings, () => libraryStore.read());
   ipcMain.handle(desktopIpc.setLibrarySettings, async (_event, update: unknown) => {
     const current = libraryStore.read();
-    const next = libraryStore.write(normalizeLibrarySettings(update));
+    const next = await libraryStore.write(normalizeLibrarySettings(update));
     const rootsChanged = current.roots.join("\0") !== next.roots.join("\0");
     if (next.enabled) {
       startLibraryRebuild(next.roots);

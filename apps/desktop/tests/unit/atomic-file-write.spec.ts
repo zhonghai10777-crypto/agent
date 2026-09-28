@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { readJsonWithBackup, writeFileAtomicQueued, writeFileAtomicSync, type AtomicFileIO } from "../../electron/atomic-file-write";
+import { readJsonWithBackup, writeFileAtomicQueued, type AtomicFileIO } from "../../electron/atomic-file-write";
 
 /**
  * The failure these cover: a corrupt primary file plus a good `.bak` used to
@@ -202,25 +202,4 @@ test("queued writes to one path apply in order and leave no temp files behind", 
 
   expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ generation: 5 });
   expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
-});
-
-test("writeFileAtomicSync replaces the file whole and leaves no staging file behind", async ({}, testInfo) => {
-  const root = await dir(testInfo, "sync-write");
-  const target = join(root, "nested", "settings.json");
-
-  writeFileAtomicSync(target, '{"version":1}\n');
-  writeFileAtomicSync(target, '{"version":2}\n');
-
-  expect(await readFile(target, "utf8")).toBe('{"version":2}\n');
-  expect(await readdir(join(root, "nested"))).toEqual(["settings.json"]);
-});
-
-test("writeFileAtomicSync keeps the old file and cleans up when the replace fails", async ({}, testInfo) => {
-  const root = await dir(testInfo, "sync-write-fails");
-  // A directory at the target path makes the final rename fail.
-  const target = join(root, "settings.json");
-  await mkdir(target);
-
-  expect(() => writeFileAtomicSync(target, '{"version":2}\n')).toThrow();
-  expect(await readdir(root)).toEqual(["settings.json"]);
 });

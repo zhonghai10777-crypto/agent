@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { writeFileAtomicSync } from "./atomic-file-write";
+import { writeFileAtomicQueued } from "./atomic-file-write";
 
 export interface LibrarySettings {
   readonly enabled: boolean;
@@ -49,10 +49,10 @@ export class LibraryStore {
     return this.cached;
   }
 
-  write(next: LibrarySettings): LibrarySettings {
+  async write(next: LibrarySettings): Promise<LibrarySettings> {
     const normalized = normalizeLibrarySettings(next);
-    writeFileAtomicSync(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`);
     this.cached = normalized;
+    await writeFileAtomicQueued(this.filePath, `${JSON.stringify(normalized, null, 2)}\n`);
     return normalized;
   }
 

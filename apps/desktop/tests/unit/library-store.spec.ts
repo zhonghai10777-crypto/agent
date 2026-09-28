@@ -30,7 +30,7 @@ test("LibraryStore persists normalized settings and serves subsequent reads from
   const libraryRoot = resolve(root, "documents");
   const store = new LibraryStore(filePath);
 
-  expect(store.write({ enabled: true, roots: [libraryRoot, "relative"] })).toEqual({
+  expect(await store.write({ enabled: true, roots: [libraryRoot, "relative"] })).toEqual({
     enabled: true,
     roots: [libraryRoot],
   });
