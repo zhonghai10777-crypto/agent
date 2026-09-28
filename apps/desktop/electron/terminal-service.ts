@@ -22,6 +22,13 @@ let nodePty: NodePty | undefined;
 const DEFAULT_TERMINAL_SIZE: TerminalSize = { cols: 80, rows: 24 };
 const MAX_WRITE_LENGTH = 128 * 1024;
 const MAX_TERMINAL_SESSIONS_PER_ROOT = 8;
+/**
+ * pty output arrives in many small chunks (a build log can emit thousands a
+ * second); forwarding each as its own IPC message, and re-slicing the replay
+ * buffer for each, floods the renderer and the main thread. Chunks within this
+ * window go out as one, well below typing-echo latency.
+ */
+const TERMINAL_OUTPUT_BATCH_MS = 5;
 
 interface TerminalRoot {
   readonly rootKey: string;
@@ -51,6 +58,11 @@ interface TerminalSession {
   pty: IPty | undefined;
   dataSubscription: IDisposable | undefined;
   exitSubscription: IDisposable | undefined;
+  /**
+   * Output not yet in `replay` or sent to the renderer. Both happen together
+   * in flushOutput, so a snapshot never holds text a later send repeats.
+   */
+  pendingOutput: string;
 }
 
 export interface TerminalServiceOptions {
@@ -282,6 +294,7 @@ export class TerminalService {
       pty: undefined,
       dataSubscription: undefined,
       exitSubscription: undefined,
+      pendingOutput: "",
     };
     session.title = this.defaultTitle(session);
     this.sessionsById.set(session.id, session);
@@ -308,10 +321,13 @@ export class TerminalService {
     }
 
     session.dataSubscription = session.pty.onData((data) => {
-      this.appendReplay(session, data);
-      this.sendToOwner(webContents, session, desktopIpc.terminalData, { terminalId: session.id, data });
+      if (!session.pendingOutput) {
+        setTimeout(() => this.flushOutput(webContents, session), TERMINAL_OUTPUT_BATCH_MS);
+      }
+      session.pendingOutput += data;
     });
     session.exitSubscription = session.pty.onExit(({ exitCode, signal }) => {
+      this.flushOutput(webContents, session);
       session.status = "exited";
       session.exitCode = exitCode;
       session.signal = signal;
@@ -329,6 +345,16 @@ export class TerminalService {
         signal,
       });
     });
+  }
+
+  private flushOutput(webContents: WebContents, session: TerminalSession): void {
+    const data = session.pendingOutput;
+    if (!data) {
+      return;
+    }
+    session.pendingOutput = "";
+    this.appendReplay(session, data);
+    this.sendToOwner(webContents, session, desktopIpc.terminalData, { terminalId: session.id, data });
   }
 
   private appendReplay(session: TerminalSession, data: string): void {
@@ -394,6 +420,8 @@ export class TerminalService {
   }
 
   private disposePty(session: TerminalSession): void {
+    // A disposed pty's unsent output is dropped (its flush timer then finds nothing).
+    session.pendingOutput = "";
     const pty = session.pty;
     session.dataSubscription?.dispose();
     session.exitSubscription?.dispose();
