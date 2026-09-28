@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import {
+  applyWebToolsSettingsUpdate,
   DEFAULT_WEB_TOOLS_SETTINGS,
   describeWebToolsMisconfiguration,
   extractReadableText,
@@ -506,4 +507,29 @@ test("deepseek search omits allowed_domains from the request when no allowlist i
 
   const body = JSON.parse(capturedInit.body ?? "{}");
   expect(body.tools[0]).not.toHaveProperty("allowed_domains");
+});
+
+test("a settings-page update keeps every stored field the page does not send", () => {
+  const stored = normalizeWebToolsSettings({
+    enabled: false,
+    provider: "deepseek",
+    apiKey: "sk-stored",
+    deepseekModel: "deepseek-custom",
+    deepseekMaxTokens: 2048,
+    deepseekMaxUses: 2,
+  });
+  // The shape the settings page sends: only the fields it shows, no key.
+  const pageUpdate = { enabled: true, provider: "deepseek", searxngBaseUrl: "", maxResults: 5, allowedDomains: [] };
+
+  const next = applyWebToolsSettingsUpdate(stored, pageUpdate);
+
+  expect(next.enabled).toBe(true);
+  expect(next.maxResults).toBe(5);
+  expect(next.apiKey).toBe("sk-stored");
+  expect(next.deepseekModel).toBe("deepseek-custom");
+  expect(next.deepseekMaxTokens).toBe(2048);
+  expect(next.deepseekMaxUses).toBe(2);
+  // A typed key replaces the stored one; an empty one clears it.
+  expect(applyWebToolsSettingsUpdate(stored, { ...pageUpdate, apiKey: " sk-new " }).apiKey).toBe("sk-new");
+  expect(applyWebToolsSettingsUpdate(stored, { ...pageUpdate, apiKey: "" }).apiKey).toBe("");
 });

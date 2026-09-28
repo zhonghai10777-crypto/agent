@@ -228,6 +228,23 @@ export function normalizeWebToolsSettings(input: unknown): WebToolsSettings {
 }
 
 /**
+ * Applies a settings-page update on top of the stored settings. The page
+ * sends only the fields it shows, so everything it omits keeps its stored
+ * value instead of resetting to a default: the DeepSeek request-shaping
+ * fields, and the API key, which the renderer never receives and so can only
+ * replace (a typed key) or clear (an empty string).
+ */
+export function applyWebToolsSettingsUpdate(current: WebToolsSettings, update: unknown): WebToolsSettings {
+  const incoming = typeof update === "object" && update !== null ? (update as Record<string, unknown>) : {};
+  const sent = Object.fromEntries(Object.entries(incoming).filter(([, value]) => value !== undefined));
+  return normalizeWebToolsSettings({
+    ...current,
+    ...sent,
+    apiKey: typeof sent.apiKey === "string" ? sent.apiKey : current.apiKey,
+  });
+}
+
+/**
  * Explains why the current settings cannot be used, or undefined when they can.
  * Returned to the model as the tool error so it can tell the user what to fix
  * instead of retrying a request that structurally cannot work.

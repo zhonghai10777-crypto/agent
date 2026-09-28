@@ -92,9 +92,9 @@ import { createCompactionFileOpsExtension } from "./compaction-file-ops";
 import { withExtractionMetadata } from "./document-attachments";
 import { WebToolsStore } from "./web-tools-store";
 import {
+  applyWebToolsSettingsUpdate,
   DEEPSEEK_PROVIDER_ID,
   isDeepSeekEndpoint,
-  normalizeWebToolsSettings,
   runWebSearch,
   type WebToolsSettings,
 } from "./web-search";
@@ -1739,12 +1739,7 @@ app.whenReady().then(async () => {
     } catch (error) { return { ok: false, requestMade, error: error instanceof Error ? error.message : "Image connection test failed." }; }
   });
   ipcMain.handle(desktopIpc.setWebToolsSettings, (_event, update: unknown) => {
-    const current = webToolsStore.read();
-    const incoming = (update ?? {}) as Record<string, unknown>;
-    // An omitted apiKey means "keep the stored one": the renderer never receives
-    // the secret, so it cannot echo it back on an unrelated settings change.
-    const apiKey = typeof incoming.apiKey === "string" ? incoming.apiKey.trim() : current.apiKey;
-    webToolsStore.write(normalizeWebToolsSettings({ ...incoming, apiKey }));
+    webToolsStore.write(applyWebToolsSettingsUpdate(webToolsStore.read(), update));
     // Re-read so the view reflects what was just persisted, including whether a
     // borrowed provider key is still standing in behind an emptied field.
     return readWebToolsSettingsView();
