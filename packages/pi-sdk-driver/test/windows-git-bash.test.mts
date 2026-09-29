@@ -6,7 +6,7 @@ import { delimiter, join } from "node:path";
 import {
   decodeConsoleOutput,
   findGitBashWindows,
-  findOnPath,
+  gitExecutableFromPath,
   resetGitBashDetectionCache,
   windowsGitBashAvailable,
   windowsGitBashPath,
@@ -204,7 +204,7 @@ test("git.exe is found on PATH without spawning where, quoted entries included",
   mkdirSync(gitCmd, { recursive: true });
   writeFileSync(join(gitCmd, "git.exe"), "");
   const pathValue = [join(base, "missing"), `"${gitCmd}"`, ""].join(delimiter);
-  assert.equal(findOnPath("git.exe", pathValue), join(gitCmd, "git.exe"));
-  assert.equal(findOnPath("git.exe", join(base, "missing")), undefined);
-  assert.equal(findOnPath("git.exe", undefined), undefined);
+  assert.equal(gitExecutableFromPath(pathValue), join(gitCmd, "git.exe"));
+  assert.equal(gitExecutableFromPath(join(base, "missing")), undefined);
+  assert.equal(gitExecutableFromPath(""), undefined);
 });

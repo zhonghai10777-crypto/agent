@@ -30,22 +30,22 @@
   --surface-overlay-hover: rgba(255, 255, 255, 0.62);
   --surface-overlay-border: rgba(210, 215, 226, 0.85);
   --surface-overlay-muted: rgba(255, 255, 255, 0.45);
+  /* Chinese glyphs for every stack: without them Windows may pick a Japanese font. */
+  --font-cjk: "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC";
   --font-ui:
     ui-sans-serif,
     -apple-system,
     BlinkMacSystemFont,
     "SF Pro Text",
     "Segoe UI",
-    "PingFang SC",
-    "Microsoft YaHei UI",
-    "Microsoft YaHei",
-    "Noto Sans CJK SC",
+    var(--font-cjk),
     sans-serif;
   --font-mono:
     ui-monospace,
     "SF Mono",
     "Cascadia Code",
     "Consolas",
+    var(--font-cjk),
     monospace;
   --border: var(--line);
   --ink: var(--text);

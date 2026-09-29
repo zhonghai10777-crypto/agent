@@ -7,8 +7,7 @@ import { ChevronRightIcon, CopyIcon, DiffIcon, FileIcon, ForkIcon, SparkIcon, Te
 import { extensionToLanguage } from "./syntax-highlight";
 import { useI18n } from "./i18n/I18nProvider";
 import { VisionMessageStatus } from "./vision-ui";
-import type { MessageKey, Translator } from "./i18n";
-import { getRendererPlatform } from "./ipc";
+import type { Translator } from "./i18n";
 
 interface TimelineItemProps {
   readonly item: DisplayTimelineItem;
@@ -240,7 +239,7 @@ function TimelineToolCallItem({
         {officeOutputPath ? (
           <span className="timeline-tool__office-actions">
             <button className="button button--secondary" type="button" onClick={() => void window.piApp?.openOfficeFile(officeOutputPath)}>{t("timeline.openOfficeFile")}</button>
-            <button className="button button--secondary" type="button" onClick={() => void window.piApp?.showOfficeFileInFinder(officeOutputPath)}>{t(showOfficeFileLabelKey())}</button>
+            <button className="button button--secondary" type="button" onClick={() => void window.piApp?.showOfficeFileInFinder(officeOutputPath)}>{t("timeline.showOfficeFile")}</button>
           </span>
         ) : null}
       </div>
@@ -412,16 +411,4 @@ function TimelineSummaryItem({ item }: { readonly item: TimelineSummary }) {
       {item.metadata ? <span className="timeline-activity__meta">{item.metadata}</span> : null}
     </div>
   );
-}
-
-/** Each OS names its file manager differently. */
-function showOfficeFileLabelKey(): MessageKey {
-  switch (getRendererPlatform()) {
-    case "darwin":
-      return "timeline.showOfficeFile";
-    case "win32":
-      return "timeline.showOfficeFileWindows";
-    default:
-      return "timeline.showOfficeFileLinux";
-  }
 }

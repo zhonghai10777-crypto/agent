@@ -56,25 +56,22 @@ export function decodeConsoleOutput(bytes: Uint8Array): string {
   }
 }
 
-function gitExecutableFromPath(): string | undefined {
-  return findOnPath("git.exe", process.env.PATH);
-}
-
 /**
- * The first `fileName` in a PATH value, found without spawning `where` (whose
- * output has the same code page problem as reg.exe's).
+ * The first git.exe on PATH, found without spawning `where` (whose output has
+ * the same code page problem as reg.exe's).
  */
-export function findOnPath(fileName: string, pathValue: string | undefined): string | undefined {
+export function gitExecutableFromPath(pathValue = process.env.PATH): string | undefined {
   for (const entry of (pathValue ?? "").split(delimiter)) {
     const dir = entry.trim().replace(/^"(.*)"$/u, "$1");
-    if (dir && existsSync(join(dir, fileName))) {
-      return join(dir, fileName);
+    const candidate = dir && join(dir, "git.exe");
+    if (candidate && existsSync(candidate)) {
+      return candidate;
     }
   }
   return undefined;
 }
 
-const defaultProbe: GitBashProbe = { registryInstallPaths, gitExecutableFromPath };
+const defaultProbe: GitBashProbe = { registryInstallPaths, gitExecutableFromPath: () => gitExecutableFromPath() };
 
 function bashUnderInstallRoot(root: string): string | undefined {
   const bash = join(root, "bin", "bash.exe");

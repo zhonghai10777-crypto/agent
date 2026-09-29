@@ -191,7 +191,8 @@ export function TerminalPanel({
       allowProposedApi: true,
       convertEol: true,
       cursorBlink: true,
-      fontFamily: "Menlo, Monaco, Consolas, 'Liberation Mono', monospace",
+      // The CSS --font-cjk fonts: xterm takes a literal list, not the stylesheet's.
+      fontFamily: "Menlo, Monaco, Consolas, 'Liberation Mono', 'PingFang SC', 'Microsoft YaHei UI', 'Noto Sans CJK SC', monospace",
       fontSize: 12,
       scrollback: 2_000,
       theme: {

@@ -1621,7 +1621,7 @@
 }
 
 .slash-menu__command--skill {
-  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.01em;
   color: var(--muted);

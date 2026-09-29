@@ -320,7 +320,7 @@ export class TerminalService {
     try {
       ensureNodePtySpawnHelperExecutable(this.options.isPackaged);
       const launch = terminalShellLaunch(session.shell);
-      session.pty = loadNodePty().spawn(session.shell, [...launch.args], {
+      session.pty = loadNodePty().spawn(session.shell, launch.args, {
         name: "xterm-256color",
         cols: session.size.cols,
         rows: session.size.rows,

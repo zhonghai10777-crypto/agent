@@ -21,11 +21,6 @@ export function buildTerminalEnv(
   return env;
 }
 
-export interface TerminalShellLaunch {
-  readonly args: readonly string[];
-  readonly env: Readonly<Record<string, string>>;
-}
-
 /**
  * How to start `shellPath` in the integrated terminal. A bash on Windows (Git
  * Bash, the default there) starts as a login shell, the way VS Code starts it:
@@ -33,7 +28,10 @@ export interface TerminalShellLaunch {
  * the user's ~/.bash_profile. CHERE_INVOKING keeps a login shell in the
  * terminal's working directory instead of the $HOME an MSYS profile moves to.
  */
-export function terminalShellLaunch(shellPath: string, platform: NodeJS.Platform = process.platform): TerminalShellLaunch {
+export function terminalShellLaunch(
+  shellPath: string,
+  platform: NodeJS.Platform = process.platform,
+): { args: string[]; env: Record<string, string> } {
   if (platform === "win32" && /^bash(?:\.exe)?$/iu.test(path.win32.basename(shellPath))) {
     return { args: ["--login", "-i"], env: { CHERE_INVOKING: "1" } };
   }
