@@ -48,6 +48,7 @@ import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-ch
 import { ThemeManager } from "./theme-manager";
 import { windowChromeOptions } from "./window-chrome";
 import { nonMacApplicationMenu } from "./app-menu";
+import { applyWindowsGitEnv } from "./git-exec";
 import type { TerminalService } from "./terminal-service";
 import type {
   AppView,
@@ -1238,6 +1239,7 @@ if (augmentedPath.changed) {
 // applyWindowsAgentShellEnv); the integrated terminal leaves these names out
 // again so the user's own shell behaves as it does outside the app.
 const agentShellEnvNames = applyWindowsAgentShellEnv();
+applyWindowsGitEnv();
 
 const legacyUserDataDir = path.join(app.getPath("appData"), "pi");
 app.setName(PRODUCT.name);

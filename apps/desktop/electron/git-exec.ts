@@ -20,7 +20,7 @@ export function execGit(args: readonly string[], options: GitExecOptions = {}): 
   return new Promise((resolve) => {
     execFile(
       "git",
-      gitArgs(args),
+      [...args],
       {
         encoding: "utf8",
         windowsHide: true,
@@ -36,9 +36,17 @@ export function execGit(args: readonly string[], options: GitExecOptions = {}): 
  * Worktrees live deeper than the checkouts they come from (under
  * %LOCALAPPDATA%\<app>\worktrees\<repo>\<name>), so a repository that checks
  * out fine can pass Windows' 260-character path limit in one. Git for Windows
- * lifts that limit only with core.longpaths, off by default: turn it on for the
- * app's own calls. No other platform has the limit.
+ * lifts that limit only with core.longpaths, off by default. Turn it on through
+ * the environment (Git 2.31+), after any entries already there, so every git
+ * this process starts gets it: the app's own calls, the agent's shell tools and
+ * the integrated terminal. The user's repository config is left alone.
  */
-export function gitArgs(args: readonly string[], platform: NodeJS.Platform = process.platform): string[] {
-  return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : [...args];
+export function applyWindowsGitEnv(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): void {
+  if (platform !== "win32") {
+    return;
+  }
+  const index = Number.parseInt(env.GIT_CONFIG_COUNT ?? "", 10) || 0;
+  env[`GIT_CONFIG_KEY_${index}`] = "core.longpaths";
+  env[`GIT_CONFIG_VALUE_${index}`] = "true";
+  env.GIT_CONFIG_COUNT = String(index + 1);
 }
