@@ -1,12 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 import type { CatalogStorage, WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
-import { GitWorktreeManager } from "../../electron/worktree-manager";
+import { collectReferencedWorktreePaths, GitWorktreeManager } from "../../electron/worktree-manager";
 
 const execFileAsync = promisify(execFile);
 
@@ -213,6 +213,39 @@ test("pruneOrphanedWorktrees removes clean merged orphans and fails closed for p
       expect(result.skipped).toContain(protectedId);
     }
     expect(await branchExists(repo, "feature/manual")).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a stale workspace entry does not shield an orphan from startup collection when userData is reached through a link", async () => {
+  const root = await mkdtemp(join(tmpdir(), "wt-reconcile-"));
+  try {
+    const repo = await makeRepo(root);
+    const workspace: WorkspaceRef = { workspaceId: "ws", path: repo, displayName: "repo" };
+    const { manager } = makeManager();
+    const userData = join(root, "user-data");
+    const orphan = await manager.createWorktree(workspace, {
+      path: join(userData, "worktrees", "repo", "orphan"),
+      branchName: "pi/orphan",
+      startPoint: "HEAD",
+    });
+    // A junction on Windows (e.g. a relocated profile), a symlink here.
+    const linkedUserData = join(root, "linked-user-data");
+    await symlink(userData, linkedUserData, process.platform === "win32" ? "junction" : "dir");
+    const worktreeRoot = join(linkedUserData, "worktrees");
+
+    const referencedPaths = await collectReferencedWorktreePaths({
+      worktreeRoot,
+      catalogPaths: [],
+      workspacePaths: [repo, orphan.path],
+    });
+    expect([...referencedPaths]).toEqual([repo]);
+    const result = await manager.pruneOrphanedWorktrees({ worktreeRoot, referencedPaths });
+
+    expect(result.removed).toEqual([orphan.worktreeId]);
+    expect(await pathExists(orphan.path)).toBe(false);
+    expect(await branchExists(repo, "pi/orphan")).toBe(false);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

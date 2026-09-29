@@ -29,11 +29,12 @@ test("realpath scope allows internal files and explicit external attachments, re
     .rejects.toMatchObject({ code: "DOCUMENT_UNAUTHORIZED" });
 });
 
-test("Windows lexical boundaries distinguish drives, UNC shares, parent traversal and dotted names", () => {
+test("Windows lexical boundaries distinguish drives, UNC shares, parent traversal and dotted names, ignoring case", () => {
   expect(isPathWithinRoot("C:\\work\\..notes.txt", "C:\\work", path.win32)).toBe(true);
   expect(isPathWithinRoot("C:\\work-sibling\\file.txt", "C:\\work", path.win32)).toBe(false);
   expect(isPathWithinRoot("D:\\work\\file.txt", "C:\\work", path.win32)).toBe(false);
   expect(isPathWithinRoot("C:\\work\\..\\file.txt", "C:\\work", path.win32)).toBe(false);
   expect(isPathWithinRoot("\\\\server\\share2\\file.txt", "\\\\server\\share", path.win32)).toBe(false);
   expect(isPathWithinRoot("\\\\server\\share\\dir\\file.txt", "\\\\server\\share", path.win32)).toBe(true);
+  expect(isPathWithinRoot("c:\\Users\\Pi\\worktrees\\repo\\wt", "C:\\users\\pi\\worktrees", path.win32)).toBe(true);
 });

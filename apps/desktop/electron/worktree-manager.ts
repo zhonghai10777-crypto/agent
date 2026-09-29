@@ -6,6 +6,7 @@ import type {
   WorktreeCatalogSnapshot,
 } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
+import { isPathWithinRoot } from "./document-access";
 import { execGit } from "./git-exec";
 
 
@@ -34,6 +35,15 @@ export interface PruneOrphanedWorktreesInput {
   readonly worktreeRoot: string;
   /** Canonicalized worktree/workspace paths that must never be pruned. */
   readonly referencedPaths: ReadonlySet<string>;
+}
+
+export interface WorktreeReferenceSources {
+  /** Profile-owned root under which the app creates its worktrees. */
+  readonly worktreeRoot: string;
+  /** Worktree paths recorded in the app's worktree catalog. */
+  readonly catalogPaths: readonly string[];
+  /** Paths of every workspace the driver knows about. */
+  readonly workspacePaths: readonly string[];
 }
 
 export interface PruneOrphanedWorktreesResult {
@@ -210,6 +220,28 @@ export class GitWorktreeManager {
 
     return { removed, skipped };
   }
+}
+
+/**
+ * Canonical paths that startup collection must never prune. A driver workspace
+ * entry can survive independently of the app catalog, so one under the managed
+ * worktree root does not protect an orphan there. The root is canonicalized like
+ * the workspace paths: a userData path through a symlink or junction would
+ * otherwise never contain them.
+ */
+export async function collectReferencedWorktreePaths(sources: WorktreeReferenceSources): Promise<Set<string>> {
+  const worktreeRoot = await canonicalPath(sources.worktreeRoot);
+  const referenced = new Set<string>();
+  for (const catalogPath of sources.catalogPaths) {
+    referenced.add(await canonicalPath(catalogPath));
+  }
+  for (const workspacePath of sources.workspacePaths) {
+    const canonicalWorkspacePath = await canonicalPath(workspacePath);
+    if (!isPathWithinRoot(canonicalWorkspacePath, worktreeRoot)) {
+      referenced.add(canonicalWorkspacePath);
+    }
+  }
+  return referenced;
 }
 
 /**

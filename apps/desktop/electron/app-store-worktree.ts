@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, join } from "node:path";
 import { isImageInputDisabledError, sessionKey } from "@pi-gui/pi-sdk-driver";
 import type { WorktreeCatalogEntry } from "@pi-gui/catalogs";
 import type { WorkspaceRef } from "@pi-gui/session-driver";
@@ -13,7 +12,7 @@ import type {
 } from "../src/desktop-state";
 import { restoreComposerDraft, sendMessageToSession } from "./app-store-composer";
 import { cloneComposerAttachments } from "./app-store-utils";
-import type { CreateWorktreeOptions } from "./worktree-manager";
+import { collectReferencedWorktreePaths, type CreateWorktreeOptions } from "./worktree-manager";
 import type { AppStoreInternals } from "./app-store-internals";
 import { NEW_THREAD_PLACEHOLDER_TITLE } from "./thread-title-constants";
 
@@ -412,43 +411,18 @@ export function buildWorktreeOptions(
  */
 export async function reconcileWorktrees(store: AppStoreInternals): Promise<void> {
   try {
-    const referencedPaths = new Set<string>();
     const catalog = await store.catalogStore.worktrees.listWorktrees();
-    for (const worktree of catalog.worktrees) {
-      if (worktree.path) {
-        referencedPaths.add(await canonicalWorktreePath(worktree.path));
-      }
-    }
-    for (const workspace of store.state.workspaces) {
-      // A driver workspace entry can survive independently of the app catalog.
-      // Do not let that stale derived entry protect an orphan under this
-      // profile's managed worktree root from startup collection.
-      if (isPathWithinRoot(store.worktreeRoot, workspace.path)) {
-        continue;
-      }
-      referencedPaths.add(await canonicalWorktreePath(workspace.path));
-    }
+    const referencedPaths = await collectReferencedWorktreePaths({
+      worktreeRoot: store.worktreeRoot,
+      catalogPaths: catalog.worktrees.flatMap((worktree) => (worktree.path ? [worktree.path] : [])),
+      workspacePaths: store.state.workspaces.map((workspace) => workspace.path),
+    });
     await store.worktreeManager.pruneOrphanedWorktrees({
       worktreeRoot: store.worktreeRoot,
       referencedPaths,
     });
   } catch (error) {
     console.warn(`pi-gui: worktree reconcile skipped: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-function isPathWithinRoot(rootPath: string, candidatePath: string): boolean {
-  const root = resolve(rootPath);
-  const candidate = resolve(candidatePath);
-  return candidate !== root && candidate.startsWith(`${root}${sep}`);
-}
-
-async function canonicalWorktreePath(pathValue: string): Promise<string> {
-  const resolved = resolve(pathValue);
-  try {
-    return await realpath(resolved);
-  } catch {
-    return resolved;
   }
 }
 
