@@ -104,6 +104,7 @@ import {
 import { canBorrowModelProviderKey, type WebSearchKeySource } from "../src/web-search-providers";
 import { LibraryStore, normalizeLibrarySettings } from "./library-store";
 import { LibraryIndex } from "./library-index";
+import { moveDirectoryIfAbsent, resolveLocalDataDir } from "./local-data-dir";
 import { MAX_LIBRARY_CHARS } from "./document-limits";
 import { createLibraryRuntimeExtension, createLibraryRuntimeTools } from "./library-runtime";
 import type {
@@ -1256,6 +1257,7 @@ const configuredUserDataDir = resolveProductUserDataDir(
   existsSync,
 );
 app.setPath("userData", configuredUserDataDir);
+const localDataDir = resolveLocalDataDir(configuredUserDataDir);
 
 function readInitialRuntimeMode(userDataDir: string): RuntimeMode {
   const envMode = process.env.PI_APP_DEFAULT_RUNTIME_MODE;
@@ -1390,7 +1392,9 @@ app.whenReady().then(async () => {
     return toWebToolsSettingsView(stored, source);
   };
   libraryStore = new LibraryStore(path.join(configuredUserDataDir, "library.json"));
-  libraryIndex = new LibraryIndex(path.join(configuredUserDataDir, "library-index"), {
+  const libraryIndexDir = path.join(localDataDir, "library-index");
+  await moveDirectoryIfAbsent(path.join(configuredUserDataDir, "library-index"), libraryIndexDir);
+  libraryIndex = new LibraryIndex(libraryIndexDir, {
     maxIndexedChars: initialRuntimeMode === "light" ? MAX_LIBRARY_CHARS / 2 : MAX_LIBRARY_CHARS,
   });
   const initialLibrarySettings = libraryStore.read();
@@ -1500,6 +1504,7 @@ app.whenReady().then(async () => {
   };
   store = new DesktopAppStore({
     userDataDir: configuredUserDataDir,
+    localDataDir,
     initialWorkspacePaths: resolveInitialWorkspacePaths(),
     getWindow: () => mainWindow,
     shouldKeepSessionDialogs: (sessionRef) => isSessionVisibleInAnotherWindow(sessionRef),

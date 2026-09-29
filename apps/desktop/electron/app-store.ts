@@ -135,6 +135,8 @@ type ExtensionUiDialogRequest = Extract<SessionDriverEvent, { type: "hostUiReque
 };
 export interface DesktopAppStoreOptions {
   readonly userDataDir: string;
+  /** Machine-local home for worktrees (see resolveLocalDataDir); defaults to userDataDir. */
+  readonly localDataDir?: string;
   readonly initialWorkspacePaths: readonly string[];
   readonly getWindow?: () => BrowserWindow | null;
   readonly shouldKeepSessionDialogs?: (sessionRef: SessionRef) => boolean;
@@ -233,6 +235,7 @@ export class DesktopAppStore implements AppStoreInternals {
   readonly catalogStore: JsonCatalogStore;
   readonly worktreeManager: GitWorktreeManager;
   readonly worktreeRoot: string;
+  readonly worktreeRoots: readonly string[];
   private readonly uiStateFilePath: string;
   readonly personalWorkspacePath: string;
   readonly attachmentStore: JsonFileStore<ComposerAttachment[]>;
@@ -269,7 +272,11 @@ export class DesktopAppStore implements AppStoreInternals {
 
     this.driver = new PiSdkDriver(driverOptions);
     this.worktreeManager = new GitWorktreeManager({ catalogStorage: this.catalogStore });
-    this.worktreeRoot = join(options.userDataDir, "worktrees");
+    this.worktreeRoot = join(options.localDataDir ?? options.userDataDir, "worktrees");
+    const userDataWorktreeRoot = join(options.userDataDir, "worktrees");
+    // Worktrees created before the move stay where they are and in use; the
+    // startup GC keeps collecting orphans there too.
+    this.worktreeRoots = userDataWorktreeRoot === this.worktreeRoot ? [this.worktreeRoot] : [this.worktreeRoot, userDataWorktreeRoot];
     this.uiStateFilePath = join(options.userDataDir, "ui-state.json");
     this.personalWorkspacePath = join(options.userDataDir, "personal-workspace");
     this.attachmentStore = new JsonFileStore<ComposerAttachment[]>(options.userDataDir, "attachments");

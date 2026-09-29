@@ -414,7 +414,7 @@ export function buildWorktreeOptions(
 
 /**
  * Startup reconcile pass (fix: worktree/branch GC). Only the active profile's
- * user-data-namespaced root is eligible for automatic collection. Cataloged
+ * own worktree roots are eligible for automatic collection. Cataloged
  * worktrees under the legacy shared ~/.pi/worktrees root remain usable, but are
  * intentionally never adopted or pruned because their profile ownership is
  * ambiguous.
@@ -422,15 +422,12 @@ export function buildWorktreeOptions(
 export async function reconcileWorktrees(store: AppStoreInternals): Promise<void> {
   try {
     const catalog = await store.catalogStore.worktrees.listWorktrees();
-    const referencedPaths = await collectReferencedWorktreePaths({
-      worktreeRoot: store.worktreeRoot,
-      catalogPaths: catalog.worktrees.flatMap((worktree) => (worktree.path ? [worktree.path] : [])),
-      workspacePaths: store.state.workspaces.map((workspace) => workspace.path),
-    });
-    await store.worktreeManager.pruneOrphanedWorktrees({
-      worktreeRoot: store.worktreeRoot,
-      referencedPaths,
-    });
+    const catalogPaths = catalog.worktrees.flatMap((worktree) => (worktree.path ? [worktree.path] : []));
+    const workspacePaths = store.state.workspaces.map((workspace) => workspace.path);
+    for (const worktreeRoot of store.worktreeRoots) {
+      const referencedPaths = await collectReferencedWorktreePaths({ worktreeRoot, catalogPaths, workspacePaths });
+      await store.worktreeManager.pruneOrphanedWorktrees({ worktreeRoot, referencedPaths });
+    }
   } catch (error) {
     console.warn(`pi-gui: worktree reconcile skipped: ${error instanceof Error ? error.message : String(error)}`);
   }

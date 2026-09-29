@@ -42,7 +42,10 @@ export interface AppStoreInternals {
   readonly driver: PiSdkDriver;
   readonly catalogStore: JsonCatalogStore;
   readonly worktreeManager: GitWorktreeManager;
+  /** Where new worktrees go. */
   readonly worktreeRoot: string;
+  /** Every root the app's worktrees may live under, `worktreeRoot` first. */
+  readonly worktreeRoots: readonly string[];
   readonly personalWorkspacePath: string;
   readonly attachmentStore: JsonFileStore<ComposerAttachment[]>;
   readonly releaseDirectory: (directoryPath: string) => void;
