@@ -138,6 +138,12 @@ export interface DesktopAppStoreOptions {
   readonly initialWorkspacePaths: readonly string[];
   readonly getWindow?: () => BrowserWindow | null;
   readonly shouldKeepSessionDialogs?: (sessionRef: SessionRef) => boolean;
+  /**
+   * Closes what the app holds open inside a directory about to be deleted, such
+   * as integrated terminals started there: Windows cannot delete a directory
+   * that is still some process's working directory.
+   */
+  readonly releaseDirectory?: (directoryPath: string) => void;
   readonly driverOptions?: Pick<
     PiSdkDriverConfig,
     "extensionFactories" | "inlineExtensionMetadata" | "credentialStore" | "noExtensions" | "noSkills" | "runtimeMode" | "visionServices"
@@ -238,6 +244,7 @@ export class DesktopAppStore implements AppStoreInternals {
   private readonly initialWorkspacePaths: readonly string[];
   private readonly getWindow: () => BrowserWindow | null;
   private readonly shouldKeepSessionDialogs: (sessionRef: SessionRef) => boolean;
+  readonly releaseDirectory: (directoryPath: string) => void;
   private composerDraftSyncTarget: SessionRef | undefined;
   private composerDraftProjectionNonce = 0;
   private persistUiStateTimer: NodeJS.Timeout | undefined;
@@ -269,6 +276,7 @@ export class DesktopAppStore implements AppStoreInternals {
     this.initialWorkspacePaths = options.initialWorkspacePaths;
     this.getWindow = options.getWindow ?? (() => null);
     this.shouldKeepSessionDialogs = options.shouldKeepSessionDialogs ?? (() => false);
+    this.releaseDirectory = options.releaseDirectory ?? (() => {});
   }
 
   /* ── Lifecycle ──────────────────────────────────────────── */

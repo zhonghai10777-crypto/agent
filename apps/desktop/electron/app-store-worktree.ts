@@ -15,6 +15,7 @@ import { cloneComposerAttachments } from "./app-store-utils";
 import { collectReferencedWorktreePaths, type CreateWorktreeOptions } from "./worktree-manager";
 import type { AppStoreInternals } from "./app-store-internals";
 import { NEW_THREAD_PLACEHOLDER_TITLE } from "./thread-title-constants";
+import { tGlobal } from "../src/i18n";
 
 /* ── Public methods ─────────────────────────────────────── */
 
@@ -65,6 +66,15 @@ export async function removeWorktree(store: AppStoreInternals, input: RemoveWork
 
   return store.withErrorHandling(async () => {
     const worktree = await store.catalogStore.worktrees.getWorktree(input.worktreeId);
+    if (worktree?.path) {
+      const worktreeWorkspace = store.state.workspaces.find((workspace) => workspace.path === worktree.path);
+      // Deleting the directory under a running task would pull its files away
+      // mid-run (and on Windows fail on the task's own processes).
+      if (worktreeWorkspace?.sessions.some((session) => session.status === "running")) {
+        throw new Error(tGlobal("worktree.removeWhileRunning"));
+      }
+      store.releaseDirectory(worktree.path);
+    }
     await store.worktreeManager.removeWorktree(rootWorkspace, input.worktreeId);
     if (worktree?.path) {
       await store.driver.removeWorkspace(worktree.path).catch(() => undefined);

@@ -114,6 +114,7 @@ const zhMessages: Record<MessageKey, string> = {
   "sidebar.removeWorkspaceConfirmTitle": "移除工作区",
   "sidebar.removeWorkspaceConfirmAction": "移除",
   "workspace.personal": "个人空间",
+  "worktree.removeWhileRunning": "这个工作树里还有任务在运行，请先停止任务再移除。",
   "sidebar.removeWorktreeConfirm": "移除工作树「{name}」？这会把该 git worktree 从磁盘上删除。",
 
   /* ── Sidebar aria labels ─────────────────────────── */

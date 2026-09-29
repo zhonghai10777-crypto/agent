@@ -1,7 +1,14 @@
 import { createServer } from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { launchDesktop, makeUserDataDir, makeWorkspace, setDeferredThreadTitleMode, type DesktopHarness } from "./electron-app";
+import {
+  launchDesktop,
+  makeGitWorkspace,
+  makeUserDataDir,
+  makeWorkspace,
+  setDeferredThreadTitleMode,
+  type DesktopHarness,
+} from "./electron-app";
 
 export const COMPACTION_TEST_KEY = "pi-app-compaction-fixture-key";
 export const COMPACTION_TEST_PROVIDER = "compaction-fixture";
@@ -294,10 +301,10 @@ export async function startCompactionHttpFixture() {
  * HTTP fixture, with auto-title requests deferred so the fixture only ever
  * sees the requests a test drives. `close()` tears both down.
  */
-export async function launchWithCompactionFixture(label: string) {
+export async function launchWithCompactionFixture(label: string, options: { readonly git?: boolean } = {}) {
   const userDataDir = await makeUserDataDir(`${label}-`);
   const agentDir = join(userDataDir, "agent");
-  const workspacePath = await makeWorkspace(label);
+  const workspacePath = await (options.git ? makeGitWorkspace(label) : makeWorkspace(label));
   await seedCompactionAgentDir(agentDir);
   const http = await startCompactionHttpFixture();
   const harness = await launchDesktop(userDataDir, {

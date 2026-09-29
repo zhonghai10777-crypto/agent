@@ -45,6 +45,7 @@ export interface AppStoreInternals {
   readonly worktreeRoot: string;
   readonly personalWorkspacePath: string;
   readonly attachmentStore: JsonFileStore<ComposerAttachment[]>;
+  readonly releaseDirectory: (directoryPath: string) => void;
 
   /* ── Shared helpers (called by extracted method groups) ── */
   initialize(): Promise<void>;

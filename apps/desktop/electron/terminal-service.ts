@@ -208,17 +208,28 @@ export class TerminalService {
 
   retainWorkspacePaths(workspacePaths: readonly string[]): void {
     const retained = new Set(workspacePaths.map((workspacePath) => normalizeRootKey(workspacePath)));
+    this.disposeRoots((root) => !retained.has(root.workspaceRootKey));
+  }
+
+  /** Closes the terminals opened in a workspace, e.g. before its directory is deleted. */
+  disposeWorkspacePath(workspacePath: string): void {
+    const workspaceRootKey = normalizeRootKey(workspacePath);
+    this.disposeRoots((root) => root.workspaceRootKey === workspaceRootKey);
+  }
+
+  private disposeRoots(shouldDispose: (root: TerminalRoot) => boolean): void {
     for (const [rootKey, root] of this.rootsByKey) {
-      if (!retained.has(root.workspaceRootKey)) {
-        for (const sessionId of root.sessionIds) {
-          const session = this.sessionsById.get(sessionId);
-          if (session) {
-            this.disposeSession(session);
-            this.sessionsById.delete(session.id);
-          }
-        }
-        this.rootsByKey.delete(rootKey);
+      if (!shouldDispose(root)) {
+        continue;
       }
+      for (const sessionId of root.sessionIds) {
+        const session = this.sessionsById.get(sessionId);
+        if (session) {
+          this.disposeSession(session);
+          this.sessionsById.delete(session.id);
+        }
+      }
+      this.rootsByKey.delete(rootKey);
     }
   }
 

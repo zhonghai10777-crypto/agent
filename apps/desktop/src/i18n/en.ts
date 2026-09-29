@@ -115,6 +115,7 @@ const enMessages = {
   "sidebar.removeWorkspaceConfirmTitle": "Remove workspace",
   "sidebar.removeWorkspaceConfirmAction": "Remove",
   "workspace.personal": "Personal space",
+  "worktree.removeWhileRunning": "A task is still running in this worktree. Stop it before removing the worktree.",
   "sidebar.removeWorktreeConfirm": "Remove worktree “{name}”? This removes the git worktree from disk.",
 
   /* ── Sidebar aria labels ─────────────────────────── */

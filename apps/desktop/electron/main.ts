@@ -1503,6 +1503,7 @@ app.whenReady().then(async () => {
     initialWorkspacePaths: resolveInitialWorkspacePaths(),
     getWindow: () => mainWindow,
     shouldKeepSessionDialogs: (sessionRef) => isSessionVisibleInAnotherWindow(sessionRef),
+    releaseDirectory: (directoryPath) => terminalService?.disposeWorkspacePath(directoryPath),
     driverOptions,
     generateThreadTitleOverride: async (workspace, options) => generateThreadTitleOverride?.(workspace, options),
   });
