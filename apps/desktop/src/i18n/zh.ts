@@ -304,7 +304,7 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.section.generalDesc": "把重要的应用与运行时控制放在手边。",
   "settings.section.providersDesc": "为 {workspaceName} 连接模型服务并管理登录凭据。",
   "settings.section.modelsDesc": "选择默认模型，以及哪些模型出现在选择器中。",
-  "settings.section.notificationsDesc": "管理 macOS 通知权限，以及哪些后台事件应当提醒你。",
+  "settings.section.notificationsDesc": "管理通知权限，以及哪些后台事件应当提醒你。",
   "settings.section.web": "联网查资料",
   "settings.section.webDesc": "允许助手上网搜索并阅读网页，回答需要最新资料的问题。",
   "settings.section.library": "本地资料库",
@@ -459,7 +459,7 @@ const zhMessages: Record<MessageKey, string> = {
 
   "settings.notifications.system": "系统",
   "settings.notifications.inAppAlerts": "应用内提醒",
-  "settings.notifications.macAccess": "macOS 通知权限",
+  "settings.notifications.access": "通知权限",
   "settings.notifications.turnOn": "开启通知",
   "settings.notifications.backgroundCompletion": "后台完成",
   "settings.notifications.backgroundFailures": "后台失败",
@@ -471,8 +471,8 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.notifications.notEnabledYet": "尚未启用",
   "settings.notifications.unavailable": "不可用",
   "settings.notifications.checking": "正在检查……",
-  "settings.notifications.systemDesc": "是否允许 {product} 显示桌面通知，由 macOS 决定。",
-  "settings.notifications.inAppAlertsDesc": "在 macOS 权限开启后，选择哪些后台事件需要通知你。",
+  "settings.notifications.systemDesc": "是否允许 {product} 显示桌面通知，由操作系统决定。",
+  "settings.notifications.inAppAlertsDesc": "在系统允许通知后，选择哪些后台事件需要通知你。",
   "settings.notifications.turnOnAskDesc":
     "当有任务首次转入后台时，{product} 会向 macOS 申请权限。你也可以现在就申请。",
   "settings.notifications.turnOnDeniedDesc":
@@ -480,12 +480,12 @@ const zhMessages: Record<MessageKey, string> = {
   "settings.notifications.backgroundCompletionDesc": "后台会话完成时通知我。",
   "settings.notifications.backgroundFailuresDesc": "后台会话失败时通知我。",
   "settings.notifications.needsInputDesc": "需要你输入才能继续时通知我。",
-  "settings.notifications.grantedDesc": "macOS 已允许 {product} 就后台对话的进展显示桌面通知。",
+  "settings.notifications.grantedDesc": "系统已允许 {product} 就后台对话的进展显示桌面通知。",
   "settings.notifications.deniedDesc":
     "macOS 已禁止 {product} 发送通知。请在系统设置中允许，才能收到后台完成提醒。",
   "settings.notifications.defaultDesc": "{product} 尚未向 macOS 申请桌面通知权限。",
   "settings.notifications.unsupportedDesc": "此系统不支持桌面通知。",
-  "settings.notifications.checkingDesc": "正在检查 macOS 是否允许 {product} 发送通知。",
+  "settings.notifications.checkingDesc": "正在检查系统是否允许 {product} 发送通知。",
 
   "settings.endpoints.customEndpoints": "自定义端点",
   "settings.endpoints.noEndpoints": "还没有自定义端点。",

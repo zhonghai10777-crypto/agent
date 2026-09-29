@@ -35,7 +35,7 @@ export function SettingsNotificationsSection({
         title={t("settings.notifications.system")}
         description={t("settings.notifications.systemDesc", { product: PRODUCT.name })}
       >
-        <SettingsRow title={t("settings.notifications.macAccess")} description={statusDescription}>
+        <SettingsRow title={t("settings.notifications.access")} description={statusDescription}>
           <span className="settings-row__value">{statusLabel}</span>
         </SettingsRow>
         {showRecoveryActions ? (

@@ -305,7 +305,7 @@ const enMessages = {
   "settings.section.generalDesc": "Keep the high-value app and runtime controls close to hand.",
   "settings.section.providersDesc": "Connect providers and manage auth for {workspaceName}.",
   "settings.section.modelsDesc": "Choose the default model and which models appear in pickers.",
-  "settings.section.notificationsDesc": "Manage both macOS notification access and which background events should alert you.",
+  "settings.section.notificationsDesc": "Manage notification access and which background events should alert you.",
   "settings.section.web": "Web access",
   "settings.section.webDesc": "Let the assistant search the web and read pages when your question needs current information.",
   "settings.section.library": "Local library",
@@ -460,7 +460,7 @@ const enMessages = {
 
   "settings.notifications.system": "System",
   "settings.notifications.inAppAlerts": "In-app alerts",
-  "settings.notifications.macAccess": "macOS notification access",
+  "settings.notifications.access": "Notification access",
   "settings.notifications.turnOn": "Turn on notifications",
   "settings.notifications.backgroundCompletion": "Background completion",
   "settings.notifications.backgroundFailures": "Background failures",
@@ -472,9 +472,9 @@ const enMessages = {
   "settings.notifications.notEnabledYet": "Not enabled yet",
   "settings.notifications.unavailable": "Unavailable",
   "settings.notifications.checking": "Checking…",
-  "settings.notifications.systemDesc": "macOS decides whether {product} can show desktop notifications at all.",
+  "settings.notifications.systemDesc": "The operating system decides whether {product} can show desktop notifications at all.",
   "settings.notifications.inAppAlertsDesc":
-    "Choose which background events should try to notify once macOS access is enabled.",
+    "Choose which background events should try to notify once the system allows notifications.",
   "settings.notifications.turnOnAskDesc":
     "{product} asks macOS when active work first moves into the background. You can also ask now.",
   "settings.notifications.turnOnDeniedDesc":
@@ -483,12 +483,12 @@ const enMessages = {
   "settings.notifications.backgroundFailuresDesc": "Notify when a background session fails.",
   "settings.notifications.needsInputDesc": "Notify when input is needed to continue.",
   "settings.notifications.grantedDesc":
-    "macOS will allow {product} to show desktop notifications for background thread updates.",
+    "The system allows {product} to show desktop notifications for background thread updates.",
   "settings.notifications.deniedDesc":
     "macOS notifications are turned off for {product}. Enable them in System Settings to receive background completion alerts.",
   "settings.notifications.defaultDesc": "{product} has not asked macOS for desktop notification access yet.",
   "settings.notifications.unsupportedDesc": "Desktop notifications are unavailable on this system.",
-  "settings.notifications.checkingDesc": "Checking whether macOS notifications are available for {product}.",
+  "settings.notifications.checkingDesc": "Checking whether the system allows notifications from {product}.",
 
   "settings.endpoints.customEndpoints": "Custom endpoints",
   "settings.endpoints.noEndpoints": "No custom endpoints yet.",
