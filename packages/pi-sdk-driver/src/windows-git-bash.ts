@@ -30,12 +30,8 @@ function registryInstallPaths(): readonly string[] {
   const found: string[] = [];
   for (const key of REGISTRY_KEYS) {
     try {
-      const result = spawnSync("reg", ["query", key, "/v", "InstallPath"], {
-        encoding: "utf-8",
-        timeout: 5000,
-        windowsHide: true,
-      });
-      const match = /InstallPath\s+REG_SZ\s+(.+)/i.exec(result.stdout ?? "");
+      const result = spawnSync("reg", ["query", key, "/v", "InstallPath"], { timeout: 5000, windowsHide: true });
+      const match = /InstallPath\s+REG_SZ\s+(.+)/i.exec(decodeConsoleOutput(result.stdout ?? new Uint8Array()));
       if (match?.[1]) {
         found.push(match[1].trim());
       }
@@ -46,14 +42,36 @@ function registryInstallPaths(): readonly string[] {
   return found;
 }
 
-function gitExecutableFromPath(): string | undefined {
+/**
+ * Console tools such as reg.exe write the OEM code page when piped: 936/GBK on
+ * zh-CN Windows, so an install under a Chinese path decoded as UTF-8 never
+ * matched a directory on disk. Strict UTF-8 first, then GB18030 (a superset of
+ * GBK), which covers the machines this app ships to.
+ */
+export function decodeConsoleOutput(bytes: Uint8Array): string {
   try {
-    const result = spawnSync("where", ["git"], { encoding: "utf-8", timeout: 5000, windowsHide: true });
-    const first = (result.stdout ?? "").trim().split(/\r?\n/)[0];
-    return first && existsSync(first) ? first : undefined;
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
-    return undefined;
+    return new TextDecoder("gb18030").decode(bytes);
   }
+}
+
+function gitExecutableFromPath(): string | undefined {
+  return findOnPath("git.exe", process.env.PATH);
+}
+
+/**
+ * The first `fileName` in a PATH value, found without spawning `where` (whose
+ * output has the same code page problem as reg.exe's).
+ */
+export function findOnPath(fileName: string, pathValue: string | undefined): string | undefined {
+  for (const entry of (pathValue ?? "").split(delimiter)) {
+    const dir = entry.trim().replace(/^"(.*)"$/u, "$1");
+    if (dir && existsSync(join(dir, fileName))) {
+      return join(dir, fileName);
+    }
+  }
+  return undefined;
 }
 
 const defaultProbe: GitBashProbe = { registryInstallPaths, gitExecutableFromPath };

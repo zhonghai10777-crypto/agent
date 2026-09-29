@@ -4,7 +4,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import {
+  decodeConsoleOutput,
   findGitBashWindows,
+  findOnPath,
   resetGitBashDetectionCache,
   windowsGitBashAvailable,
   windowsGitBashPath,
@@ -183,4 +185,26 @@ test("no detection hit leaves PATH untouched", { skip: !onWindows }, () => {
     process.env.PATH = savedPath;
     resetGitBashDetectionCache();
   }
+});
+
+test("registry output in the zh-CN console code page still names the install path", () => {
+  // `reg query` piped on zh-CN Windows writes GBK: "D:\软件\Git" below.
+  const gbkLine = Buffer.concat([
+    Buffer.from("    InstallPath    REG_SZ    D:\\", "latin1"),
+    Buffer.from([0xc8, 0xed, 0xbc, 0xfe]),
+    Buffer.from("\\Git\r\n", "latin1"),
+  ]);
+  assert.match(decodeConsoleOutput(gbkLine), /REG_SZ {4}D:\\软件\\Git/u);
+  assert.equal(decodeConsoleOutput(Buffer.from("InstallPath    REG_SZ    C:\\中文\\Git", "utf8")), "InstallPath    REG_SZ    C:\\中文\\Git");
+});
+
+test("git.exe is found on PATH without spawning where, quoted entries included", () => {
+  const base = mkdtempSync(join(tmpdir(), "git-bash-path-中文-"));
+  const gitCmd = join(base, "Git", "cmd");
+  mkdirSync(gitCmd, { recursive: true });
+  writeFileSync(join(gitCmd, "git.exe"), "");
+  const pathValue = [join(base, "missing"), `"${gitCmd}"`, ""].join(delimiter);
+  assert.equal(findOnPath("git.exe", pathValue), join(gitCmd, "git.exe"));
+  assert.equal(findOnPath("git.exe", join(base, "missing")), undefined);
+  assert.equal(findOnPath("git.exe", undefined), undefined);
 });
