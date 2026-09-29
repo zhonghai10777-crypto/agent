@@ -21,7 +21,7 @@ import { VISION_MODEL_ID } from "@pi-gui/session-driver/vision-types";
 import { assertImageAttachments, assertImageMetadata, assertImageSizes, base64ImageSize } from "@pi-gui/session-driver/image-budget";
 import { createImageInspectionRuntimeExtension } from "./image-inspection-runtime";
 import type { VisionConnectionTestInput, VisionConnectionTestResult } from "../src/ipc";
-import { isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
+import { applyWindowsAgentShellEnv, isValidHttpBaseUrl } from "@pi-gui/pi-sdk-driver";
 import { randomUUID } from "node:crypto";
 import type { AgentToolResult, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { lstat, open, readFile, stat } from "node:fs/promises";
@@ -401,6 +401,7 @@ async function getTerminalService(): Promise<TerminalService> {
         getWorkspacePath: (workspaceId: string) => store.getWorkspacePath(workspaceId),
         getIntegratedTerminalShell: () => integratedTerminalShell,
         isPackaged: app.isPackaged,
+        omittedEnvNames: agentShellEnvNames,
       });
       terminalService = service;
       return service;
@@ -1213,6 +1214,11 @@ const augmentedPath = augmentPosixPath();
 if (augmentedPath.changed) {
   process.env.PATH = augmentedPath.path;
 }
+
+// pi's shell tools spawn with this process' environment (see
+// applyWindowsAgentShellEnv); the integrated terminal leaves these names out
+// again so the user's own shell behaves as it does outside the app.
+const agentShellEnvNames = applyWindowsAgentShellEnv();
 
 const legacyUserDataDir = path.join(app.getPath("appData"), "pi");
 app.setName(PRODUCT.name);

@@ -26,6 +26,7 @@ export type { GenerateThreadTitleOptions } from "./thread-title-generator.js";
 export { findGitBashWindows, windowsGitBashPath } from "./windows-git-bash.js";
 export type { GitBashProbe } from "./windows-git-bash.js";
 export {
+  applyWindowsAgentShellEnv,
   FILE_MUTATION_TOOL_NAMES,
   LIGHT_MODE_EXCLUDED_TOOLS,
   SHELL_TOOL_NAMES,

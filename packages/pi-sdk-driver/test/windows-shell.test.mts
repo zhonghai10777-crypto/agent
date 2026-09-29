@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBashToolDefinition, createPowerShellToolDefinition, getPowerShellConfig } from "@earendil-works/pi-coding-agent";
 import { resetGitBashDetectionCache, type GitBashProbe } from "../dist/windows-git-bash.js";
-import { LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "../dist/windows-shell.js";
+import { applyWindowsAgentShellEnv, LIGHT_MODE_EXCLUDED_TOOLS, sessionToolNames } from "../dist/windows-shell.js";
 
 const realPlatform = process.platform;
 const onWindows = realPlatform === "win32";
@@ -123,4 +124,44 @@ test("the PowerShell fallback is discoverable without Git or WSL installed", { s
   assert.ok(/(?:pwsh|powershell)\.exe$/iu.test(config.shell), `unexpected shell: ${config.shell}`);
   assert.equal(config.args.at(-1), "-Command", "the command must be passed via -Command");
   assert.ok(config.args.includes("-NoProfile"), "a user profile must not alter agent command results");
+});
+
+test("Windows agent shells get UTF-8 Python output, keeping any value the user set", () => {
+  const env: NodeJS.ProcessEnv = {};
+  assert.deepEqual(applyWindowsAgentShellEnv(env, "win32"), ["PYTHONIOENCODING"]);
+  assert.equal(env.PYTHONIOENCODING, "utf-8");
+  // A second pass (another driver in the same process) sets nothing new.
+  assert.deepEqual(applyWindowsAgentShellEnv(env, "win32"), []);
+
+  const userEnv: NodeJS.ProcessEnv = { PYTHONIOENCODING: "gbk" };
+  assert.deepEqual(applyWindowsAgentShellEnv(userEnv, "win32"), [], "a user's own choice is not reported as ours");
+  assert.equal(userEnv.PYTHONIOENCODING, "gbk");
+
+  for (const platform of ["darwin", "linux"] as const) {
+    const posixEnv: NodeJS.ProcessEnv = {};
+    assert.deepEqual(applyWindowsAgentShellEnv(posixEnv, platform), []);
+    assert.deepEqual(posixEnv, {}, `${platform} shells already emit UTF-8`);
+  }
+});
+
+const python = ["python3", "python"].find((command) => spawnSync(command, ["--version"]).status === 0);
+
+test("the applied environment turns GBK-encoded Python pipe output into UTF-8", { skip: !python }, () => {
+  // A GB18030 locale stands in for zh-CN Windows' 936 code page off Windows;
+  // on Windows the ANSI code page applies by itself and LC_ALL is ignored.
+  const script = "print('\u4e2d\u6587')";
+  const run = (env: NodeJS.ProcessEnv) =>
+    spawnSync(python!, ["-c", script], { env: { ...env, LC_ALL: "zh_CN.GB18030" } }).stdout.toString("utf8").trim();
+
+  const withoutEnv: NodeJS.ProcessEnv = { ...process.env };
+  delete withoutEnv.PYTHONIOENCODING;
+  const withEnv = { ...withoutEnv };
+  applyWindowsAgentShellEnv(withEnv, "win32");
+
+  assert.equal(run(withEnv), "中文", "pi decodes tool output as UTF-8, so this is what the model reads");
+  const legacyOutput = run(withoutEnv);
+  if (legacyOutput !== "中文") {
+    // Where the locale (or code page) really is GBK, the bug this guards against shows.
+    assert.match(legacyOutput, /\uFFFD/u);
+  }
 });

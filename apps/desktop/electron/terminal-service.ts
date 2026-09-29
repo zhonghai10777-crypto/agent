@@ -10,6 +10,7 @@ import type {
 } from "../src/ipc";
 import { desktopIpc } from "../src/ipc";
 import { appendTerminalReplay } from "../src/terminal-model";
+import { buildTerminalEnv } from "./terminal-env";
 import { windowsGitBashPath } from "@pi-gui/pi-sdk-driver";
 
 type NodePty = typeof import("node-pty");
@@ -69,6 +70,8 @@ export interface TerminalServiceOptions {
   readonly getWorkspacePath: (workspaceId: string) => string | undefined;
   readonly getIntegratedTerminalShell: () => string | undefined;
   readonly isPackaged: boolean;
+  /** Variables this process sets only for the agent's own shell tools. */
+  readonly omittedEnvNames?: readonly string[];
 }
 
 export class TerminalService {
@@ -310,7 +313,7 @@ export class TerminalService {
         cols: session.size.cols,
         rows: session.size.rows,
         cwd: session.cwd,
-        env: buildTerminalEnv(),
+        env: buildTerminalEnv(this.options.omittedEnvNames),
       });
     } catch (error) {
       session.status = "error";
@@ -508,19 +511,6 @@ function defaultShellForPlatform(): string {
     return "/bin/zsh";
   }
   return "/bin/bash";
-}
-
-function buildTerminalEnv(): Record<string, string> {
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
-    if (typeof value === "string") {
-      env[key] = value;
-    }
-  }
-  env.TERM = "xterm-256color";
-  delete env.TERMINFO;
-  delete env.TERMINFO_DIRS;
-  return env;
 }
 
 function ensureNodePtySpawnHelperExecutable(isPackaged: boolean): void {
