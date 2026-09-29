@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getPowerShellConfig, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -123,6 +123,29 @@ test("prefixed reads of BOM-less UTF-8 files decode correctly in memory", { skip
     filtered.stdout.includes("第二行TODO待办"),
     `in-memory processing on UTF-8 content garbled: ${JSON.stringify(filtered.stdout)}`,
   );
+});
+
+test("the preamble makes every text cmdlet default to UTF-8, writes included", () => {
+  // Not just Get-Content: in Windows PowerShell 5.1 `>`/Out-File write UTF-16,
+  // Set-Content ANSI and Export-Csv ASCII unless the default says otherwise.
+  assert.ok(POWERSHELL_ENCODING_PREAMBLE.includes("$PSDefaultParameterValues['*:Encoding']='utf8'"));
+});
+
+test("prefixed writes produce files UTF-8 readers decode", { skip: !onWindows }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "pi-ps-write-encoding-"));
+  const result = runLikePi(
+    [
+      "'重定向中文' > redirect.txt",
+      "Set-Content -Path set.txt -Value '写入中文'",
+      "[pscustomobject]@{ 名称 = '导出中文' } | Export-Csv -Path export.csv -NoTypeInformation",
+    ].join("\n"),
+    dir,
+  );
+  assert.equal(result.status, 0, result.stdout);
+  const read = (name: string) => new TextDecoder("utf-8", { fatal: true }).decode(readFileSync(join(dir, name))).replace(/^\uFEFF/u, "");
+  assert.ok(read("redirect.txt").includes("重定向中文"), "`>` must not write UTF-16");
+  assert.ok(read("set.txt").includes("写入中文"), "Set-Content must not write ANSI");
+  assert.ok(read("export.csv").includes("导出中文"), "Export-Csv must not write ASCII question marks");
 });
 
 test("the preamble does not disturb exit-code reporting", { skip: !onWindows }, () => {
