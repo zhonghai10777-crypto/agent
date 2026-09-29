@@ -20,7 +20,7 @@ export function execGit(args: readonly string[], options: GitExecOptions = {}): 
   return new Promise((resolve) => {
     execFile(
       "git",
-      [...args],
+      gitArgs(args),
       {
         encoding: "utf8",
         windowsHide: true,
@@ -30,4 +30,15 @@ export function execGit(args: readonly string[], options: GitExecOptions = {}): 
       (error, stdout) => resolve({ error, stdout }),
     );
   });
+}
+
+/**
+ * Worktrees live deeper than the checkouts they come from (under
+ * %LOCALAPPDATA%\<app>\worktrees\<repo>\<name>), so a repository that checks
+ * out fine can pass Windows' 260-character path limit in one. Git for Windows
+ * lifts that limit only with core.longpaths, off by default: turn it on for the
+ * app's own calls. No other platform has the limit.
+ */
+export function gitArgs(args: readonly string[], platform: NodeJS.Platform = process.platform): string[] {
+  return platform === "win32" ? ["-c", "core.longpaths=true", ...args] : [...args];
 }
