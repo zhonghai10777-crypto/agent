@@ -1,6 +1,7 @@
 import { open, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorkspaceFileListResult, WorkspaceFilePreview } from "../src/ipc";
+import { decodeTextBuffer } from "./document-extract";
 import { execGit } from "./git-exec";
 import { resolveExistingWorkspacePath } from "./workspace-paths";
 
@@ -127,16 +128,36 @@ export async function readWorkspaceFile(workspacePath: string, filePath: string)
     const buffer = Buffer.alloc(readLength);
     const { bytesRead } = await handle.read(buffer, 0, readLength, 0);
     const previewBytes = buffer.subarray(0, Math.min(bytesRead, MAX_PREVIEW_BYTES));
-    const binary = previewBytes.includes(0);
+    const truncated = bytesRead > MAX_PREVIEW_BYTES || stats.size > MAX_PREVIEW_BYTES;
+    // Decode like documents do: Windows tools write UTF-16 (whose NULs are not
+    // binary) and much Chinese material is GBK.
+    const decoded = decodeTextBuffer(truncated ? withoutCutUtf8Tail(previewBytes) : previewBytes);
+    const binary = !decoded.encoding.startsWith("utf-16") && previewBytes.includes(0);
 
     return {
       path: filePath,
-      content: binary ? "" : new TextDecoder("utf-8", { fatal: false }).decode(previewBytes),
-      truncated: bytesRead > MAX_PREVIEW_BYTES || stats.size > MAX_PREVIEW_BYTES,
+      content: binary ? "" : decoded.text,
+      truncated,
       binary,
       sizeBytes: stats.size,
     };
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Drops a UTF-8 sequence the preview limit cut short: strict decoding would
+ * otherwise reject the whole UTF-8 preview and fall back to GBK.
+ */
+function withoutCutUtf8Tail(bytes: Uint8Array): Uint8Array {
+  for (let back = 1; back <= Math.min(3, bytes.length); back += 1) {
+    const byte = bytes[bytes.length - back]!;
+    if ((byte & 0xc0) === 0x80) {
+      continue; // a continuation byte; keep looking for the sequence's lead
+    }
+    const sequenceLength = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+    return sequenceLength > back ? bytes.subarray(0, bytes.length - back) : bytes;
+  }
+  return bytes;
 }

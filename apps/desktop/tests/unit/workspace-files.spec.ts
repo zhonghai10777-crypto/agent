@@ -30,3 +30,27 @@ test("lists non-ASCII and space-bearing paths in a git workspace exactly as they
     await rm(workspacePath, { recursive: true, force: true });
   }
 });
+
+test("previews Windows-encoded text instead of calling it binary or garbling it", async () => {
+  const workspace = await mkdtemp(join(tmpdir(), "pi-preview-encodings-"));
+  try {
+    const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("PowerShell 输出\r\n", "utf16le")]);
+    await writeFile(join(workspace, "ps-redirect.txt"), utf16);
+    // "中文" in GBK, as legacy Windows tools and much domestic material write it.
+    await writeFile(join(workspace, "legacy.txt"), Buffer.from([0xd6, 0xd0, 0xce, 0xc4]));
+    // A UTF-8 file larger than the preview limit, cut mid-character by it.
+    await writeFile(join(workspace, "large.txt"), `a${"中".repeat(100_000)}`);
+    await writeFile(join(workspace, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x03, 0x00]));
+
+    const redirect = await readWorkspaceFile(workspace, "ps-redirect.txt");
+    expect(redirect.binary).toBe(false);
+    expect(redirect.content).toBe("PowerShell 输出\r\n");
+    expect((await readWorkspaceFile(workspace, "legacy.txt")).content).toBe("中文");
+    const large = await readWorkspaceFile(workspace, "large.txt");
+    expect(large.truncated).toBe(true);
+    expect(large.content).toMatch(/^a中+$/u);
+    expect((await readWorkspaceFile(workspace, "blob.bin")).binary).toBe(true);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
