@@ -10,7 +10,7 @@ import type {
 } from "../src/ipc";
 import { desktopIpc } from "../src/ipc";
 import { appendTerminalReplay } from "../src/terminal-model";
-import { buildTerminalEnv } from "./terminal-env";
+import { buildTerminalEnv, terminalShellLaunch } from "./terminal-env";
 import { windowsGitBashPath } from "@pi-gui/pi-sdk-driver";
 
 type NodePty = typeof import("node-pty");
@@ -319,12 +319,13 @@ export class TerminalService {
   private spawnPty(webContents: WebContents, session: TerminalSession): void {
     try {
       ensureNodePtySpawnHelperExecutable(this.options.isPackaged);
-      session.pty = loadNodePty().spawn(session.shell, [], {
+      const launch = terminalShellLaunch(session.shell);
+      session.pty = loadNodePty().spawn(session.shell, [...launch.args], {
         name: "xterm-256color",
         cols: session.size.cols,
         rows: session.size.rows,
         cwd: session.cwd,
-        env: buildTerminalEnv(this.options.omittedEnvNames),
+        env: { ...buildTerminalEnv(this.options.omittedEnvNames), ...launch.env },
       });
     } catch (error) {
       session.status = "error";
