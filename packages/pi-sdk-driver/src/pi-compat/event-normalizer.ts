@@ -66,8 +66,7 @@ export function createAgentEventNormalizer(): AgentEventNormalizer {
           return {
             type: "tool-updated",
             callId: event.toolCallId,
-            ...(typeof event.partialResult === "string" ? { detail: event.partialResult } : {}),
-            ...(typeof event.partialResult === "number" ? { progress: event.partialResult } : {}),
+            ...detailOrProgress(event.partialResult),
             timestamp,
           };
         case "tool_execution_end":
@@ -107,4 +106,26 @@ export function createAgentEventNormalizer(): AgentEventNormalizer {
       }
     },
   };
+}
+
+/**
+ * A tool's partial result as the timeline shows it. pi's shell tools report
+ * `{ content: [{ type: "text", text }] }` (the output so far), not a string,
+ * so a running command's output used to reach the timeline only when it ended.
+ */
+function detailOrProgress(partialResult: unknown): { detail?: string; progress?: number } {
+  if (typeof partialResult === "string") {
+    return { detail: partialResult };
+  }
+  if (typeof partialResult === "number") {
+    return { progress: partialResult };
+  }
+  const content = (partialResult as { content?: unknown } | null | undefined)?.content;
+  if (!Array.isArray(content)) {
+    return {};
+  }
+  const text = content
+    .flatMap((part) => (part?.type === "text" && typeof part.text === "string" ? [part.text] : []))
+    .join("\n");
+  return text ? { detail: text } : {};
 }

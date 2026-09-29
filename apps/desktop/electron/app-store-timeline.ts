@@ -193,7 +193,14 @@ export function applyTimelineEvent(
       break;
     }
     case "toolUpdated":
-      upsertToolRow(transcript, event.callId, undefined, "running", undefined, event.text ?? progressLabel(event.progress));
+      upsertToolRow(
+        transcript,
+        event.callId,
+        undefined,
+        "running",
+        undefined,
+        event.text !== undefined ? summarizeRunningToolDetail(event.text) : progressLabel(event.progress),
+      );
       break;
     case "toolFinished":
       upsertToolRow(
@@ -487,6 +494,12 @@ function truncate(value: string, limit = 160): string {
 
 function summarizeToolDetail(value: string): string {
   return truncate(value);
+}
+
+/** A running tool's output so far, ending at its latest line: that is the progress. */
+function summarizeRunningToolDetail(value: string, limit = 160): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length <= limit ? normalized : `…${normalized.slice(-(limit - 1))}`;
 }
 
 function inputLabel(input: unknown): string | undefined {

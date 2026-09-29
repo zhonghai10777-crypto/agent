@@ -57,6 +57,11 @@ test("event normalizer maps text and tool lifecycle events", () => {
   assert.deepEqual(normalizer.normalize({ type: "message_update", message: assistant, assistantMessageEvent: { type: "text_delta", delta: "hello" } }, { timestamp }), { type: "assistant-delta", text: "hello", timestamp });
   assert.deepEqual(normalizer.normalize({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "a" } }, { timestamp }), { type: "tool-started", callId: "c1", toolName: "read", input: { path: "a" }, timestamp });
   assert.deepEqual(normalizer.normalize({ type: "tool_execution_update", toolCallId: "c1", toolName: "read", args: {}, partialResult: "half" }, { timestamp }), { type: "tool-updated", callId: "c1", detail: "half", timestamp });
+  // pi's shell tools report the output so far as content blocks, not a string.
+  assert.deepEqual(
+    normalizer.normalize({ type: "tool_execution_update", toolCallId: "c2", toolName: "bash", args: {}, partialResult: { content: [{ type: "text", text: "line 1\nline 2" }], details: {} } }, { timestamp }),
+    { type: "tool-updated", callId: "c2", detail: "line 1\nline 2", timestamp },
+  );
   assert.deepEqual(normalizer.normalize({ type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: "done", isError: false }, { timestamp }), { type: "tool-finished", callId: "c1", success: true, output: "done", timestamp });
 });
 
