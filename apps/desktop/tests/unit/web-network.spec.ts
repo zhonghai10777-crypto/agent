@@ -452,7 +452,7 @@ test("web_fetch refuses this machine and link-local targets before contacting th
 
 test("web_fetch's DNS check counts against the timeout and gives way to Stop", async () => {
   // An unresponsive DNS server: the OS resolver can take tens of seconds to give up.
-  setHostLookupForTests((() => new Promise(() => {})) as unknown as Parameters<typeof setHostLookupForTests>[0]);
+  setHostLookupForTests(() => new Promise(() => {}));
   allowLocalWebFetchTargetsForTests(false);
   try {
     const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: "http://search.test" });

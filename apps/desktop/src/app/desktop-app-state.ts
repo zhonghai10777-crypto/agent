@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import type { AssistantDeltaEvent, DesktopAppState, SelectedTranscriptRecord } from "../desktop-state";
+import type { AssistantDeltaEvent, DesktopAppState, SelectedTranscriptRecord, ToolRowUpdatedEvent } from "../desktop-state";
 
 export function useDesktopAppState() {
   const [snapshot, setSnapshot] = useState<DesktopAppState | null>(null);
@@ -58,11 +58,18 @@ export function useDesktopAppState() {
       setSelectedTranscript((current) => applyAssistantDelta(current, event));
     });
 
+    const unsubscribeToolRow = api.onToolRowUpdated((event) => {
+      if (active) {
+        setSelectedTranscript((current) => applyToolRowUpdate(current, event));
+      }
+    });
+
     return () => {
       active = false;
       unsubscribeState();
       unsubscribeTranscript();
       unsubscribeAssistantDelta();
+      unsubscribeToolRow();
     };
   }, []);
 
@@ -98,6 +105,27 @@ export function applyAssistantDelta(
   }
   const transcript = [...current.transcript];
   transcript[messageIndex] = { ...message, text: `${message.text}${event.delta}` };
+  return { ...current, transcript };
+}
+
+/**
+ * Replaces one tool row, leaving every other row the same object so the
+ * timeline re-renders only that row. A row not there yet arrives with the next
+ * full transcript instead.
+ */
+export function applyToolRowUpdate(
+  current: SelectedTranscriptRecord | null,
+  event: ToolRowUpdatedEvent,
+): SelectedTranscriptRecord | null {
+  if (!current || current.workspaceId !== event.workspaceId || current.sessionId !== event.sessionId) {
+    return current;
+  }
+  const index = current.transcript.findIndex((item) => item.id === event.row.id);
+  if (index < 0) {
+    return current;
+  }
+  const transcript = [...current.transcript];
+  transcript[index] = event.row;
   return { ...current, transcript };
 }
 

@@ -1,3 +1,4 @@
+import type { LookupAddress } from "node:dns";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { PRODUCT } from "../src/product";
@@ -308,18 +309,6 @@ interface FetchInit {
   readonly redirect?: "follow" | "manual";
 }
 
-/**
- * Owns the whole lifecycle of one outbound request: the AbortController that
- * backs the timeout, AND the timer/listener cleanup, live for as long as
- * `consume` is running — not just until the response headers arrive.
- *
- * This matters because the previous shape cleared the timer in a `finally`
- * attached to the `fetch()` call itself, so `REQUEST_TIMEOUT_MS` only ever
- * bounded the time to get a `Response` object; a server that returned headers
- * immediately and then stalled the body forever was never caught by it. Folding
- * the body read into `consume` means the same timer — and the same
- * AbortSignal — governs header AND body, so a stalled body still aborts.
- */
 /** `work`, unless `signal` aborts first; `work` itself keeps running either way. */
 function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
@@ -333,9 +322,17 @@ function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /**
- * One request under one budget: `timeoutMs` and the caller's `signal` cover
- * `preflight` (checks that must pass before the request goes out) as well as
- * the request and `consume`.
+ * Owns the whole lifecycle of one outbound request: the AbortController that
+ * backs the timeout, AND the timer/listener cleanup, live for as long as
+ * `preflight` (checks that must pass before the request goes out), the request
+ * and `consume` are running — not just until the response headers arrive.
+ *
+ * This matters because the previous shape cleared the timer in a `finally`
+ * attached to the `fetch()` call itself, so `REQUEST_TIMEOUT_MS` only ever
+ * bounded the time to get a `Response` object; a server that returned headers
+ * immediately and then stalled the body forever was never caught by it. Folding
+ * the body read into `consume` means the same timer — and the same
+ * AbortSignal — governs header AND body, so a stalled body still aborts.
  */
 async function fetchWithBudget<T>(
   url: string,
@@ -841,7 +838,9 @@ const LOCAL_FETCH_TARGETS = (() => {
 })();
 
 let localFetchTargetsAllowed = false;
-let lookupHost: typeof lookup = lookup;
+type HostResolver = (host: string) => Promise<readonly LookupAddress[]>;
+const resolveHostAddresses: HostResolver = (host) => lookup(host, { all: true, verbatim: true });
+let resolveHost = resolveHostAddresses;
 
 /** Test-only: the network tests serve their pages from 127.0.0.1. */
 export function allowLocalWebFetchTargetsForTests(allowed: boolean): void {
@@ -849,8 +848,8 @@ export function allowLocalWebFetchTargetsForTests(allowed: boolean): void {
 }
 
 /** Test-only: stand in for DNS (pass nothing to restore it). */
-export function setHostLookupForTests(resolve?: typeof lookup): void {
-  lookupHost = resolve ?? lookup;
+export function setHostLookupForTests(resolve?: HostResolver): void {
+  resolveHost = resolve ?? resolveHostAddresses;
 }
 
 /**
@@ -871,7 +870,7 @@ async function assertNotLocalFetchTarget(url: string, signal: AbortSignal): Prom
   // server must not hold a Stop, or the timeout, for its own tens of seconds.
   const addresses = family
     ? [{ address: host, family }]
-    : await untilAborted(lookupHost(host, { all: true, verbatim: true }).catch(() => undefined), signal);
+    : await untilAborted(resolveHost(host).catch(() => undefined), signal);
   if (addresses?.some((entry) => LOCAL_FETCH_TARGETS.check(entry.address, entry.family === 6 ? "ipv6" : "ipv4"))) {
     throw new Error("That address points at this computer or a link-local network, which web_fetch does not access.");
   }

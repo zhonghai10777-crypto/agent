@@ -275,7 +275,7 @@ export async function steerQueuedComposerMessage(
 
   if (optimisticSteerMessage) {
     appendQueuedUserMessage(store.sessionState.transcriptCache, sessionRef, optimisticSteerMessage);
-    store.publishSelectedTranscriptFor(sessionRef);
+    store.publishSelectedTranscript(sessionRef);
   }
 
   try {
@@ -404,7 +404,7 @@ export async function submitComposerToSession(
         : undefined;
       if (optimisticSteerMessage) {
         appendQueuedUserMessage(store.sessionState.transcriptCache, sessionRef, optimisticSteerMessage);
-        store.publishSelectedTranscriptFor(sessionRef);
+        store.publishSelectedTranscript(sessionRef);
       }
       await store.driver.replaceQueuedMessages(sessionRef, nextSessionQueuedMessages);
       return store.refreshState({
@@ -535,7 +535,7 @@ export async function sendMessageToSession(
     toTranscriptAttachments(attachments),
     options.clientMessageId,
   );
-  store.publishSelectedTranscriptFor(sessionRef);
+  store.publishSelectedTranscript(sessionRef);
   clearActiveAssistantMessage(store.sessionState.activeAssistantMessageBySession, sessionRef);
   store.sessionState.sessionErrorsBySession.delete(key);
   store.sessionState.composerDraftsBySession.delete(key);
@@ -560,7 +560,7 @@ export async function sendMessageToSession(
         key,
         transcript.filter((message) => message.id !== optimisticMessageId),
       );
-      store.publishSelectedTranscriptFor(sessionRef);
+      store.publishSelectedTranscript(sessionRef);
     }
     throw error;
   }
@@ -604,7 +604,7 @@ function removeOptimisticQueuedUserMessage(
     key,
     transcript.filter((message) => message.id !== messageId),
   );
-  store.publishSelectedTranscriptFor(sessionRef);
+  store.publishSelectedTranscript(sessionRef);
 }
 
 /** Eagerly merge config fields so finishComposerCommand sees them before the async sessionUpdated event arrives. */
@@ -747,6 +747,6 @@ function finishComposerCommand(
   };
   store.schedulePersistUiState();
   const snapshot = store.emit();
-  store.publishSelectedTranscriptFor(sessionRef);
+  store.publishSelectedTranscript(sessionRef);
   return snapshot;
 }

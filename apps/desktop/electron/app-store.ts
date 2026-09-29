@@ -46,6 +46,7 @@ import {
   type AssistantDeltaEvent,
   type ComposerAttachment,
   type ComposerDraftSyncSource,
+  type ToolRowUpdatedEvent,
   type ExtensionCommandCompatibilityRecord,
   type ModelSettingsScopeMode,
   createEmptyDesktopAppState,
@@ -126,13 +127,15 @@ import * as orchestration from "./app-store-orchestration";
 import { isSessionActivelyViewed, isSessionVisibleInWindow } from "./session-visibility";
 
 type StateListener = (state: DesktopAppState) => void;
-/** Notified when the selected transcript may have changed; subscribers build it for their own view. */
 /**
- * Without a session: republish whatever transcript you show (the selection
+ * Notified when a selected transcript may have changed; subscribers build it for
+ * their own view. Without a session: republish whatever you show (the selection
  * moved). With one: that session's transcript changed, republish if you show it.
  */
 type SelectedTranscriptListener = (changedSession?: SessionRef) => void;
-type AssistantDeltaListener = (event: AssistantDeltaEvent) => void;
+/** Small in-place changes to one session's transcript, pushed instead of the whole of it. */
+type TranscriptPatch = AssistantDeltaEvent | ToolRowUpdatedEvent;
+type TranscriptPatchListener = (patch: TranscriptPatch) => void;
 type SessionEventListener = (event: SessionDriverEvent, state: DesktopAppState) => void | Promise<void>;
 type ExtensionUiDialogRequest = Extract<SessionDriverEvent, { type: "hostUiRequest" }>["request"] & {
   readonly requestId: string;
@@ -197,7 +200,7 @@ export class DesktopAppStore implements AppStoreInternals {
   /** Serialize full-state refreshes so stale async builders cannot publish over newer state. */
   private refreshStateQueue: Promise<void> = Promise.resolve();
   private readonly selectedTranscriptListeners = new Set<SelectedTranscriptListener>();
-  private readonly assistantDeltaListeners = new Set<AssistantDeltaListener>();
+  private readonly transcriptPatchListeners = new Set<TranscriptPatchListener>();
   private readonly pendingAssistantDeltas = new Map<
     string,
     {
@@ -463,10 +466,10 @@ export class DesktopAppStore implements AppStoreInternals {
     };
   }
 
-  subscribeToAssistantDeltas(listener: AssistantDeltaListener): () => void {
-    this.assistantDeltaListeners.add(listener);
+  subscribeToTranscriptPatches(listener: TranscriptPatchListener): () => void {
+    this.transcriptPatchListeners.add(listener);
     return () => {
-      this.assistantDeltaListeners.delete(listener);
+      this.transcriptPatchListeners.delete(listener);
     };
   }
 
@@ -1833,7 +1836,7 @@ export class DesktopAppStore implements AppStoreInternals {
     this.sessionState.loadedTranscriptKeys.add(key);
     this.sessionState.transcriptCache.set(key, transcript);
     await this.recordSelectedTranscriptFileStat(sessionRef);
-    this.publishSelectedTranscriptFor(sessionRef);
+    this.publishSelectedTranscript(sessionRef);
   }
 
   /* ── CLI ↔ GUI reconcile (startup / workspace switch / window focus) ─────── */
@@ -2484,6 +2487,10 @@ export class DesktopAppStore implements AppStoreInternals {
     if (subscriptionKey !== key) {
       this.migrateSessionSubscriptionKey(subscriptionKey, key);
     }
+    if (event.type === "toolUpdated") {
+      await this.applyToolOutputUpdate(event);
+      return;
+    }
     // Any transient failure while applying the event (a rejected refresh,
     // persistUiState, or listener) must never skip the final emit — otherwise the
     // UI is left stuck showing "running" forever. Apply-then-emit is wrapped so
@@ -2580,18 +2587,6 @@ export class DesktopAppStore implements AppStoreInternals {
           this.pendingRuntimeCommandsBySession.delete(key);
           this.reportedCompatibilityIssuesBySession.delete(key);
           break;
-        case "toolUpdated":
-          // Streamed output only changes that tool row's detail in the
-          // transcript; the session record (status, preview, unseen flag) cannot
-          // change, and pi reports a running command every 100ms. So skip
-          // recomputing and republishing the whole app state, which copied the
-          // transcript and sent full state plus every window's transcript per
-          // report, and republish only to the windows showing this session.
-          this.flushAssistantDelta(key);
-          applyTimelineEvent(this.sessionState.transcriptCache, event, this.sessionState);
-          this.publishSelectedTranscriptFor(event.sessionRef);
-          await this.emitSessionEvent(event, this.state);
-          return;
         case "toolStarted":
         case "toolFinished":
           break;
@@ -2613,7 +2608,7 @@ export class DesktopAppStore implements AppStoreInternals {
         this.sessionState.sessionErrorsBySession.delete(key);
       }
 
-      applyTimelineEvent(this.sessionState.transcriptCache, event, this.sessionState);
+      applyTimelineEvent(this.sessionState, event);
       this.state = applySessionEventState(
         this.state,
         event,
@@ -2650,11 +2645,11 @@ export class DesktopAppStore implements AppStoreInternals {
     } catch (error) {
       console.error(`[app-store] failed to apply session event ${event.type} for ${key}`, error);
     } finally {
-      if (event.type !== "assistantDelta" && event.type !== "toolUpdated") {
+      if (event.type !== "assistantDelta") {
         const eventSessionKey = sessionKey(event.sessionRef);
         this.flushAssistantDelta(eventSessionKey);
         const snapshot = this.emit();
-        this.publishSelectedTranscriptFor(event.sessionRef);
+        this.publishSelectedTranscript(event.sessionRef);
         await this.emitSessionEvent(event, snapshot);
         if (event.type === "sessionClosed") {
           this.assistantDeltaSequences.delete(eventSessionKey);
@@ -2704,7 +2699,7 @@ export class DesktopAppStore implements AppStoreInternals {
       delta: pending.delta,
       createdAt: pending.createdAt,
     };
-    for (const listener of this.assistantDeltaListeners) {
+    for (const listener of this.transcriptPatchListeners) {
       listener(event);
     }
   }
@@ -3081,7 +3076,7 @@ export class DesktopAppStore implements AppStoreInternals {
       .then((info) => {
         this.sessionSchemaInfoCache.set(key, info);
         if (info.writtenByNewerRuntime) {
-          this.publishSelectedTranscriptFor(sessionRef);
+          this.publishSelectedTranscript(sessionRef);
         }
       })
       .catch((error) => {
@@ -3109,17 +3104,35 @@ export class DesktopAppStore implements AppStoreInternals {
     return snapshot;
   }
 
-  publishSelectedTranscript(): void {
+  publishSelectedTranscript(changedSession?: SessionRef): void {
     for (const listener of this.selectedTranscriptListeners) {
-      listener();
+      listener(changedSession);
     }
   }
 
-  /** `sessionRef`'s transcript changed: the windows showing it republish. */
-  publishSelectedTranscriptFor(sessionRef: SessionRef): void {
-    for (const listener of this.selectedTranscriptListeners) {
-      listener(sessionRef);
+  /**
+   * Streamed tool output changes only that tool's row: the session record
+   * (status, preview, unseen flag) cannot change, and pi reports a running
+   * command every 100ms. So skip the state recompute and publish, and push just
+   * the row to the windows showing the session.
+   */
+  private async applyToolOutputUpdate(event: Extract<SessionDriverEvent, { type: "toolUpdated" }>): Promise<void> {
+    const key = sessionKey(event.sessionRef);
+    this.flushAssistantDelta(key);
+    applyTimelineEvent(this.sessionState, event);
+    const row = this.sessionState.transcriptCache.get(key)?.find((item) => item.kind === "tool" && item.callId === event.callId);
+    if (row?.kind === "tool") {
+      const patch: ToolRowUpdatedEvent = {
+        type: "tool-row-updated",
+        workspaceId: event.sessionRef.workspaceId,
+        sessionId: event.sessionRef.sessionId,
+        row,
+      };
+      for (const listener of this.transcriptPatchListeners) {
+        listener(patch);
+      }
     }
+    await this.emitSessionEvent(event, this.state);
   }
 
   handleWindowActivation(): void {
@@ -3236,7 +3249,7 @@ export class DesktopAppStore implements AppStoreInternals {
     }
     this.schedulePersistUiState();
     this.emit();
-    this.publishSelectedTranscriptFor(sessionRef);
+    this.publishSelectedTranscript(sessionRef);
   }
 
   private startSelectedSessionHydration(

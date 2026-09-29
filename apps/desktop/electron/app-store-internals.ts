@@ -94,8 +94,7 @@ export interface AppStoreInternals {
   setQueuedComposerEditState(sessionRef: SessionRef, editState: QueuedComposerEditState | undefined): void;
   getQueuedComposerEditState(sessionRef: SessionRef): QueuedComposerEditState | undefined;
   reloadTranscriptFromDriver(sessionRef: SessionRef): Promise<void>;
-  publishSelectedTranscript(): void;
-  publishSelectedTranscriptFor(sessionRef: SessionRef): void;
+  publishSelectedTranscript(changedSession?: SessionRef): void;
   buildCreateSessionOptions(workspaceId: string): Promise<CreateSessionOptions | undefined>;
   assertCapability(capability: import("./runtime-mode").RuntimeCapability): void;
 }

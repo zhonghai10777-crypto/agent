@@ -26,6 +26,7 @@ export interface RunMetrics {
 }
 
 interface TimelineRuntimeState {
+  readonly transcriptCache: Map<string, TranscriptMessage[]>;
   readonly runMetricsBySession: Map<string, RunMetrics>;
   readonly runningSinceBySession: Map<string, string>;
   readonly activeAssistantMessageBySession: Map<string, string>;
@@ -138,14 +139,11 @@ export function clearActiveAssistantMessage(
   activeAssistantMessageBySession.delete(sessionKey(sessionRef));
 }
 
-export function applyTimelineEvent(
-  transcriptCache: Map<string, TranscriptMessage[]>,
-  event: SessionDriverEvent,
-  state: TimelineRuntimeState,
-): void {
+export function applyTimelineEvent(state: TimelineRuntimeState, event: SessionDriverEvent): void {
   if (event.type === "assistantDelta") {
     return;
   }
+  const { transcriptCache } = state;
 
   const key = sessionKey(event.sessionRef);
   const transcript = [...(transcriptCache.get(key) ?? [])];
@@ -199,7 +197,8 @@ export function applyTimelineEvent(
         undefined,
         "running",
         undefined,
-        event.text !== undefined ? summarizeRunningToolDetail(event.text) : progressLabel(event.progress),
+        // Running output ends at its latest line: that is the progress.
+        event.text !== undefined ? truncate(event.text, 160, "tail") : progressLabel(event.progress),
       );
       break;
     case "toolFinished":
@@ -484,7 +483,12 @@ function relativeDetail(timestamp: string): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function truncate(value: string, limit = 160): string {
+function truncate(value: string, limit = 160, keep: "head" | "tail" = "head"): string {
+  if (keep === "tail") {
+    // Only a bounded end is normalized: running output reports can be tens of KB.
+    const normalized = value.slice(-limit * 16).replace(/\s+/g, " ").trim();
+    return normalized.length <= limit ? normalized : `…${normalized.slice(1 - limit)}`;
+  }
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= limit) {
     return normalized;
@@ -494,12 +498,6 @@ function truncate(value: string, limit = 160): string {
 
 function summarizeToolDetail(value: string): string {
   return truncate(value);
-}
-
-/** A running tool's output so far, ending at its latest line: that is the progress. */
-function summarizeRunningToolDetail(value: string, limit = 160): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  return normalized.length <= limit ? normalized : `…${normalized.slice(-(limit - 1))}`;
 }
 
 function inputLabel(input: unknown): string | undefined {

@@ -38,6 +38,7 @@ import type { RuntimeSettingsSnapshot } from "@pi-gui/session-driver/runtime-typ
 import type {
   AppView,
   AssistantDeltaEvent,
+  ToolRowUpdatedEvent,
   ComposerAttachment,
   CreateSessionInput,
   CreateWorktreeInput,
@@ -108,6 +109,8 @@ contextBridge.exposeInMainWorld("piApp", {
   },
   onAssistantDelta: (listener: (event: AssistantDeltaEvent) => void) =>
     subscribeIpc(desktopIpc.assistantDelta, listener),
+  onToolRowUpdated: (listener: (event: ToolRowUpdatedEvent) => void) =>
+    subscribeIpc(desktopIpc.toolRowUpdated, listener),
   onCommand: (listener: (command: PiDesktopCommand) => void) => {
     const handle = (_event: Electron.IpcRendererEvent, command: PiDesktopCommand) => {
       listener(command);

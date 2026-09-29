@@ -13,6 +13,7 @@ import type {
   AssistantDeltaEvent,
   ComposerAttachment,
   CreateSessionInput,
+  ToolRowUpdatedEvent,
   CreateWorktreeInput,
   DesktopAppState,
   ForkThreadInput,
@@ -163,6 +164,7 @@ export const desktopIpc = {
   selectedTranscriptRequest: "pi-gui:selected-transcript-request",
   selectedTranscriptChanged: "pi-gui:selected-transcript-changed",
   assistantDelta: "pi-gui:assistant-delta",
+  toolRowUpdated: "pi-gui:tool-row-updated",
   appCommand: "pi-gui:app-command",
   workspacePicked: "pi-gui:workspace-picked",
   addWorkspacePath: "pi-gui:add-workspace-path",
@@ -340,6 +342,7 @@ export function getShortcutLabel(key: string, options?: ShortcutLabelOptions): s
 export type PiDesktopStateListener = (state: DesktopAppState) => void;
 export type PiDesktopSelectedTranscriptListener = (payload: SelectedTranscriptRecord | null) => void;
 export type PiDesktopAssistantDeltaListener = (event: AssistantDeltaEvent) => void;
+export type PiDesktopToolRowListener = (event: ToolRowUpdatedEvent) => void;
 export type PiDesktopCommand = (typeof desktopCommands)[keyof typeof desktopCommands];
 
 export type ChangedFileStatus = "added" | "copied" | "deleted" | "modified" | "renamed" | "untracked";
@@ -473,6 +476,7 @@ export interface PiDesktopApi {
   getSelectedTranscript(): Promise<SelectedTranscriptRecord | null>;
   onSelectedTranscriptChanged(listener: PiDesktopSelectedTranscriptListener): () => void;
   onAssistantDelta(listener: PiDesktopAssistantDeltaListener): () => void;
+  onToolRowUpdated(listener: PiDesktopToolRowListener): () => void;
   onCommand(listener: (command: PiDesktopCommand) => void): () => void;
   onWorkspacePicked(listener: (workspaceId: string) => void): () => void;
   getPathForFile(file: File): string;

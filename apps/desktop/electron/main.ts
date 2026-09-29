@@ -54,6 +54,7 @@ import type {
   AppView,
   AssistantDeltaEvent,
   DesktopAppState,
+  ToolRowUpdatedEvent,
   Locale,
   RuntimeMode,
   ThemeMode,
@@ -158,7 +159,7 @@ const appWindows = new Set<BrowserWindow>();
 const windowViews = new Map<number, WindowViewState>();
 const stopPublishingStateByWebContentsId = new Map<number, () => void>();
 const stopPublishingSelectedTranscriptByWebContentsId = new Map<number, () => void>();
-const stopPublishingAssistantDeltaByWebContentsId = new Map<number, () => void>();
+const stopPublishingTranscriptPatchesByWebContentsId = new Map<number, () => void>();
 const stopTrackingWindowActivationByWebContentsId = new Map<number, () => void>();
 let stopNotifications: (() => void) | undefined;
 let stopUpdateChecker: (() => void) | undefined;
@@ -672,15 +673,17 @@ async function publishSelectedTranscriptToWindow(window: BrowserWindow): Promise
   window.webContents.send(desktopIpc.selectedTranscriptChanged, store.selectedTranscriptRecord(prepared));
 }
 
-function publishAssistantDeltaToWindow(window: BrowserWindow, event: AssistantDeltaEvent): void {
-  if (!canPublishToWindow(window)) {
-    return;
-  }
+function windowShowsSession(window: BrowserWindow, session: { readonly workspaceId: string; readonly sessionId: string }): boolean {
   const view = viewForWebContents(window.webContents.id);
-  if (view.selectedWorkspaceId !== event.workspaceId || view.selectedSessionId !== event.sessionId) {
+  return view.selectedWorkspaceId === session.workspaceId && view.selectedSessionId === session.sessionId;
+}
+
+/** Streamed text and tool output, patched into the transcript the window shows. */
+function publishTranscriptPatchToWindow(window: BrowserWindow, patch: AssistantDeltaEvent | ToolRowUpdatedEvent): void {
+  if (!canPublishToWindow(window) || !windowShowsSession(window, patch)) {
     return;
   }
-  window.webContents.send(desktopIpc.assistantDelta, event);
+  window.webContents.send(patch.type === "assistant-delta" ? desktopIpc.assistantDelta : desktopIpc.toolRowUpdated, patch);
 }
 
 function setActiveWindow(window: BrowserWindow): void {
@@ -968,30 +971,30 @@ function attachStatePublisher(window: BrowserWindow): void {
   const startPublishing = () => {
     stopPublishingStateByWebContentsId.get(webContentsId)?.();
     stopPublishingSelectedTranscriptByWebContentsId.get(webContentsId)?.();
-    stopPublishingAssistantDeltaByWebContentsId.get(webContentsId)?.();
+    stopPublishingTranscriptPatchesByWebContentsId.get(webContentsId)?.();
     const stopPublishingState = store.subscribe((state) => {
       publishStateToWindow(window, state);
       requestSelectedTranscriptPublish(window);
     });
     const stopPublishingSelectedTranscript = store.subscribeToSelectedTranscript((changedSession) => {
-      if (!changedSession || sameSessionRef(changedSession, store.selectedSessionRefForView(viewForWebContents(webContentsId)))) {
+      if (!changedSession || windowShowsSession(window, changedSession)) {
         requestSelectedTranscriptPublish(window);
       }
     });
-    const stopPublishingAssistantDelta = store.subscribeToAssistantDeltas((event) => {
-      publishAssistantDeltaToWindow(window, event);
+    const stopPublishingTranscriptPatches = store.subscribeToTranscriptPatches((patch) => {
+      publishTranscriptPatchToWindow(window, patch);
     });
     stopPublishingStateByWebContentsId.set(webContentsId, stopPublishingState);
     stopPublishingSelectedTranscriptByWebContentsId.set(webContentsId, stopPublishingSelectedTranscript);
-    stopPublishingAssistantDeltaByWebContentsId.set(webContentsId, stopPublishingAssistantDelta);
+    stopPublishingTranscriptPatchesByWebContentsId.set(webContentsId, stopPublishingTranscriptPatches);
   };
   const stopPublishing = () => {
     stopPublishingStateByWebContentsId.get(webContentsId)?.();
     stopPublishingStateByWebContentsId.delete(webContentsId);
     stopPublishingSelectedTranscriptByWebContentsId.get(webContentsId)?.();
     stopPublishingSelectedTranscriptByWebContentsId.delete(webContentsId);
-    stopPublishingAssistantDeltaByWebContentsId.get(webContentsId)?.();
-    stopPublishingAssistantDeltaByWebContentsId.delete(webContentsId);
+    stopPublishingTranscriptPatchesByWebContentsId.get(webContentsId)?.();
+    stopPublishingTranscriptPatchesByWebContentsId.delete(webContentsId);
   };
 
   startPublishing();

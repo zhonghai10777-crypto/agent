@@ -10,7 +10,7 @@ import type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
 export type { SessionSchemaInfo } from "@pi-gui/pi-sdk-driver";
 export type SessionStatus = "idle" | "running" | "failed";
 export type { SessionRole, TimelineToolCall, TranscriptMessage } from "./timeline-types";
-import type { TranscriptMessage } from "./timeline-types";
+import type { TimelineToolCall, TranscriptMessage } from "./timeline-types";
 
 export type AppView = "threads" | "new-thread" | "skills" | "extensions" | "settings";
 export type WorkspaceKind = "primary" | "worktree" | "personal";
@@ -234,6 +234,14 @@ export interface AssistantDeltaEvent {
   readonly sequence: number;
   readonly delta: string;
   readonly createdAt: string;
+}
+
+/** A running tool's row as its output streams in; replaces the row with the same id. */
+export interface ToolRowUpdatedEvent {
+  readonly type: "tool-row-updated";
+  readonly workspaceId: string;
+  readonly sessionId: string;
+  readonly row: TimelineToolCall;
 }
 
 export interface WorktreeRecord {
