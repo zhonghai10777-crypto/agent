@@ -973,8 +973,10 @@ function attachStatePublisher(window: BrowserWindow): void {
       publishStateToWindow(window, state);
       requestSelectedTranscriptPublish(window);
     });
-    const stopPublishingSelectedTranscript = store.subscribeToSelectedTranscript(() => {
-      requestSelectedTranscriptPublish(window);
+    const stopPublishingSelectedTranscript = store.subscribeToSelectedTranscript((changedSession) => {
+      if (!changedSession || sameSessionRef(changedSession, store.selectedSessionRefForView(viewForWebContents(webContentsId)))) {
+        requestSelectedTranscriptPublish(window);
+      }
     });
     const stopPublishingAssistantDelta = store.subscribeToAssistantDeltas((event) => {
       publishAssistantDeltaToWindow(window, event);

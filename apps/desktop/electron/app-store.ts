@@ -127,7 +127,11 @@ import { isSessionActivelyViewed, isSessionVisibleInWindow } from "./session-vis
 
 type StateListener = (state: DesktopAppState) => void;
 /** Notified when the selected transcript may have changed; subscribers build it for their own view. */
-type SelectedTranscriptListener = () => void;
+/**
+ * Without a session: republish whatever transcript you show (the selection
+ * moved). With one: that session's transcript changed, republish if you show it.
+ */
+type SelectedTranscriptListener = (changedSession?: SessionRef) => void;
 type AssistantDeltaListener = (event: AssistantDeltaEvent) => void;
 type SessionEventListener = (event: SessionDriverEvent, state: DesktopAppState) => void | Promise<void>;
 type ExtensionUiDialogRequest = Extract<SessionDriverEvent, { type: "hostUiRequest" }>["request"] & {
@@ -2576,8 +2580,19 @@ export class DesktopAppStore implements AppStoreInternals {
           this.pendingRuntimeCommandsBySession.delete(key);
           this.reportedCompatibilityIssuesBySession.delete(key);
           break;
-        case "toolStarted":
         case "toolUpdated":
+          // Streamed output only changes that tool row's detail in the
+          // transcript; the session record (status, preview, unseen flag) cannot
+          // change, and pi reports a running command every 100ms. So skip
+          // recomputing and republishing the whole app state, which copied the
+          // transcript and sent full state plus every window's transcript per
+          // report, and republish only to the windows showing this session.
+          this.flushAssistantDelta(key);
+          applyTimelineEvent(this.sessionState.transcriptCache, event, this.sessionState);
+          this.publishSelectedTranscriptFor(event.sessionRef);
+          await this.emitSessionEvent(event, this.state);
+          return;
+        case "toolStarted":
         case "toolFinished":
           break;
         case "hostUiRequest":
@@ -2598,13 +2613,7 @@ export class DesktopAppStore implements AppStoreInternals {
         this.sessionState.sessionErrorsBySession.delete(key);
       }
 
-      applyTimelineEvent(this.sessionState.transcriptCache, event, {
-        runMetricsBySession: this.sessionState.runMetricsBySession,
-        runningSinceBySession: this.sessionState.runningSinceBySession,
-        activeAssistantMessageBySession: this.sessionState.activeAssistantMessageBySession,
-        activeWorkingActivityBySession: this.sessionState.activeWorkingActivityBySession,
-        activeCompactionActivityBySession: this.sessionState.activeCompactionActivityBySession,
-      });
+      applyTimelineEvent(this.sessionState.transcriptCache, event, this.sessionState);
       this.state = applySessionEventState(
         this.state,
         event,
@@ -2641,7 +2650,7 @@ export class DesktopAppStore implements AppStoreInternals {
     } catch (error) {
       console.error(`[app-store] failed to apply session event ${event.type} for ${key}`, error);
     } finally {
-      if (event.type !== "assistantDelta") {
+      if (event.type !== "assistantDelta" && event.type !== "toolUpdated") {
         const eventSessionKey = sessionKey(event.sessionRef);
         this.flushAssistantDelta(eventSessionKey);
         const snapshot = this.emit();
@@ -3106,11 +3115,11 @@ export class DesktopAppStore implements AppStoreInternals {
     }
   }
 
+  /** `sessionRef`'s transcript changed: the windows showing it republish. */
   publishSelectedTranscriptFor(sessionRef: SessionRef): void {
-    if (!this.isSelectedSession(sessionRef)) {
-      return;
+    for (const listener of this.selectedTranscriptListeners) {
+      listener(sessionRef);
     }
-    this.publishSelectedTranscript();
   }
 
   handleWindowActivation(): void {
