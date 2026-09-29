@@ -178,7 +178,11 @@ test("scopes worktree creation and startup collection to the active profile", as
       await profileACompatibilityHarness.close();
     }
 
-    await rm(join(profileA, "catalogs.json"), { force: true });
+    // Lose the whole catalog: a missing primary is otherwise restored from its
+    // backup, which would still reference profile A's worktree.
+    for (const catalogFile of ["catalogs.json", "catalogs.json.bak"]) {
+      await rm(join(profileA, catalogFile), { force: true });
+    }
     const profileAReconcileHarness = await launchDesktop(profileA, {
       initialWorkspaces: [],
       testMode: "background",
