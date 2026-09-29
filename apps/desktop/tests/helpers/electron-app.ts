@@ -1,8 +1,8 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, writeFile } from "node:fs/promises";
+import { copyFile, cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, delimiter, dirname, extname, join, resolve } from "node:path";
+import { basename, delimiter, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
 import { expect, type Page } from "@playwright/test";
@@ -975,6 +975,30 @@ export async function initGitRepo(workspacePath: string): Promise<void> {
 export async function commitAllInGitRepo(workspacePath: string, message: string): Promise<void> {
   await execFileAsync("git", ["add", "-A"], { cwd: workspacePath });
   await execFileAsync("git", ["commit", "-m", message], { cwd: workspacePath });
+}
+
+/** A linked worktree on a new branch at HEAD, made outside the app. */
+export async function addLinkedWorktree(repoPath: string, worktreePath: string, branchName: string): Promise<void> {
+  await mkdir(dirname(worktreePath), { recursive: true });
+  await execFileAsync("git", ["-C", repoPath, "worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
+}
+
+export async function pathExists(path: string): Promise<boolean> {
+  return stat(path).then(
+    () => true,
+    () => false,
+  );
+}
+
+/** Strictly inside `root`; paths must be canonical alike. */
+export function isPathWithin(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate);
+  return (
+    relativePath !== "" &&
+    relativePath !== ".." &&
+    !relativePath.startsWith(`..${sep}`) &&
+    !isAbsolute(relativePath)
+  );
 }
 
 export async function writeTinyPng(filePath: string): Promise<void> {

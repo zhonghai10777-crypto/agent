@@ -61,7 +61,6 @@ import type {
 import {
   desktopIpc,
   getDesktopCommandFromShortcut,
-  supportsWindowTransparency,
   type ChangedFilesResult,
   type CustomProviderConfig,
   type CustomProviderProbeInput,
@@ -473,14 +472,14 @@ function openExternalWebUrl(url: string): boolean {
 
 function createWindow(): BrowserWindow {
   const backgroundTestMode = windowTestMode === "background";
-  const enableTransparency = supportsWindowTransparency(process.platform) && Boolean(store?.state.enableTransparency);
+  const enableTransparency = store ? store.state.enableTransparency : false;
   const window = new BrowserWindow({
     width: 1480,
     height: 980,
     minWidth: 560,
     minHeight: 600,
     transparent: enableTransparency,
-    vibrancy: process.platform === "darwin" && enableTransparency ? "under-window" : undefined,
+    vibrancy: enableTransparency ? "under-window" : undefined,
     ...windowChromeOptions(process.platform, themeManager.getResolvedTheme()),
     backgroundColor: enableTransparency ? "#00000000" : "#f3f4f8",
     show: false,

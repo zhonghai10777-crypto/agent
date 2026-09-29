@@ -1,19 +1,17 @@
-import { execFile } from "node:child_process";
-import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
-import { promisify } from "node:util";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { expect, test } from "@playwright/test";
 import {
+  addLinkedWorktree,
   addWorkspaceViaIpc,
   getDesktopState,
+  isPathWithin,
   launchDesktop,
   makeGitWorkspace,
   makeUserDataDir,
+  pathExists,
   waitForWorkspaceByPath,
 } from "../helpers/electron-app";
-
-const execFileAsync = promisify(execFile);
-const exists = (path: string) => stat(path).then(() => true, () => false);
 
 // On Windows userData defaults to %APPDATA%, the roaming profile that domain
 // accounts sync at every logon and logoff. Worktrees (whole checkouts) and the
@@ -31,8 +29,7 @@ test("keeps worktrees and the library index out of the Windows roaming profile",
   await mkdir(join(userDataDir, "library-index"), { recursive: true });
   await writeFile(join(userDataDir, "library-index", "index.json"), "{}");
   const legacyOrphan = join(userDataDir, "worktrees", "repo", "legacy-orphan");
-  await mkdir(dirname(legacyOrphan), { recursive: true });
-  await execFileAsync("git", ["-C", workspacePath, "worktree", "add", "-b", "pi/legacy-orphan", legacyOrphan, "HEAD"]);
+  await addLinkedWorktree(workspacePath, legacyOrphan, "pi/legacy-orphan");
 
   // No workspaces at startup, so the orphan's repository is unknown and the GC may collect it.
   const harness = await launchDesktop(userDataDir, {
@@ -43,9 +40,9 @@ test("keeps worktrees and the library index out of the Windows roaming profile",
   try {
     const window = await harness.firstWindow();
     // Worktrees made before the move stay usable, and orphans there are still collected.
-    await expect.poll(() => exists(legacyOrphan)).toBe(false);
+    await expect.poll(() => pathExists(legacyOrphan)).toBe(false);
     expect(await readFile(join(localDataDir, "library-index", "index.json"), "utf8")).toBe("{}");
-    expect(await exists(join(userDataDir, "library-index"))).toBe(false);
+    expect(await pathExists(join(userDataDir, "library-index"))).toBe(false);
 
     await addWorkspaceViaIpc(window, workspacePath);
     const rootWorkspace = await waitForWorkspaceByPath(window, workspacePath);
@@ -59,7 +56,7 @@ test("keeps worktrees and the library index out of the Windows roaming profile",
       .toBe("worktree");
     const state = await getDesktopState(window);
     const created = state.workspaces.find((workspace) => workspace.id === state.selectedWorkspaceId)!.path;
-    expect(relative(await realpath(join(localDataDir, "worktrees")), created)).not.toMatch(/^\.\./);
+    expect(isPathWithin(await realpath(join(localDataDir, "worktrees")), created)).toBe(true);
   } finally {
     await harness.close();
     await rm(base, { recursive: true, force: true });

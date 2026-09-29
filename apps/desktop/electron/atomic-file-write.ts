@@ -3,7 +3,9 @@ import * as fs from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 const operationQueue = new Map<string, Promise<unknown>>();
-const RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
+const RETRY_DELAYS_MS: readonly number[] = [25, 50, 100, 200, 400];
+/** Shorter than RETRY_DELAYS_MS: a synchronous wait freezes the main process. */
+const SYNC_RETRY_DELAYS_MS: readonly number[] = [10, 25, 50, 100, 200];
 /** Windows file-sharing and antivirus locks that clear by themselves. */
 const TRANSIENT_ERROR_CODES = ["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"];
 const syncSleepCell = new Int32Array(new SharedArrayBuffer(4));
@@ -124,7 +126,7 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
-      const delay = retryDelay(error, attempt);
+      const delay = retryDelay(error, attempt, RETRY_DELAYS_MS);
       if (delay === undefined) {
         throw error;
       }
@@ -135,14 +137,14 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
 
 /**
  * `withRetry` for callers bound to a synchronous interface. It blocks while it
- * waits, so only a write that hits a transient lock pays (under a second).
+ * waits, so only a write that hits a transient lock pays (under half a second).
  */
-export function withRetrySync<T>(operation: () => T): T {
+export function withRetrySync<T>(operation: () => T, delaysMs: readonly number[] = SYNC_RETRY_DELAYS_MS): T {
   for (let attempt = 0; ; attempt += 1) {
     try {
       return operation();
     } catch (error) {
-      const delay = retryDelay(error, attempt);
+      const delay = retryDelay(error, attempt, delaysMs);
       if (delay === undefined) {
         throw error;
       }
@@ -151,8 +153,8 @@ export function withRetrySync<T>(operation: () => T): T {
   }
 }
 
-function retryDelay(error: unknown, attempt: number): number | undefined {
-  return TRANSIENT_ERROR_CODES.includes(errorCode(error) ?? "") ? RETRY_DELAYS_MS[attempt] : undefined;
+function retryDelay(error: unknown, attempt: number, delaysMs: readonly number[]): number | undefined {
+  return TRANSIENT_ERROR_CODES.includes(errorCode(error) ?? "") ? delaysMs[attempt] : undefined;
 }
 
 async function syncDirectory(dir: string, io: AtomicFileIO): Promise<void> {

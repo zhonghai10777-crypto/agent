@@ -126,7 +126,11 @@ export function sniffDocumentKind(buffer: Uint8Array, fileName?: string): Docume
  * domestic technical material still ships in it, and that is precisely the
  * content that turns into mojibake today.
  */
-export function decodeTextBuffer(buffer: Uint8Array): { readonly text: string; readonly encoding: string } {
+export function decodeTextBuffer(
+  buffer: Uint8Array,
+  // A buffer cut short (a preview) may end mid-character; that must not read as invalid UTF-8.
+  options: { readonly truncated?: boolean } = {},
+): { readonly text: string; readonly encoding: string } {
   if (hasUtf8Bom(buffer)) {
     return { text: new TextDecoder("utf-8").decode(buffer.subarray(3)), encoding: "utf-8" };
   }
@@ -141,12 +145,23 @@ export function decodeTextBuffer(buffer: Uint8Array): { readonly text: string; r
     return { text: new TextDecoder(inferredUtf16).decode(buffer), encoding: inferredUtf16 };
   }
   try {
-    return { text: new TextDecoder("utf-8", { fatal: true }).decode(buffer), encoding: "utf-8" };
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(buffer, { stream: options.truncated }), encoding: "utf-8" };
   } catch {
     // gb18030 is a strict superset of GBK/GB2312, so one decoder covers all
     // three of the encodings this content realistically arrives in.
     return { text: new TextDecoder("gb18030").decode(buffer), encoding: "gb18030" };
   }
+}
+
+/** UTF-16 by BOM or by the NUL pattern of BOM-less text; its NULs do not make it binary. */
+export function detectUtf16Encoding(buffer: Uint8Array): "utf-16le" | "utf-16be" | undefined {
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) {
+    return "utf-16le";
+  }
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    return "utf-16be";
+  }
+  return inferUtf16Encoding(buffer);
 }
 
 function inferUtf16Encoding(buffer: Uint8Array): "utf-16le" | "utf-16be" | undefined {

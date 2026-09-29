@@ -1,17 +1,20 @@
 import { execFile } from "node:child_process";
-import { mkdir, realpath, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { realpath, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
 import {
+  addLinkedWorktree,
   addWorkspaceViaIpc,
   assertExists,
   createNamedThread,
   createSessionViaIpc,
   getDesktopState,
+  isPathWithin,
   launchDesktop,
   makeGitWorkspace,
   makeUserDataDir,
+  pathExists,
   waitForWorkspaceByPath,
 } from "../helpers/electron-app";
 
@@ -20,30 +23,6 @@ const execFileAsync = promisify(execFile);
 async function git(repoPath: string, ...args: string[]): Promise<string> {
   const { stdout } = await execFileAsync("git", ["-C", repoPath, ...args]);
   return stdout.trim();
-}
-
-async function addLinkedWorktree(repoPath: string, worktreePath: string, branchName: string): Promise<void> {
-  await mkdir(dirname(worktreePath), { recursive: true });
-  await git(repoPath, "worktree", "add", "-b", branchName, worktreePath, "HEAD");
-}
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await stat(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isPathWithin(root: string, candidate: string): boolean {
-  const relativePath = relative(root, candidate);
-  return (
-    relativePath !== "" &&
-    relativePath !== ".." &&
-    !relativePath.startsWith(`..${sep}`) &&
-    !isAbsolute(relativePath)
-  );
 }
 
 test("creates and selects a worktree-backed workspace from the desktop UI", async () => {

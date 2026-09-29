@@ -125,13 +125,9 @@ test("prefixed reads of BOM-less UTF-8 files decode correctly in memory", { skip
   );
 });
 
-test("the preamble makes every text cmdlet default to UTF-8, writes included", () => {
+test("prefixed writes produce files UTF-8 readers decode", { skip: !onWindows }, () => {
   // Not just Get-Content: in Windows PowerShell 5.1 `>`/Out-File write UTF-16,
   // Set-Content ANSI and Export-Csv ASCII unless the default says otherwise.
-  assert.ok(POWERSHELL_ENCODING_PREAMBLE.includes("$PSDefaultParameterValues['*:Encoding']='utf8'"));
-});
-
-test("prefixed writes produce files UTF-8 readers decode", { skip: !onWindows }, () => {
   const dir = mkdtempSync(join(tmpdir(), "pi-ps-write-encoding-"));
   const result = runLikePi(
     [

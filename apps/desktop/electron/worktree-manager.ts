@@ -38,8 +38,8 @@ export interface PruneOrphanedWorktreesInput {
 }
 
 export interface WorktreeReferenceSources {
-  /** Profile-owned root under which the app creates its worktrees. */
-  readonly worktreeRoot: string;
+  /** Profile-owned roots under which the app creates (or created) its worktrees. */
+  readonly worktreeRoots: readonly string[];
   /** Worktree paths recorded in the app's worktree catalog. */
   readonly catalogPaths: readonly string[];
   /** Paths of every workspace the driver knows about. */
@@ -224,20 +224,20 @@ export class GitWorktreeManager {
 
 /**
  * Canonical paths that startup collection must never prune. A driver workspace
- * entry can survive independently of the app catalog, so one under the managed
- * worktree root does not protect an orphan there. The root is canonicalized like
- * the workspace paths: a userData path through a symlink or junction would
+ * entry can survive independently of the app catalog, so one under a managed
+ * worktree root does not protect an orphan there. The roots are canonicalized
+ * like the workspace paths: a userData path through a symlink or junction would
  * otherwise never contain them.
  */
 export async function collectReferencedWorktreePaths(sources: WorktreeReferenceSources): Promise<Set<string>> {
-  const worktreeRoot = await canonicalPath(sources.worktreeRoot);
+  const worktreeRoots = await Promise.all(sources.worktreeRoots.map(canonicalPath));
   const referenced = new Set<string>();
   for (const catalogPath of sources.catalogPaths) {
     referenced.add(await canonicalPath(catalogPath));
   }
   for (const workspacePath of sources.workspacePaths) {
     const canonicalWorkspacePath = await canonicalPath(workspacePath);
-    if (!isPathWithinRoot(canonicalWorkspacePath, worktreeRoot)) {
+    if (!worktreeRoots.some((root) => isPathWithinRoot(canonicalWorkspacePath, root))) {
       referenced.add(canonicalWorkspacePath);
     }
   }

@@ -27,8 +27,6 @@ import {
   desktopCommands,
   getDesktopCommandFromShortcut,
   getDesktopShortcutLabel,
-  getRendererPlatform,
-  supportsWindowTransparency,
   type PiDesktopCommand,
 } from "./ipc";
 import { deriveModelOnboardingState } from "./model-onboarding";
@@ -185,10 +183,7 @@ function AppShell({
 
   useEffect(() => {
     if (snapshot) {
-      document.documentElement.classList.toggle(
-        "enable-transparency",
-        snapshot.enableTransparency && supportsWindowTransparency(getRendererPlatform()),
-      );
+      document.documentElement.classList.toggle("enable-transparency", snapshot.enableTransparency);
     }
   }, [snapshot?.enableTransparency]);
 

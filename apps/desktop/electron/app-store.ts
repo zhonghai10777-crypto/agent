@@ -114,6 +114,7 @@ import {
   toSessionRef,
 } from "./app-store-utils";
 import type { CustomProviderConfig, CustomProviderView } from "../src/ipc";
+import { supportsWindowTransparency } from "../src/ipc";
 import { resolveRepoWorkspaceId } from "../src/workspace-roots";
 import { SessionStateMap, type QueuedComposerEditState } from "./session-state-map";
 import { createEmptyExtensionUiState, serializeExtensionUiState } from "./session-state-map";
@@ -273,10 +274,9 @@ export class DesktopAppStore implements AppStoreInternals {
     this.driver = new PiSdkDriver(driverOptions);
     this.worktreeManager = new GitWorktreeManager({ catalogStorage: this.catalogStore });
     this.worktreeRoot = join(options.localDataDir ?? options.userDataDir, "worktrees");
-    const userDataWorktreeRoot = join(options.userDataDir, "worktrees");
-    // Worktrees created before the move stay where they are and in use; the
-    // startup GC keeps collecting orphans there too.
-    this.worktreeRoots = userDataWorktreeRoot === this.worktreeRoot ? [this.worktreeRoot] : [this.worktreeRoot, userDataWorktreeRoot];
+    // Worktrees created before the move to localDataDir stay where they are and
+    // in use; the startup GC keeps collecting orphans there too.
+    this.worktreeRoots = [...new Set([this.worktreeRoot, join(options.userDataDir, "worktrees")])];
     this.uiStateFilePath = join(options.userDataDir, "ui-state.json");
     this.personalWorkspacePath = join(options.userDataDir, "personal-workspace");
     this.attachmentStore = new JsonFileStore<ComposerAttachment[]>(options.userDataDir, "attachments");
@@ -939,7 +939,7 @@ export class DesktopAppStore implements AppStoreInternals {
 
   async setEnableTransparency(enabled: boolean): Promise<DesktopAppState> {
     await this.initialize();
-    if (this.state.enableTransparency === enabled) {
+    if (this.state.enableTransparency === enabled || !supportsWindowTransparency(process.platform)) {
       return structuredClone(this.state);
     }
     this.state = {
@@ -1473,7 +1473,10 @@ export class DesktopAppStore implements AppStoreInternals {
       themePresetId: persisted.themePresetId ?? this.state.themePresetId,
       locale: persisted.locale ?? this.state.locale,
       sidebarCollapsed: persisted.sidebarCollapsed ?? this.state.sidebarCollapsed,
-      enableTransparency: persisted.enableTransparency ?? this.state.enableTransparency,
+      // Only macOS has the vibrancy behind a transparent window; elsewhere the
+      // setting would show the desktop through the text, so it is always off.
+      enableTransparency:
+        supportsWindowTransparency(process.platform) && (persisted.enableTransparency ?? this.state.enableTransparency),
       orchestrationChildren: persisted.orchestrationChildren ?? [],
     };
 

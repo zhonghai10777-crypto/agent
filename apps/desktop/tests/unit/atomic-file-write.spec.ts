@@ -205,32 +205,21 @@ test("queued writes to one path apply in order and leave no temp files behind", 
 });
 
 test("synchronous writers outlast a transient Windows lock but not a real failure", () => {
-  const lockedError = (code: string) => Object.assign(new Error(code), { code });
-  let attempts = 0;
-  expect(
-    withRetrySync(() => {
-      attempts += 1;
-      if (attempts < 3) throw lockedError("EPERM");
-      return "renamed";
-    }),
-  ).toBe("renamed");
-  expect(attempts).toBe(3);
+  const noWait = [0, 0, 0, 0, 0];
+  const attemptsUntilDone = (codes: readonly string[]) => {
+    let attempts = 0;
+    try {
+      withRetrySync(() => {
+        const code = codes[attempts++];
+        if (code) throw Object.assign(new Error(code), { code });
+      }, noWait);
+    } catch (error) {
+      return { attempts, error: (error as NodeJS.ErrnoException).code };
+    }
+    return { attempts, error: undefined };
+  };
 
-  attempts = 0;
-  expect(() =>
-    withRetrySync(() => {
-      attempts += 1;
-      throw lockedError("ENOENT");
-    }),
-  ).toThrow("ENOENT");
-  expect(attempts).toBe(1);
-
-  attempts = 0;
-  expect(() =>
-    withRetrySync(() => {
-      attempts += 1;
-      throw lockedError("EBUSY");
-    }),
-  ).toThrow("EBUSY");
-  expect(attempts).toBe(6);
+  expect(attemptsUntilDone(["EPERM", "EBUSY"])).toEqual({ attempts: 3, error: undefined });
+  expect(attemptsUntilDone(["ENOENT"])).toEqual({ attempts: 1, error: "ENOENT" });
+  expect(attemptsUntilDone(Array(10).fill("EBUSY"))).toEqual({ attempts: noWait.length + 1, error: "EBUSY" });
 });

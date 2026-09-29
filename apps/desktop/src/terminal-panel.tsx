@@ -7,7 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { WorkspaceRecord } from "./desktop-state";
 import { CloseIcon, MaximizeIcon, MinimizeIcon, PlusIcon, RefreshIcon } from "./icons";
 import type { TerminalPanelSnapshot, TerminalSessionSnapshot, TerminalSize } from "./ipc";
-import { appendTerminalReplay, isTerminalCopyShortcut } from "./terminal-model";
+import { appendTerminalReplay, terminalClipboardShortcut } from "./terminal-model";
 import { useI18n } from "./i18n/I18nProvider";
 
 const MIN_TERMINAL_HEIGHT = 220;
@@ -224,32 +224,25 @@ export function TerminalPanel({
         void createTerminal();
         return false;
       }
-      if (isTerminalCopyShortcut(api.platform, event, terminal.hasSelection())) {
-        // Returning false only tells xterm to skip the key; the browser's copy is ours to stop.
-        event.preventDefault();
-        const selection = terminal.getSelection();
-        if (selection) {
-          void navigator.clipboard.writeText(selection).catch((error) => setError(error instanceof Error ? error.message : String(error)));
-          terminal.clearSelection();
-        }
-        return false;
-      }
-      // A terminal reads Ctrl+V as the literal 0x16 control code (readline's
-      // quoted-insert), so xterm consumes the key and Chromium's native paste
-      // never runs: off macOS the clipboard never arrived and the shell got a
-      // junk control character instead. Paste explicitly, for both Ctrl+V and
-      // the Ctrl+Shift+V terminal convention. macOS needs none of this — Cmd is
-      // not a terminal modifier, so the browser's own paste still reaches
-      // xterm's textarea. Alt is excluded so AltGr layouts keep typing.
-      if (api.platform !== "darwin" && event.ctrlKey && !event.altKey && key === "v") {
+      const clipboardShortcut = terminalClipboardShortcut(api.platform, event, terminal.hasSelection());
+      if (clipboardShortcut) {
         // Returning false only tells xterm to skip the key; the browser would
-        // still paste into its hidden textarea and send the text a second time.
+        // still copy from, or paste (a second time) into, its hidden textarea.
         event.preventDefault();
-        void api.readClipboardText().then((clipboardText) => {
-          // `paste` honours bracketed-paste mode rather than shoving raw bytes
-          // at the pty, and reaches the pty through the same `onData` hook.
-          if (clipboardText && terminalRef.current === terminal && activeTerminalIdRef.current === activeSession.id) terminal.paste(clipboardText);
-        }).catch((error) => setError(error instanceof Error ? error.message : String(error)));
+        const reportError = (error: unknown) => setError(error instanceof Error ? error.message : String(error));
+        if (clipboardShortcut === "copy") {
+          const selection = terminal.getSelection();
+          if (selection) {
+            void navigator.clipboard.writeText(selection).catch(reportError);
+            terminal.clearSelection();
+          }
+        } else {
+          void api.readClipboardText().then((clipboardText) => {
+            // `paste` honours bracketed-paste mode rather than shoving raw bytes
+            // at the pty, and reaches the pty through the same `onData` hook.
+            if (clipboardText && terminalRef.current === terminal && activeTerminalIdRef.current === activeSession.id) terminal.paste(clipboardText);
+          }).catch(reportError);
+        }
         return false;
       }
       if (api.platform === "darwin" && event.metaKey) {

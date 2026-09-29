@@ -65,19 +65,19 @@ export async function removeWorktree(store: AppStoreInternals, input: RemoveWork
   }
 
   return store.withErrorHandling(async () => {
-    const worktree = await store.catalogStore.worktrees.getWorktree(input.worktreeId);
-    if (worktree?.path) {
-      const worktreeWorkspace = store.state.workspaces.find((workspace) => workspace.path === worktree.path);
+    const worktreePath = (await store.catalogStore.worktrees.getWorktree(input.worktreeId))?.path;
+    if (worktreePath) {
+      const worktreeWorkspace = store.state.workspaces.find((workspace) => workspace.path === worktreePath);
       // Deleting the directory under a running task would pull its files away
       // mid-run (and on Windows fail on the task's own processes).
       if (worktreeWorkspace?.sessions.some((session) => session.status === "running")) {
         throw new Error(tGlobal("worktree.removeWhileRunning"));
       }
-      store.releaseDirectory(worktree.path);
+      store.releaseDirectory(worktreePath);
     }
     await store.worktreeManager.removeWorktree(rootWorkspace, input.worktreeId);
-    if (worktree?.path) {
-      await store.driver.removeWorkspace(worktree.path).catch(() => undefined);
+    if (worktreePath) {
+      await store.driver.removeWorkspace(worktreePath).catch(() => undefined);
     }
 
     const selectedWorkspaceId =
@@ -422,10 +422,13 @@ export function buildWorktreeOptions(
 export async function reconcileWorktrees(store: AppStoreInternals): Promise<void> {
   try {
     const catalog = await store.catalogStore.worktrees.listWorktrees();
-    const catalogPaths = catalog.worktrees.flatMap((worktree) => (worktree.path ? [worktree.path] : []));
-    const workspacePaths = store.state.workspaces.map((workspace) => workspace.path);
+    const referencedPaths = await collectReferencedWorktreePaths({
+      worktreeRoots: store.worktreeRoots,
+      catalogPaths: catalog.worktrees.flatMap((worktree) => (worktree.path ? [worktree.path] : [])),
+      workspacePaths: store.state.workspaces.map((workspace) => workspace.path),
+    });
+    // One root at a time: roots can hold worktrees of the same repository.
     for (const worktreeRoot of store.worktreeRoots) {
-      const referencedPaths = await collectReferencedWorktreePaths({ worktreeRoot, catalogPaths, workspacePaths });
       await store.worktreeManager.pruneOrphanedWorktrees({ worktreeRoot, referencedPaths });
     }
   } catch (error) {

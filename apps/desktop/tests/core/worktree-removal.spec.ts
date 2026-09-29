@@ -1,9 +1,6 @@
-import { stat } from "node:fs/promises";
 import { expect, test } from "@playwright/test";
-import { getDesktopState, startThreadFromSurface } from "../helpers/electron-app";
+import { getDesktopState, pathExists, startThreadFromSurface } from "../helpers/electron-app";
 import { launchWithCompactionFixture } from "../helpers/compaction-fixture";
-
-const exists = (path: string) => stat(path).then(() => true, () => false);
 
 // Removing a worktree deletes its directory. Under a running task that pulls
 // the files away mid-run, and on Windows the directory cannot be deleted while
@@ -35,7 +32,7 @@ test("refuses to remove a worktree while its task runs, then closes its terminal
       );
 
     expect(await remove()).toContain("still running");
-    expect(await exists(worktree.path)).toBe(true);
+    expect(await pathExists(worktree.path)).toBe(true);
     await expect(send).toHaveAttribute("aria-label", "Stop run");
 
     f.http.release();
@@ -44,7 +41,7 @@ test("refuses to remove a worktree while its task runs, then closes its terminal
     await expect(f.page.getByTestId("integrated-terminal").locator(".xterm")).toBeVisible();
 
     expect(await remove()).toBeNull();
-    await expect.poll(() => exists(worktree.path)).toBe(false);
+    await expect.poll(() => pathExists(worktree.path)).toBe(false);
   } finally {
     f.http.release();
     await f.close();

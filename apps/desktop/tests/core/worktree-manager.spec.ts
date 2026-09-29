@@ -236,7 +236,7 @@ test("a stale workspace entry does not shield an orphan from startup collection 
     const worktreeRoot = join(linkedUserData, "worktrees");
 
     const referencedPaths = await collectReferencedWorktreePaths({
-      worktreeRoot,
+      worktreeRoots: [worktreeRoot],
       catalogPaths: [],
       workspacePaths: [repo, orphan.path],
     });
