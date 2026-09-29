@@ -47,6 +47,7 @@ import {
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-checker";
 import { ThemeManager } from "./theme-manager";
 import { windowChromeOptions } from "./window-chrome";
+import { nonMacApplicationMenu } from "./app-menu";
 import type { TerminalService } from "./terminal-service";
 import type {
   AppView,
@@ -924,6 +925,20 @@ function createAppWindow(sourceView?: DesktopAppViewState): BrowserWindow {
   attachStatePublisher(window);
   attachViewedSessionTracking(window);
 
+  window.on("close", (event) => {
+    const quitsApp = lastWindowClosedQuitsApp() && [...appWindows].every((other) => other === window || other.isDestroyed());
+    if (!quitsApp || quitWithRunningTasksConfirmed || runningSessionCount() === 0) {
+      return;
+    }
+    // Ask before the window goes: once it is gone, "Cancel" would leave the app with no window.
+    event.preventDefault();
+    void confirmQuitWithRunningTasks(window).then((confirmed) => {
+      if (confirmed && !window.isDestroyed()) {
+        window.close();
+      }
+    });
+  });
+
   window.once("closed", () => {
     appWindows.delete(window);
     windowViews.delete(webContentsId);
@@ -1149,6 +1164,7 @@ async function runManualUpdateCheck(): Promise<void> {
 
 function installApplicationMenu(): void {
   if (process.platform !== "darwin") {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(nonMacApplicationMenu(app.isPackaged)));
     return;
   }
 
@@ -1526,6 +1542,13 @@ app.whenReady().then(async () => {
             });
         },
         hasDeferredThreadTitle: () => Boolean(deferredThreadTitle),
+        answerQuitConfirmation: (answer: boolean) => {
+          quitConfirmationForTest = (runningCount) => {
+            quitConfirmationPromptsForTest.push(runningCount);
+            return answer;
+          };
+        },
+        quitConfirmationPrompts: () => [...quitConfirmationPromptsForTest],
         resolveDeferredThreadTitle: (title: string) => {
           if (!deferredThreadTitle) {
             throw new Error("Deferred thread-title request is unavailable");
@@ -2095,11 +2118,66 @@ app.whenReady().then(async () => {
   app.exit(1);
 });
 
+/**
+ * macOS normally keeps the app alive after its final window closes. The
+ * Electron harness closes windows to end each isolated run, so explicit
+ * test-mode launches quit instead of leaving their process behind forever.
+ */
+function lastWindowClosedQuitsApp(): boolean {
+  return process.platform !== "darwin" || appTestMode !== undefined;
+}
+
+/** Set once the user agreed to quit even though tasks were running. */
+let quitWithRunningTasksConfirmed = false;
+let pendingQuitConfirmation: Promise<boolean> | undefined;
+/** Test mode answers the prompt through a hook rather than a native dialog. */
+let quitConfirmationForTest: ((runningCount: number) => boolean) | undefined;
+const quitConfirmationPromptsForTest: number[] = [];
+
+function runningSessionCount(): number {
+  return (store?.state.workspaces ?? []).reduce(
+    (count, workspace) => count + workspace.sessions.filter((session) => session.status === "running").length,
+    0,
+  );
+}
+
+/**
+ * Quitting aborts every running task (see SessionSupervisor.shutdown), so ask
+ * first. Resolves whether the quit may go ahead; concurrent callers share one prompt.
+ */
+function confirmQuitWithRunningTasks(parent: BrowserWindow | null): Promise<boolean> {
+  const runningCount = runningSessionCount();
+  if (quitWithRunningTasksConfirmed || runningCount === 0) {
+    return Promise.resolve(true);
+  }
+  pendingQuitConfirmation ??= askToQuitWithRunningTasks(parent, runningCount)
+    .then((confirmed) => (quitWithRunningTasksConfirmed = confirmed))
+    .finally(() => {
+      pendingQuitConfirmation = undefined;
+    });
+  return pendingQuitConfirmation;
+}
+
+async function askToQuitWithRunningTasks(parent: BrowserWindow | null, runningCount: number): Promise<boolean> {
+  if (appTestMode !== undefined) {
+    return quitConfirmationForTest?.(runningCount) ?? true;
+  }
+  const options: MessageBoxOptions = {
+    type: "warning",
+    title: PRODUCT.name,
+    message: tGlobal("quit.runningTasks", { count: runningCount, s: runningCount === 1 ? "" : "s" }),
+    detail: tGlobal("quit.runningTasksDetail"),
+    buttons: [tGlobal("quit.confirm"), tGlobal("common.cancel")],
+    defaultId: 1,
+    cancelId: 1,
+  };
+  const { response } =
+    parent && !parent.isDestroyed() ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  return response === 0;
+}
+
 app.on("window-all-closed", () => {
-  // macOS normally keeps the app alive after its final window closes. The
-  // Electron harness closes windows to end each isolated run, so let explicit
-  // test-mode launches quit instead of leaving their process behind forever.
-  if (process.platform !== "darwin" || appTestMode !== undefined) {
+  if (lastWindowClosedQuitsApp()) {
     stopNotifications?.();
     stopNotifications = undefined;
     notificationManager = undefined;
@@ -2117,6 +2195,16 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
+  if (!quitWithRunningTasksConfirmed && runningSessionCount() > 0) {
+    // A quit that did not come through closing the last window, e.g. Cmd+Q.
+    event.preventDefault();
+    void confirmQuitWithRunningTasks(getForegroundAppWindow()).then((confirmed) => {
+      if (confirmed) {
+        app.quit();
+      }
+    });
+    return;
+  }
   stopNotifications?.();
   stopNotifications = undefined;
   notificationManager = undefined;
