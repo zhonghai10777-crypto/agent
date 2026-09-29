@@ -1,6 +1,7 @@
 import { nativeTheme, type BrowserWindow } from "electron";
-import { desktopIpc } from "../src/ipc";
+import { desktopIpc, usesWindowControlsOverlay } from "../src/ipc";
 import type { ThemeMode } from "../src/desktop-state";
+import { windowControlsOverlay } from "./window-chrome";
 
 export class ThemeManager {
   private mode: ThemeMode = "system";
@@ -44,9 +45,14 @@ export class ThemeManager {
   }
 
   private broadcast() {
+    const theme = this.getResolvedTheme();
     for (const window of this.windows) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
-        window.webContents.send(desktopIpc.themeChanged, this.getResolvedTheme());
+        window.webContents.send(desktopIpc.themeChanged, theme);
+        if (usesWindowControlsOverlay(process.platform)) {
+          // The caption buttons are native, so they do not follow the page's CSS.
+          window.setTitleBarOverlay(windowControlsOverlay(theme));
+        }
       }
     }
   }

@@ -46,6 +46,7 @@ import {
 } from "./notification-permission";
 import { checkForUpdate, initUpdateChecker, openReleasesPage } from "./update-checker";
 import { ThemeManager } from "./theme-manager";
+import { windowChromeOptions } from "./window-chrome";
 import type { TerminalService } from "./terminal-service";
 import type {
   AppView,
@@ -476,9 +477,8 @@ function createWindow(): BrowserWindow {
     minHeight: 600,
     transparent: enableTransparency,
     vibrancy: process.platform === "darwin" && enableTransparency ? "under-window" : undefined,
-    titleBarStyle: "hiddenInset",
+    ...windowChromeOptions(process.platform, themeManager.getResolvedTheme()),
     backgroundColor: enableTransparency ? "#00000000" : "#f3f4f8",
-    trafficLightPosition: { x: 18, y: 18 },
     show: false,
     icon: appIcon,
     webPreferences: {

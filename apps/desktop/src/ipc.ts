@@ -300,6 +300,15 @@ export function getDesktopShortcutLabel(
 }
 
 /**
+ * Whether the native caption buttons are drawn over the page's top-right
+ * corner (Window Controls Overlay; see electron/window-chrome.ts). Everywhere
+ * but macOS, whose traffic lights sit inset at the top-left instead.
+ */
+export function usesWindowControlsOverlay(platform: NodeJS.Platform): boolean {
+  return platform !== "darwin";
+}
+
+/**
  * The platform as the renderer sees it. Prefer `api.platform` where a component
  * already receives it; this exists for components too deep in the tree to thread
  * it through, and falls back to user-agent sniffing before the preload bridge
