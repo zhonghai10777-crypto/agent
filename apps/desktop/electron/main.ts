@@ -1238,6 +1238,13 @@ const agentShellEnvNames = applyWindowsAgentShellEnv();
 
 const legacyUserDataDir = path.join(app.getPath("appData"), "pi");
 app.setName(PRODUCT.name);
+// Windows shows toasts only for an AppUserModelID that a Start menu shortcut
+// registers, and groups taskbar icons by it. The installer's shortcut carries
+// the builder's appId; left alone Electron runs as "electron.app.Agent", so
+// notifications went missing and the window did not join its pinned icon.
+if (process.platform === "win32") {
+  app.setAppUserModelId(PRODUCT.appId);
+}
 const productUserDataDir = app.getPath("userData");
 const configuredUserDataDir = resolveProductUserDataDir(
   process.env.PI_APP_USER_DATA_DIR,
