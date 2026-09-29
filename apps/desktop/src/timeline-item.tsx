@@ -182,7 +182,8 @@ function TimelineToolCallItem({
   const compactLabel = buildCompactLabel(item, diffStats, t);
   const filePath = isWriteTool(item.toolName) ? extractFilename(item.input) || undefined : undefined;
   const diffLanguage = diffText && filePath ? extensionToLanguage(filePath) : undefined;
-  const inlineDetail = item.status === "error" ? item.detail : undefined;
+  // An error's reason, or a running tool's latest output (its progress).
+  const inlineDetail = item.status === "error" || item.status === "running" ? item.detail : undefined;
   const officeOutputPath = extractOfficeOutputPath(item.output);
 
   const handleCopy = () => {

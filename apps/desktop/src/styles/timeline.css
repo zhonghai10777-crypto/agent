@@ -473,6 +473,14 @@
   overflow-wrap: anywhere;
 }
 
+/* A running tool's latest output, on its own line so its newest part stays in view. */
+.timeline-tool--running .timeline-tool__detail {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+
 .timeline-tool__diff-stats {
   font-family: var(--font-mono);
   font-size: 12px;
