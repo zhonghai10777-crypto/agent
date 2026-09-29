@@ -7,7 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import type { WorkspaceRecord } from "./desktop-state";
 import { CloseIcon, MaximizeIcon, MinimizeIcon, PlusIcon, RefreshIcon } from "./icons";
 import type { TerminalPanelSnapshot, TerminalSessionSnapshot, TerminalSize } from "./ipc";
-import { appendTerminalReplay } from "./terminal-model";
+import { appendTerminalReplay, isTerminalCopyShortcut } from "./terminal-model";
 import { useI18n } from "./i18n/I18nProvider";
 
 const MIN_TERMINAL_HEIGHT = 220;
@@ -222,6 +222,16 @@ export function TerminalPanel({
       }
       if (commandModifier && !event.shiftKey && key === "t") {
         void createTerminal();
+        return false;
+      }
+      if (isTerminalCopyShortcut(api.platform, event, terminal.hasSelection())) {
+        // Returning false only tells xterm to skip the key; the browser's copy is ours to stop.
+        event.preventDefault();
+        const selection = terminal.getSelection();
+        if (selection) {
+          void navigator.clipboard.writeText(selection).catch((error) => setError(error instanceof Error ? error.message : String(error)));
+          terminal.clearSelection();
+        }
         return false;
       }
       // A terminal reads Ctrl+V as the literal 0x16 control code (readline's

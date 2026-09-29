@@ -20,3 +20,24 @@ export function appendTerminalReplay(
     truncated: true,
   };
 }
+
+/**
+ * Off macOS a terminal reads Ctrl+C as an interrupt, so copying needs a rule of
+ * its own, the one Windows Terminal uses: Ctrl+C copies while text is selected
+ * and interrupts otherwise, and Ctrl+Shift+C only ever copies. macOS copies with
+ * Cmd+C, which is no terminal key, so the browser's own copy works there.
+ */
+export function isTerminalCopyShortcut(
+  platform: NodeJS.Platform,
+  event: Pick<KeyboardEvent, "key" | "ctrlKey" | "shiftKey" | "altKey" | "metaKey">,
+  hasSelection: boolean,
+): boolean {
+  return (
+    platform !== "darwin" &&
+    event.ctrlKey &&
+    !event.altKey &&
+    !event.metaKey &&
+    event.key.toLowerCase() === "c" &&
+    (event.shiftKey || hasSelection)
+  );
+}
