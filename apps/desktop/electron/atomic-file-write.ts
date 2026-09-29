@@ -4,6 +4,9 @@ import { basename, dirname, join } from "node:path";
 
 const operationQueue = new Map<string, Promise<unknown>>();
 const RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const;
+/** Windows file-sharing and antivirus locks that clear by themselves. */
+const TRANSIENT_ERROR_CODES = ["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"];
+const syncSleepCell = new Int32Array(new SharedArrayBuffer(4));
 
 /** Filesystem boundary shared by production writes and fault-injection tests. */
 export type AtomicFileIO = Pick<typeof fs, "mkdir" | "open" | "readFile" | "rename" | "unlink">;
@@ -121,13 +124,35 @@ async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
-      const delay = RETRY_DELAYS_MS[attempt];
-      if (delay === undefined || !["EPERM", "EACCES", "EBUSY", "ENOTEMPTY"].includes(errorCode(error) ?? "")) {
+      const delay = retryDelay(error, attempt);
+      if (delay === undefined) {
         throw error;
       }
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
+}
+
+/**
+ * `withRetry` for callers bound to a synchronous interface. It blocks while it
+ * waits, so only a write that hits a transient lock pays (under a second).
+ */
+export function withRetrySync<T>(operation: () => T): T {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      const delay = retryDelay(error, attempt);
+      if (delay === undefined) {
+        throw error;
+      }
+      Atomics.wait(syncSleepCell, 0, 0, delay);
+    }
+  }
+}
+
+function retryDelay(error: unknown, attempt: number): number | undefined {
+  return TRANSIENT_ERROR_CODES.includes(errorCode(error) ?? "") ? RETRY_DELAYS_MS[attempt] : undefined;
 }
 
 async function syncDirectory(dir: string, io: AtomicFileIO): Promise<void> {

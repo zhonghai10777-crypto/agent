@@ -2,6 +2,7 @@ import type { SafeStorage } from "electron";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
+import { withRetrySync } from "./atomic-file-write";
 import type { CreateModelRuntimeOptions } from "@earendil-works/pi-coding-agent";
 import {
   CUSTOM_PROVIDER_PLACEHOLDER_API_KEY,
@@ -418,7 +419,8 @@ export class SecureAuthStorageBackend implements CredentialStore {
     const staged = `${path}.${randomUUID()}.tmp`;
     writeFileSync(staged, `${JSON.stringify(data, null, 2)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx", flush: true });
     // Failed writes/renames leave the old destination and diagnostic stage intact.
-    renameSync(staged, path);
+    // A scanner or indexer briefly holding the destination is common on Windows.
+    withRetrySync(() => renameSync(staged, path));
   }
 }
 

@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import * as fs from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { readJsonWithBackup, writeFileAtomicQueued, type AtomicFileIO } from "../../electron/atomic-file-write";
+import { readJsonWithBackup, withRetrySync, writeFileAtomicQueued, type AtomicFileIO } from "../../electron/atomic-file-write";
 
 /**
  * The failure these cover: a corrupt primary file plus a good `.bak` used to
@@ -202,4 +202,35 @@ test("queued writes to one path apply in order and leave no temp files behind", 
 
   expect(JSON.parse(await readFile(target, "utf8"))).toEqual({ generation: 5 });
   expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+});
+
+test("synchronous writers outlast a transient Windows lock but not a real failure", () => {
+  const lockedError = (code: string) => Object.assign(new Error(code), { code });
+  let attempts = 0;
+  expect(
+    withRetrySync(() => {
+      attempts += 1;
+      if (attempts < 3) throw lockedError("EPERM");
+      return "renamed";
+    }),
+  ).toBe("renamed");
+  expect(attempts).toBe(3);
+
+  attempts = 0;
+  expect(() =>
+    withRetrySync(() => {
+      attempts += 1;
+      throw lockedError("ENOENT");
+    }),
+  ).toThrow("ENOENT");
+  expect(attempts).toBe(1);
+
+  attempts = 0;
+  expect(() =>
+    withRetrySync(() => {
+      attempts += 1;
+      throw lockedError("EBUSY");
+    }),
+  ).toThrow("EBUSY");
+  expect(attempts).toBe(6);
 });
