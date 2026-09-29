@@ -162,24 +162,22 @@
 
 /*
  * Windows and Linux draw the native caption buttons over the window's top-right
- * corner (electron/window-chrome.ts); keep controls that reach that corner clear
- * of them. `--window-controls-width` is unset in the app, so the inset comes from
- * the overlay's geometry; tests set it to stand in for a platform without one.
+ * corner (electron/window-chrome.ts), and the overlay reports where through the
+ * titlebar-area env variables. Keep content out from under the buttons.
  */
 :root[data-window-controls="overlay"] {
-  --window-controls-inset: var(
-    --window-controls-width,
-    calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw))
-  );
+  --window-controls-inset: calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw));
+  --window-controls-height: env(titlebar-area-height, 0px);
 }
 
 :root[data-window-controls="overlay"] .topbar {
+  min-height: var(--window-controls-height);
   padding-right: calc(16px + var(--window-controls-inset));
 }
 
-/* The right-aligned workspace picker atop the Skills and Extensions pages. */
-:root[data-window-controls="overlay"] .surface-toolbar {
-  padding-right: var(--window-controls-inset);
+/* Settings, Skills and Extensions have no topbar: start their content below the buttons. */
+:root[data-window-controls="overlay"] .secondary-surface__content {
+  padding-top: max(var(--space-8), calc(var(--window-controls-height) + var(--space-3)));
 }
 
 /* No traffic lights to clear at the top-left there. */

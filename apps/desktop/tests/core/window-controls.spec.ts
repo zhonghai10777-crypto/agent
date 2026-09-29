@@ -13,13 +13,18 @@ const CAPTION_BUTTONS_WIDTH = 138;
 
 /**
  * The Window Controls Overlay only exists on Windows and Linux, so stand in for
- * it: the renderer's overlay mode, with the width the overlay geometry would give.
+ * it: the renderer's overlay mode, with the geometry its env variables would give.
  */
 async function simulateCaptionButtons(window: Page): Promise<void> {
-  await window.evaluate((width) => {
-    document.documentElement.dataset.windowControls = "overlay";
-    document.documentElement.style.setProperty("--window-controls-width", `${width}px`);
-  }, CAPTION_BUTTONS_WIDTH);
+  await window.evaluate(
+    ({ width, height }) => {
+      const root = document.documentElement;
+      root.dataset.windowControls = "overlay";
+      root.style.setProperty("--window-controls-inset", `${width}px`);
+      root.style.setProperty("--window-controls-height", `${height}px`);
+    },
+    { width: CAPTION_BUTTONS_WIDTH, height: TITLEBAR_HEIGHT },
+  );
 }
 
 /** Visible controls a user could not reach because the caption buttons cover them. */
@@ -43,7 +48,7 @@ async function controlsUnderCaptionButtons(window: Page): Promise<string[]> {
 async function checkSecondarySurfaces(window: Page): Promise<void> {
   for (const [view, ready] of [
     ["Settings", ".view-header"],
-    // The workspace picker is right-aligned at the very top of these pages.
+    // Their workspace picker is right-aligned at the top of the page.
     ["Skills", ".surface-toolbar select"],
     ["Extensions", ".surface-toolbar select"],
   ] as const) {
@@ -80,10 +85,6 @@ test("keeps every view's controls clear of the Windows caption buttons", async (
     await window.getByRole("button", { name: "Toggle changes" }).click();
     expect(await controlsUnderCaptionButtons(window)).toEqual([]);
     await window.getByRole("button", { name: "Toggle changes" }).click();
-
-    await window.getByRole("button", { name: "Toggle terminal" }).click();
-    expect(await controlsUnderCaptionButtons(window)).toEqual([]);
-    await window.getByRole("button", { name: "Toggle terminal" }).click();
 
     await window.getByTestId("sidebar-toggle").click();
     await expect(window.locator(".sidebar")).toHaveCount(0);

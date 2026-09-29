@@ -926,17 +926,16 @@ function createAppWindow(sourceView?: DesktopAppViewState): BrowserWindow {
   attachViewedSessionTracking(window);
 
   window.on("close", (event) => {
-    const quitsApp = lastWindowClosedQuitsApp() && [...appWindows].every((other) => other === window || other.isDestroyed());
-    if (!quitsApp || quitWithRunningTasksConfirmed || runningSessionCount() === 0) {
-      return;
+    if (
+      quitNeedsConfirmation() &&
+      lastWindowClosedQuitsApp() &&
+      [...appWindows].every((other) => other === window || other.isDestroyed())
+    ) {
+      // Closing this window quits the app, so let the quit ask while the window
+      // still exists: once it is gone, "Cancel" would leave the app windowless.
+      event.preventDefault();
+      app.quit();
     }
-    // Ask before the window goes: once it is gone, "Cancel" would leave the app with no window.
-    event.preventDefault();
-    void confirmQuitWithRunningTasks(window).then((confirmed) => {
-      if (confirmed && !window.isDestroyed()) {
-        window.close();
-      }
-    });
   });
 
   window.once("closed", () => {
@@ -1061,6 +1060,11 @@ function resolveDialogWindow(parentWindow?: BrowserWindow | null): BrowserWindow
   return undefined;
 }
 
+function showMessageBoxFor(parentWindow: BrowserWindow | null | undefined, options: MessageBoxOptions) {
+  const window = resolveDialogWindow(parentWindow);
+  return window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+}
+
 async function stateForWindow(window?: BrowserWindow | null): Promise<DesktopAppState> {
   if (window && canPublishToWindow(window)) {
     return store.getStateForView(viewForWebContents(window.webContents.id));
@@ -1108,9 +1112,7 @@ async function pickWorkspaceViaDialog(parentWindow?: BrowserWindow | null): Prom
 }
 
 async function runManualUpdateCheck(): Promise<void> {
-  const window = mainWindow && canPublishToWindow(mainWindow) ? mainWindow : undefined;
-  const showDialog = (options: MessageBoxOptions) =>
-    window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options);
+  const showDialog = (options: MessageBoxOptions) => showMessageBoxFor(mainWindow, options);
 
   try {
     const result = await checkForUpdate();
@@ -1550,10 +1552,7 @@ app.whenReady().then(async () => {
         },
         hasDeferredThreadTitle: () => Boolean(deferredThreadTitle),
         answerQuitConfirmation: (answer: boolean) => {
-          quitConfirmationForTest = (runningCount) => {
-            quitConfirmationPromptsForTest.push(runningCount);
-            return answer;
-          };
+          quitAnswerForTest = answer;
         },
         quitConfirmationPrompts: () => [...quitConfirmationPromptsForTest],
         resolveDeferredThreadTitle: (title: string) => {
@@ -2136,9 +2135,9 @@ function lastWindowClosedQuitsApp(): boolean {
 
 /** Set once the user agreed to quit even though tasks were running. */
 let quitWithRunningTasksConfirmed = false;
-let pendingQuitConfirmation: Promise<boolean> | undefined;
-/** Test mode answers the prompt through a hook rather than a native dialog. */
-let quitConfirmationForTest: ((runningCount: number) => boolean) | undefined;
+let quitConfirmationOpen = false;
+/** Test mode answers the prompt here rather than through a native dialog. */
+let quitAnswerForTest = true;
 const quitConfirmationPromptsForTest: number[] = [];
 
 function runningSessionCount(): number {
@@ -2148,28 +2147,32 @@ function runningSessionCount(): number {
   );
 }
 
-/**
- * Quitting aborts every running task (see SessionSupervisor.shutdown), so ask
- * first. Resolves whether the quit may go ahead; concurrent callers share one prompt.
- */
-function confirmQuitWithRunningTasks(parent: BrowserWindow | null): Promise<boolean> {
-  const runningCount = runningSessionCount();
-  if (quitWithRunningTasksConfirmed || runningCount === 0) {
-    return Promise.resolve(true);
-  }
-  pendingQuitConfirmation ??= askToQuitWithRunningTasks(parent, runningCount)
-    .then((confirmed) => (quitWithRunningTasksConfirmed = confirmed))
-    .finally(() => {
-      pendingQuitConfirmation = undefined;
-    });
-  return pendingQuitConfirmation;
+/** Quitting aborts every running task (see SessionSupervisor.shutdown), so it asks first. */
+function quitNeedsConfirmation(): boolean {
+  return !quitWithRunningTasksConfirmed && runningSessionCount() > 0;
 }
 
-async function askToQuitWithRunningTasks(parent: BrowserWindow | null, runningCount: number): Promise<boolean> {
-  if (appTestMode !== undefined) {
-    return quitConfirmationForTest?.(runningCount) ?? true;
+async function confirmQuitWithRunningTasks(): Promise<void> {
+  if (quitConfirmationOpen) {
+    return;
   }
-  const options: MessageBoxOptions = {
+  quitConfirmationOpen = true;
+  try {
+    if (await askToQuitWithRunningTasks(runningSessionCount())) {
+      quitWithRunningTasksConfirmed = true;
+      app.quit();
+    }
+  } finally {
+    quitConfirmationOpen = false;
+  }
+}
+
+async function askToQuitWithRunningTasks(runningCount: number): Promise<boolean> {
+  if (appTestMode !== undefined) {
+    quitConfirmationPromptsForTest.push(runningCount);
+    return quitAnswerForTest;
+  }
+  const { response } = await showMessageBoxFor(getForegroundAppWindow(), {
     type: "warning",
     title: PRODUCT.name,
     message: tGlobal("quit.runningTasks", { count: runningCount, s: runningCount === 1 ? "" : "s" }),
@@ -2177,9 +2180,7 @@ async function askToQuitWithRunningTasks(parent: BrowserWindow | null, runningCo
     buttons: [tGlobal("quit.confirm"), tGlobal("common.cancel")],
     defaultId: 1,
     cancelId: 1,
-  };
-  const { response } =
-    parent && !parent.isDestroyed() ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  });
   return response === 0;
 }
 
@@ -2202,14 +2203,10 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
-  if (!quitWithRunningTasksConfirmed && runningSessionCount() > 0) {
-    // A quit that did not come through closing the last window, e.g. Cmd+Q.
+  if (quitNeedsConfirmation()) {
+    // Every quit asks here, closing the last window included (see createAppWindow).
     event.preventDefault();
-    void confirmQuitWithRunningTasks(getForegroundAppWindow()).then((confirmed) => {
-      if (confirmed) {
-        app.quit();
-      }
-    });
+    void confirmQuitWithRunningTasks();
     return;
   }
   stopNotifications?.();

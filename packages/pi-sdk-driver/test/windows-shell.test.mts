@@ -144,14 +144,17 @@ test("Windows agent shells get UTF-8 Python output, keeping any value the user s
   }
 });
 
-const python = ["python3", "python"].find((command) => spawnSync(command, ["--version"]).status === 0);
-
-test("the applied environment turns GBK-encoded Python pipe output into UTF-8", { skip: !python }, () => {
+test("the applied environment turns GBK-encoded Python pipe output into UTF-8", (t) => {
+  const python = ["python3", "python"].find((command) => spawnSync(command, ["--version"]).status === 0);
+  if (!python) {
+    t.skip("no Python on PATH");
+    return;
+  }
   // A GB18030 locale stands in for zh-CN Windows' 936 code page off Windows;
   // on Windows the ANSI code page applies by itself and LC_ALL is ignored.
   const script = "print('\u4e2d\u6587')";
   const run = (env: NodeJS.ProcessEnv) =>
-    spawnSync(python!, ["-c", script], { env: { ...env, LC_ALL: "zh_CN.GB18030" } }).stdout.toString("utf8").trim();
+    spawnSync(python, ["-c", script], { env: { ...env, LC_ALL: "zh_CN.GB18030" } }).stdout.toString("utf8").trim();
 
   const withoutEnv: NodeJS.ProcessEnv = { ...process.env };
   delete withoutEnv.PYTHONIOENCODING;

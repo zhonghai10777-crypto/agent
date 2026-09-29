@@ -1,7 +1,6 @@
 import type { BrowserWindowConstructorOptions, TitleBarOverlay } from "electron";
 import { usesWindowControlsOverlay } from "../src/ipc";
-
-export type ResolvedTheme = "light" | "dark";
+import type { ResolvedTheme } from "../src/theme-presets";
 
 /** Height of the renderer's `.topbar`; the caption buttons fill it exactly. */
 export const TITLEBAR_HEIGHT = 45;

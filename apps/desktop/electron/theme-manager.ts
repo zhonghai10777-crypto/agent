@@ -1,7 +1,10 @@
 import { nativeTheme, type BrowserWindow } from "electron";
 import { desktopIpc, usesWindowControlsOverlay } from "../src/ipc";
 import type { ThemeMode } from "../src/desktop-state";
+import type { ResolvedTheme } from "../src/theme-presets";
 import { windowControlsOverlay } from "./window-chrome";
+
+const hasWindowControlsOverlay = usesWindowControlsOverlay(process.platform);
 
 export class ThemeManager {
   private mode: ThemeMode = "system";
@@ -27,7 +30,7 @@ export class ThemeManager {
     return this.mode;
   }
 
-  getResolvedTheme(): "light" | "dark" {
+  getResolvedTheme(): ResolvedTheme {
     if (this.mode === "system") {
       return nativeTheme.shouldUseDarkColors ? "dark" : "light";
     }
@@ -49,7 +52,7 @@ export class ThemeManager {
     for (const window of this.windows) {
       if (!window.isDestroyed() && !window.webContents.isDestroyed()) {
         window.webContents.send(desktopIpc.themeChanged, theme);
-        if (usesWindowControlsOverlay(process.platform)) {
+        if (hasWindowControlsOverlay) {
           // The caption buttons are native, so they do not follow the page's CSS.
           window.setTitleBarOverlay(windowControlsOverlay(theme));
         }

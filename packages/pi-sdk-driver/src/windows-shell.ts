@@ -47,35 +47,22 @@ export function sessionToolNames(probe?: GitBashProbe): string[] | undefined {
 }
 
 /**
- * Environment pi's shell tools need on Windows. Python before 3.15 encodes
- * piped stdout in the ANSI code page (936/GBK on zh-CN Windows), while pi
- * decodes tool output as UTF-8, so whatever a script prints in Chinese reached
- * the model as mojibake, under the bash and powershell tools alike.
- * `PYTHONIOENCODING` only changes Python's standard streams: unlike
- * `PYTHONUTF8` it keeps `open()` reading legacy GBK files by default.
- */
-const WINDOWS_AGENT_SHELL_ENV: Readonly<Record<string, string>> = {
-  PYTHONIOENCODING: "utf-8",
-};
-
-/**
- * Applies `WINDOWS_AGENT_SHELL_ENV` to `env` (pi's shell tools spawn with a copy
- * of `process.env`), leaving any value the user already set. Returns the names
- * it set, so a host can keep them out of shells it opens for the user.
+ * Sets up the environment pi's shell tools spawn with (a copy of `process.env`)
+ * on Windows. Python before 3.15 encodes piped stdout in the ANSI code page
+ * (936/GBK on zh-CN Windows), while pi decodes tool output as UTF-8, so
+ * whatever a script printed in Chinese reached the model as mojibake, under the
+ * bash and powershell tools alike. `PYTHONIOENCODING` only changes Python's
+ * standard streams: unlike `PYTHONUTF8` it keeps `open()` reading legacy GBK
+ * files by default. A value the user set is left alone. Returns the names it
+ * set, so a host can keep them out of shells it opens for the user.
  */
 export function applyWindowsAgentShellEnv(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): readonly string[] {
-  if (platform !== "win32") {
+  if (platform !== "win32" || env.PYTHONIOENCODING !== undefined) {
     return [];
   }
-  const applied: string[] = [];
-  for (const [name, value] of Object.entries(WINDOWS_AGENT_SHELL_ENV)) {
-    if (env[name] === undefined) {
-      env[name] = value;
-      applied.push(name);
-    }
-  }
-  return applied;
+  env.PYTHONIOENCODING = "utf-8";
+  return ["PYTHONIOENCODING"];
 }
