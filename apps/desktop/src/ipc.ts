@@ -309,6 +309,14 @@ export function usesWindowControlsOverlay(platform: NodeJS.Platform): boolean {
 }
 
 /**
+ * Whether "Window transparency" can work: only macOS has the vibrancy it relies
+ * on. Elsewhere a transparent window just shows the desktop through the text.
+ */
+export function supportsWindowTransparency(platform: NodeJS.Platform): boolean {
+  return platform === "darwin";
+}
+
+/**
  * The platform as the renderer sees it. Prefer `api.platform` where a component
  * already receives it; this exists for components too deep in the tree to thread
  * it through, and falls back to user-agent sniffing before the preload bridge

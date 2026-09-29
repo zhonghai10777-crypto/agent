@@ -3,6 +3,7 @@ import { SettingsGroup, SettingsRow } from "./settings-utils";
 import { themePresets } from "./theme-presets";
 import { useI18n } from "./i18n/I18nProvider";
 import type { MessageKey } from "./i18n";
+import { getRendererPlatform, supportsWindowTransparency } from "./ipc";
 
 interface SettingsAppearanceSectionProps {
   readonly themeMode: ThemeMode;
@@ -97,19 +98,21 @@ export function SettingsAppearanceSection({
         ))}
       </SettingsGroup>
 
-      <SettingsGroup title={t("settings.appearance.visuals")}>
-        <SettingsRow
-          title={t("settings.appearance.windowTransparency")}
-          description={t("settings.appearance.windowTransparencyDesc")}
-        >
-          <input
-            aria-label={t("settings.appearance.windowTransparency")}
-            type="checkbox"
-            checked={enableTransparency}
-            onChange={(event) => onSetEnableTransparency(event.currentTarget.checked)}
-          />
-        </SettingsRow>
-      </SettingsGroup>
+      {supportsWindowTransparency(getRendererPlatform()) ? (
+        <SettingsGroup title={t("settings.appearance.visuals")}>
+          <SettingsRow
+            title={t("settings.appearance.windowTransparency")}
+            description={t("settings.appearance.windowTransparencyDesc")}
+          >
+            <input
+              aria-label={t("settings.appearance.windowTransparency")}
+              type="checkbox"
+              checked={enableTransparency}
+              onChange={(event) => onSetEnableTransparency(event.currentTarget.checked)}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      ) : null}
     </>
   );
 }

@@ -61,6 +61,7 @@ import type {
 import {
   desktopIpc,
   getDesktopCommandFromShortcut,
+  supportsWindowTransparency,
   type ChangedFilesResult,
   type CustomProviderConfig,
   type CustomProviderProbeInput,
@@ -471,7 +472,7 @@ function openExternalWebUrl(url: string): boolean {
 
 function createWindow(): BrowserWindow {
   const backgroundTestMode = windowTestMode === "background";
-  const enableTransparency = store ? store.state.enableTransparency : false;
+  const enableTransparency = supportsWindowTransparency(process.platform) && Boolean(store?.state.enableTransparency);
   const window = new BrowserWindow({
     width: 1480,
     height: 980,
