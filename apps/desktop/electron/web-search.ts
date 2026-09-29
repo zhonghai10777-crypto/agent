@@ -320,12 +320,30 @@ interface FetchInit {
  * the body read into `consume` means the same timer — and the same
  * AbortSignal — governs header AND body, so a stalled body still aborts.
  */
+/** `work`, unless `signal` aborts first; `work` itself keeps running either way. */
+function untilAborted<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason);
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
+/**
+ * One request under one budget: `timeoutMs` and the caller's `signal` cover
+ * `preflight` (checks that must pass before the request goes out) as well as
+ * the request and `consume`.
+ */
 async function fetchWithBudget<T>(
   url: string,
   init: FetchInit,
   signal: AbortSignal | undefined,
   timeoutMs: number,
   consume: (response: Response) => Promise<T>,
+  preflight?: (budget: AbortSignal) => Promise<void>,
 ): Promise<T> {
   const controller = new AbortController();
   const abortForCaller = () => controller.abort();
@@ -336,6 +354,7 @@ async function fetchWithBudget<T>(
     controller.abort();
   }, timeoutMs);
   try {
+    await preflight?.(controller.signal);
     const response = await fetch(url, {
       method: init.method,
       headers: init.headers,
@@ -822,10 +841,16 @@ const LOCAL_FETCH_TARGETS = (() => {
 })();
 
 let localFetchTargetsAllowed = false;
+let lookupHost: typeof lookup = lookup;
 
 /** Test-only: the network tests serve their pages from 127.0.0.1. */
 export function allowLocalWebFetchTargetsForTests(allowed: boolean): void {
   localFetchTargetsAllowed = allowed;
+}
+
+/** Test-only: stand in for DNS (pass nothing to restore it). */
+export function setHostLookupForTests(resolve?: typeof lookup): void {
+  lookupHost = resolve ?? lookup;
 }
 
 /**
@@ -835,16 +860,18 @@ export function allowLocalWebFetchTargetsForTests(allowed: boolean): void {
  * cannot be pinned to the checked address because it has to keep going
  * through pi's global proxy-aware dispatcher.
  */
-async function assertNotLocalFetchTarget(url: string): Promise<void> {
+async function assertNotLocalFetchTarget(url: string, signal: AbortSignal): Promise<void> {
   if (localFetchTargetsAllowed) {
     return;
   }
   const host = new URL(url).hostname.replace(/^\[|\]$/g, "");
   const family = isIP(host);
-  // A DNS failure is left for the fetch itself to report.
+  // A DNS failure is left for the fetch itself to report. The lookup cannot be
+  // cancelled, so it is raced against the request budget: an unresponsive DNS
+  // server must not hold a Stop, or the timeout, for its own tens of seconds.
   const addresses = family
     ? [{ address: host, family }]
-    : await lookup(host, { all: true, verbatim: true }).catch(() => undefined);
+    : await untilAborted(lookupHost(host, { all: true, verbatim: true }).catch(() => undefined), signal);
   if (addresses?.some((entry) => LOCAL_FETCH_TARGETS.check(entry.address, entry.family === 6 ? "ipv6" : "ipv4"))) {
     throw new Error("That address points at this computer or a link-local network, which web_fetch does not access.");
   }
@@ -872,7 +899,6 @@ export async function runWebFetch(
       throw new Error(`The page redirected more than ${MAX_REDIRECTS} times.`);
     }
 
-    await assertNotLocalFetchTarget(currentUrl);
     const outcome = await fetchWithBudget<FetchHopOutcome>(
       currentUrl,
       {
@@ -906,6 +932,7 @@ export async function runWebFetch(
         const body = await readCappedText(response);
         return { kind: "final", url: response.url || currentUrl, contentType, body };
       },
+      (budget) => assertNotLocalFetchTarget(currentUrl, budget),
     );
 
     if (outcome.kind === "redirect") {

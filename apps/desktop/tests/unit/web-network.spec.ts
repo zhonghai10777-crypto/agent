@@ -6,6 +6,7 @@ import {
   normalizeWebToolsSettings,
   runWebFetch,
   runWebSearch,
+  setHostLookupForTests,
   type WebToolsSettings,
 } from "../../electron/web-search";
 import { createWebRuntimeTools, webFetchToolName, webReadToolName } from "../../electron/web-runtime";
@@ -446,5 +447,25 @@ test("web_fetch refuses this machine and link-local targets before contacting th
   } finally {
     allowLocalWebFetchTargetsForTests(true);
     await server.close();
+  }
+});
+
+test("web_fetch's DNS check counts against the timeout and gives way to Stop", async () => {
+  // An unresponsive DNS server: the OS resolver can take tens of seconds to give up.
+  setHostLookupForTests((() => new Promise(() => {})) as unknown as Parameters<typeof setHostLookupForTests>[0]);
+  allowLocalWebFetchTargetsForTests(false);
+  try {
+    const settings = normalizeWebToolsSettings({ enabled: true, provider: "searxng", searxngBaseUrl: "http://search.test" });
+    const started = Date.now();
+    await expect(runWebFetch("http://stuck-dns.example/", settings, undefined, 300)).rejects.toThrow("timed out after 0.3s");
+    expect(Date.now() - started).toBeLessThan(2_000);
+
+    const stop = new AbortController();
+    const fetching = runWebFetch("http://stuck-dns.example/", settings, stop.signal, 60_000);
+    stop.abort();
+    await expect(fetching).rejects.toThrow(/abort/i);
+  } finally {
+    allowLocalWebFetchTargetsForTests(true);
+    setHostLookupForTests();
   }
 });
