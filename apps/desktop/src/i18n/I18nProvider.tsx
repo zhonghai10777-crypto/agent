@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { type Locale } from "./types";
 import { createT, type Translator } from "./index";
 import { formatRelativeTime } from "../string-utils";
@@ -17,6 +17,11 @@ const I18nContext = createContext<I18nContextValue | null>(null);
  */
 export function I18nProvider({ locale, children }: { readonly locale: Locale; readonly children: ReactNode }) {
   const value = useMemo<I18nContextValue>(() => ({ locale, t: createT(locale) }), [locale]);
+  // The page language picks the fallback font for Chinese text: without it
+  // Chromium may draw Han characters with a Japanese font (glyph shapes differ).
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { RuntimeSnapshot } from "@pi-gui/session-driver/runtime-types";
 import type { DesktopAppState, Locale, ModelSettingsScopeMode, RuntimeMode } from "./desktop-state";
 import { useI18n } from "./i18n/I18nProvider";
-import { getShortcutLabel } from "./ipc";
+import { getRendererPlatform, getShortcutLabel } from "./ipc";
 import { SettingsGroup, SettingsInfoRow, SettingsRow, settingsPill } from "./settings-utils";
 import { SettingsUpdatesRow } from "./settings-updates-row";
 
@@ -154,7 +154,7 @@ export function SettingsGeneralSection({
           <input
             aria-label={t("settings.general.integratedShell")}
             className="settings-text-input"
-            placeholder={t("settings.general.integratedShellPlaceholder")}
+            placeholder={integratedShellPlaceholder(getRendererPlatform())}
             spellCheck={false}
             type="text"
             value={terminalShellDraft}
@@ -187,4 +187,16 @@ export function SettingsGeneralSection({
       </SettingsGroup>
     </>
   );
+}
+
+/** An example shell path in the platform's own form. */
+function integratedShellPlaceholder(platform: NodeJS.Platform): string {
+  switch (platform) {
+    case "darwin":
+      return "/bin/zsh";
+    case "win32":
+      return "C:\\Program Files\\Git\\bin\\bash.exe";
+    default:
+      return "/bin/bash";
+  }
 }
